@@ -1,0 +1,67 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+coverage/
+*.iml
+
+# Editors and operating system
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.log
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.jks
+*.keystore
+key.properties
+android/local.properties
+.gradle/
+
+# Receipt datasets and private research data
+data/raw/
+data/external/
+data/private/
+data/working/
+data/processed/
+data/annotations/
+data/exports/
+data/sroie/
+data/tier_a/
+
+# Local reference snapshots and model artefacts
+resources/snapshots/
+resources/private/
+artifacts/
+checkpoints/
+runs/
+.cache/
+
+# Private reports
+reports/private/
+mobile/android/local.properties
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
