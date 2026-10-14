@@ -1,0 +1,1 @@
+"""PantryProof receipt-processing package."""
