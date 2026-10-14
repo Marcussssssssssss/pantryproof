@@ -65,3 +65,4 @@ mobile/android/local.properties
 *.sqlite3
 *.db-wal
 *.db-shm
+data/SROIE2019/
