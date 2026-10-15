@@ -1,0 +1,239 @@
+manifest_version: "1"
+status: "PROVISIONAL_IMPLEMENTATION"
+held_out_evaluation_frozen: false
+recorded_date: "2026-10-15"
+
+algorithm:
+  identifier: "B1-deterministic-v1"
+  source_module: "pipeline/baseline_b1.py"
+  public_api: "extract_b1(source_evidence: ReceiptSourceEvidence) -> B1ExtractionResult"
+  contract_version: "0"
+  implementation_commit: null
+  implementation_sha256: null
+  manifest_sha256: null
+  note: >-
+    Hashes and a commit are intentionally unset while this implementation is
+    uncommitted and not frozen for held-out evaluation.
+
+input_contract:
+  type: "ReceiptSourceEvidence"
+  consumes_recorded_gate_result: true
+  accepts_gate_callback: false
+  preserves_source_evidence: true
+  accepts_b2_predictions: false
+  accepts_external_price_or_retailer_input: false
+  accepts_ground_truth: false
+
+output_contract:
+  wrapper: "B1ExtractionResult"
+  sufficient_branch: "ReceiptOutput at PRE_REVIEW_AUTOMATIC; no policy or persistence event"
+  insufficient_branch: "no ReceiptOutput; FALLBACK_NO_UPDATE retaining recorded gate result"
+  extractor_version: "B1-deterministic-v1"
+  fields:
+    - "STORE_NAME"
+    - "PURCHASE_DATE"
+    - "ITEM_DESCRIPTION"
+    - "QUANTITY"
+    - "UNIT_PRICE"
+    - "LINE_TOTAL"
+    - "RECEIPT_TOTAL"
+
+training:
+  status: "NOT_APPLICABLE"
+  learned_parameters: false
+  fine_tuning: "NOT_APPLICABLE"
+  hyperparameter_optimization: "NOT_APPLICABLE"
+  model_weights: "NOT_APPLICABLE"
+
+numeric_constants:
+  B1_STORE_HEADER_MAX_NORMALIZED_Y:
+    value: 0.25
+    boundary: "normalized_center_y <= 0.25 + 1e-9"
+  B1_LINE_CLUSTER_TOLERANCE_HEIGHTS:
+    value: 0.50
+    units: "shorter token height"
+    overlap_boundary: "overlap/min_height + 1e-9 >= 1 - 0.50"
+    centroid_boundary: "absolute_center_gap/min_height <= 0.50 + 1e-9"
+  B1_GEOMETRY_EPSILON:
+    value: 1.0e-9
+    probability_or_confidence: false
+
+literal_grammars:
+  amount: '(?:RM\s*|MYR\s*|\$\s*)?\d+(?:,\d{3})*\.\d{2}'
+  amount_sequence: '(?:RM\s*|MYR\s*|\$\s*)?\d+(?:,\d{3})*\.\d{2}(?:\s+(?:RM\s*|MYR\s*|\$\s*)?\d+(?:,\d{3})*\.\d{2})*'
+  quantity: '\d+(?:\.\d+)?'
+  date_anchor: '^\s*(?:DATE|PURCHASE\s+DATE|TRANSACTION\s+DATE)\b\s*[:#-]?\s*(?P<body>.*?)\s*$'
+  numeric_date: '^(?P<first>\d{1,2})(?P<separator>[/-])(?P<second>\d{1,2})(?P=separator)(?P<year>\d{4})$'
+  standalone_date: '^\s*(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}(?P<numeric_separator>[/-])\d{1,2}(?P=numeric_separator)\d{4}|\d{1,2}\s+(?:JAN(?:UARY)?|FEB(?:RUARY)?|MAR(?:CH)?|APR(?:IL)?|MAY|JUN(?:E)?|JUL(?:Y)?|AUG(?:UST)?|SEP(?:TEMBER)?|OCT(?:OBER)?|NOV(?:EMBER)?|DEC(?:EMBER)?)\s+\d{4})\s*$'
+  total_prefix: '^\s*(?:GRAND\s+TOTAL|TOTAL)\b'
+  total_valid: '^\s*(?:GRAND\s+TOTAL|TOTAL)\b\s*[:=]?\s*(?P<amounts>(?:RM\s*|MYR\s*|\$\s*)?\d+(?:,\d{3})*\.\d{2}(?:\s+(?:RM\s*|MYR\s*|\$\s*)?\d+(?:,\d{3})*\.\d{2})*)\s*$'
+  non_item_anchor: '^\s*(?:DATE|PURCHASE\s+DATE|TRANSACTION\s+DATE|GRAND\s+TOTAL|TOTAL|SUB\s*TOTAL|TAX|CHANGE|CASH|TENDERED|BALANCE)\b'
+  financial_summary: '^\s*(?:DISCOUNT|ROUNDING|VOUCHER|SERVICE\s+CHARGE|GST|SST|SERVICE\s+TAX|PAYMENT\s+TOTAL|AMOUNT\s+PAID)\b(?:\s*[:=]?\s*(?:RM\s*|MYR\s*|\$\s*)?\d+(?:,\d{3})*\.\d{2})?\s*$'
+  multiplier_item: '^\s*(?P<description>.+?\D)\s+(?P<quantity>\d+(?:\.\d+)?)\s*[x×]\s*(?P<body>(?:RM\s*|MYR\s*|\$\s*)?\d+(?:,\d{3})*\.\d{2}(?:\s+(?:RM\s*|MYR\s*|\$\s*)?\d+(?:,\d{3})*\.\d{2})*)\s*$'
+  labeled_quantity_item: '^\s*(?P<description>.+?\D)\s+(?:QTY|QUANTITY)\s*[:=]?\s*(?P<quantity>\d+(?:\.\d+)?)\s+(?P<body>(?:RM\s*|MYR\s*|\$\s*)?\d+(?:,\d{3})*\.\d{2}(?:\s+(?:RM\s*|MYR\s*|\$\s*)?\d+(?:,\d{3})*\.\d{2})*)\s*$'
+  unmarked_quantity_item: '^\s*(?P<description>.+?\D)\s+(?P<quantity>\d+(?:\.\d+)?)\s+(?P<body>(?:RM\s*|MYR\s*|\$\s*)?\d+(?:,\d{3})*\.\d{2}(?:\s+(?:RM\s*|MYR\s*|\$\s*)?\d+(?:,\d{3})*\.\d{2})*)\s*$'
+  partial_item: '^\s*(?P<description>.+?)\s+(?P<body>(?:RM\s*|MYR\s*|\$\s*)?\d+(?:,\d{3})*\.\d{2}(?:\s+(?:RM\s*|MYR\s*|\$\s*)?\d+(?:,\d{3})*\.\d{2})*)\s*$'
+  executable_authority: "pipeline/baseline_b1.py"
+
+generic_vocabulary:
+  date_anchors:
+    - "DATE"
+    - "PURCHASE DATE"
+    - "TRANSACTION DATE"
+  receipt_total_anchors:
+    - "TOTAL"
+    - "GRAND TOTAL"
+  quantity_markers:
+    - "QTY"
+    - "QUANTITY"
+    - "x"
+    - "×"
+  control_prefixes:
+    - "DATE"
+    - "PURCHASE DATE"
+    - "TRANSACTION DATE"
+    - "GRAND TOTAL"
+    - "TOTAL"
+    - "SUB TOTAL"
+    - "TAX"
+    - "CHANGE"
+    - "CASH"
+    - "TENDERED"
+    - "BALANCE"
+  exact_financial_summary_labels:
+    - "DISCOUNT"
+    - "ROUNDING"
+    - "VOUCHER"
+    - "SERVICE CHARGE"
+    - "GST"
+    - "SST"
+    - "SERVICE TAX"
+    - "PAYMENT TOTAL"
+    - "AMOUNT PAID"
+
+geometry:
+  polygon_reduction: "axis-aligned min/max extent"
+  usable_token_requirements:
+    - "non-empty trimmed original text"
+    - "all polygon coordinates finite"
+    - "width and height greater than 1e-9"
+  normalization_reference: "observed usable OCR-token envelope, not image dimensions"
+  normalization_formula: "(line_center_y - envelope_top) / envelope_height"
+  token_visit_order:
+    - "vertical centroid"
+    - "horizontal centre"
+    - "token ID"
+  line_grouping: "fixed first-anchor compatibility; not complete-link"
+  multi_anchor_match: "mark all affected groups and the new singleton ambiguous"
+  bridge_postcheck: "mark every group compatible with a multi-anchor bridge ambiguous"
+  line_order:
+    - "anchor vertical centroid"
+    - "anchor left edge"
+    - "anchor token ID"
+  within_line_order:
+    - "left edge"
+    - "horizontal centre"
+    - "token ID"
+  horizontal_overlap: >-
+    Unsafe for row assignment except between separate complete monetary regions,
+    which proceed to the explicit equal-position tie rule.
+  fabricates_word_geometry: false
+
+role_assignment:
+  store_name:
+    candidate: "safe alphabetic non-control, non-date, non-item line in upper zone"
+    selection: "earliest frozen reading-order candidate"
+    no_candidate: "MISSING"
+    unsafe_earliest_candidate: "UNRESOLVED with available references"
+  purchase_date:
+    candidate_sources:
+      - "approved anchored complete line"
+      - "complete standalone supported line outside detected item rows"
+    supported_values:
+      - "year-first YYYY-M-D with one- or two-digit month and day"
+      - "numeric day/month or month/day using the same / or - separator twice"
+      - "DD English-month YYYY"
+    numeric_interpretation_policy:
+      neither_calendar_interpretation_valid: "INVALID"
+      exactly_one_valid: "VALID using that interpretation"
+      both_valid_same_date: "VALID"
+      both_valid_different_dates: "AMBIGUOUS"
+    mixed_numeric_separators: "unsupported; never repaired"
+    no_candidate: "MISSING"
+    invalid_or_calendar_ambiguous_observed_candidate: "UNRESOLVED"
+    conflicting_valid_canonicals: "UNRESOLVED with all candidate references"
+    equivalent_valid_duplicates: "earliest in frozen reading order"
+    output_normalization: "zero-padded ISO YYYY-MM-DD"
+    repair: false
+  item_rows:
+    precedence:
+      - "description quantity x|× amount sequence"
+      - "description QTY|QUANTITY quantity amount sequence"
+      - "description unmarked-quantity amount sequence"
+      - "description amount sequence"
+    description: "directly observed alphabetic evidence before declared numeric fields"
+    quantity: "EXTRACTED only in the first three declared grammars; otherwise MISSING"
+    line_total_separate_regions: "unique greatest right edge"
+    line_total_whole_region: "last textual amount span"
+    equal_position_separate_regions: "UNRESOLVED with competing references"
+    unit_price: >-
+      Remaining unique amount only under a quantity grammar; otherwise MISSING
+      or UNRESOLVED. Never arithmetically derived.
+    reconstructs_undetected_rows: false
+  receipt_total:
+    selection: "last safe valid anchored occurrence in frozen reading order"
+    malformed_anchor: "does not override a safe valid occurrence"
+    final_unsafe_valid_association: "UNRESOLVED"
+    anchors_but_no_valid_safe_association: "UNRESOLVED"
+    no_anchor: "MISSING"
+    subtotal_is_anchor: false
+    uses_item_arithmetic: false
+
+missing_and_unresolved:
+  MISSING: "no supported observed candidate assigned; no value or confidence"
+  UNRESOLVED: "unsafe, ambiguous, or conflicting evidence; retain references when available"
+  EXTRACTED: "directly observed non-empty value with source token references"
+  field_confidence: null
+  raw_ocr_confidence_promoted: false
+
+excluded_features:
+  b2_layout_graph_or_predictions: false
+  complete_link_grouping: false
+  repeated_column_model: false
+  description_continuation: false
+  retailer_specific_resources: false
+  external_prices: false
+  arithmetic_correction: false
+  ocr_correction: false
+  scoring_or_calibration: false
+  selective_verification: false
+  review_or_oracle: false
+  flutter: false
+  sqlite_or_inventory_persistence: false
+
+excluded_data:
+  SROIE_held_out_test_partition: "NOT_USED"
+  Tier_A_held_out_receipts: "NOT_USED"
+  annotations_as_runtime_input: "NOT_USED"
+  held_out_evaluation_results_for_tuning: "MUST_NOT_BE_USED"
+
+change_control:
+  semantic_changes:
+    - "numeric constant or boundary"
+    - "regex, anchor, marker, or exclusion vocabulary"
+    - "line grouping, normalization, or reading order"
+    - "candidate precedence or field-role mapping"
+    - "missing, unresolved, provenance, or tie behavior"
+  required_action: >-
+    Review and version the change, update documentation and manifest, rerun the
+    complete synthetic suite, then record implementation/manifest hashes before
+    any held-out evaluation freeze.
+
+known_limitations:
+  - "observed-token envelope is not full-image normalization"
+  - "axis-aligned extents do not model severe rotation or skew"
+  - "whole-line OCR provides no internal word geometry"
+  - "simple anchor grouping is deliberately less expressive than B2"
+  - "complex columns, continuation lines, and unusual syntax may remain unresolved or missing"
+  - "generic summary rules cannot distinguish every unusual product and summary"
+  - "synthetic conformance does not establish accuracy, F1, or superiority"
