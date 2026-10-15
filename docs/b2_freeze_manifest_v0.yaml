@@ -1,0 +1,413 @@
+manifest_version: "0"
+status: "PROVISIONAL_IMPLEMENTATION"
+held_out_evaluation_frozen: false
+recorded_date: "2026-10-15"
+
+algorithm:
+  identifier: "B2-layout-graph-v0"
+  source_module: "pipeline/layout_b2.py"
+  public_api: "extract_b2(source_evidence: ReceiptSourceEvidence) -> B2ExtractionResult"
+  contract_version: "0"
+  implementation_commit: null
+  implementation_sha256: null
+  manifest_sha256: null
+  note: >-
+    Hashes and an implementation commit are intentionally unset while this
+    development implementation is uncommitted and not held-out frozen.
+
+input_contract:
+  type: "ReceiptSourceEvidence"
+  immutable_ocr_evidence: true
+  consumes_recorded_gate_result: true
+  accepts_gate_callback: false
+  accepts_external_reference_truth: false
+  accepts_retailer_or_price_input: false
+
+output_contract:
+  wrapper: "B2ExtractionResult"
+  sufficient_branch: "ReceiptOutput at PRE_REVIEW_AUTOMATIC"
+  insufficient_branch: "no ReceiptOutput; FALLBACK_NO_UPDATE retaining the recorded gate result"
+  extractor_version: "B2-layout-graph-v0"
+  fields:
+    - "STORE_NAME"
+    - "PURCHASE_DATE"
+    - "ITEM_DESCRIPTION"
+    - "QUANTITY"
+    - "UNIT_PRICE"
+    - "LINE_TOTAL"
+    - "RECEIPT_TOTAL"
+  creates_policy_decision_for_structured_output: false
+  creates_review_record: false
+  creates_persistence_record: false
+
+training:
+  status: "NOT_APPLICABLE"
+  learned_parameters: false
+  fine_tuning: "NOT_APPLICABLE"
+  hyperparameter_optimization: "NOT_APPLICABLE"
+  model_weights: "NOT_APPLICABLE"
+
+ocr_geometry_features:
+  polygon_reduction: "axis-aligned min/max extent"
+  per_token:
+    - "original token identity and text"
+    - "left, right, top, bottom, width, height"
+    - "horizontal and vertical centre"
+    - "coordinates normalized to the observed usable-token envelope"
+    - "alphabetic-text flag"
+    - "complete amount flag"
+    - "complete quantity flag"
+    - "multiplier flag"
+    - "supported-date flag"
+    - "generic summary-anchor flag"
+  normalization_reference: "observed usable OCR-token envelope, not source-image dimensions"
+  median_height_reference: "median height of usable OCR-token extents"
+  unusable_token_conditions:
+    - "empty trimmed matching text"
+    - "any non-finite polygon coordinate"
+    - "non-positive axis-aligned width or height"
+  unusable_token_policy: >-
+    Preserve the token in ReceiptSourceEvidence but exclude it from layout and
+    structured-field support.
+  empty_layout_fallback:
+    envelope_width: 1.0
+    envelope_height: 1.0
+    median_height: 1.0
+  fabricates_tokens_or_word_geometry: false
+
+numeric_constants:
+  LINE_MIN_VERTICAL_OVERLAP:
+    value: 0.50
+    units: "ratio of overlap to smaller token height"
+    implemented_boundary: "overlap_ratio + 1e-9 >= 0.50"
+  LINE_MAX_CENTER_DISTANCE:
+    value: 0.50
+    units: "vertical centre distance divided by larger token height"
+    implemented_boundary: "distance <= 0.50 + 1e-9"
+  HORIZONTAL_OVERLAP_AMBIGUITY:
+    value: 0.10
+    units: "overlap ratio relative to smaller token width"
+    implemented_boundary: "ambiguous only when ratio > 0.10 + 1e-9"
+  HORIZONTAL_ADJACENCY_MAX_GAP_HEIGHTS:
+    value: 8.0
+    units: "median token heights"
+  HORIZONTAL_ADJACENCY_MAX_GAP_WIDTH_FRACTION:
+    value: 0.70
+    units: "observed envelope width"
+  COLUMN_WIDTH_FRACTION:
+    value: 0.04
+    units: "observed envelope width"
+  COLUMN_HEIGHT_FACTOR:
+    value: 0.75
+    units: "median token heights"
+  COLUMN_MAX_LINE_STEP:
+    value: 3
+    units: "visual-line index difference"
+    implemented_boundary: "1 <= absolute line-index difference <= 3"
+  MIN_COLUMN_SUPPORT_ROWS:
+    value: 2
+    units: "distinct visual-line indices"
+    implemented_boundary: "support >= 2"
+  STORE_ZONE_MAX_NORMALIZED_Y:
+    value: 0.25
+    units: "observed-envelope normalized centre y"
+    implemented_boundary: "centre_y <= 0.25 + 1e-9"
+  STORE_TIE_BAND_HEIGHTS:
+    value: 0.50
+    units: "median token heights"
+    implemented_boundary: "centre difference <= 0.50 * median_height + 1e-9"
+  DATE_ZONE_MAX_NORMALIZED_Y:
+    value: 0.50
+    units: "observed-envelope normalized centre y"
+    implemented_boundary: "centre_y <= 0.50 + 1e-9"
+  TOTAL_ZONE_MIN_NORMALIZED_Y:
+    value: 0.50
+    units: "observed-envelope normalized centre y"
+    implemented_boundary: "centre_y + 1e-9 >= 0.50"
+  CONTINUATION_MAX_EDGE_GAP_HEIGHTS:
+    value: 1.25
+    units: "median token heights"
+    implemented_boundary: "edge gap <= 1.25 * median_height + 1e-9"
+  CONTINUATION_LEFT_TOLERANCE_HEIGHTS:
+    value: 1.0
+    units: "median token heights"
+  CONTINUATION_LEFT_TOLERANCE_WIDTH_FRACTION:
+    value: 0.05
+    units: "observed envelope width"
+  NUMERIC_TIE_EPSILON:
+    value: 1.0e-9
+    units: "coordinate/ratio comparison allowance"
+    probability_or_confidence: false
+
+derived_constants:
+  column_tolerance: >-
+    max(0.04 * observed_envelope_width, 0.75 * median_token_height)
+  maximum_horizontal_gap: >-
+    max(8.0 * median_token_height, 0.70 * observed_envelope_width); equality
+    plus 1e-9 is accepted, while a greater consecutive-cell gap makes the
+    visual line ambiguous and receives no horizontal edge.
+  continuation_left_tolerance: >-
+    max(1.0 * median_token_height, 0.05 * observed_envelope_width)
+
+line_grouping:
+  method: "deterministic complete-link visual-line grouping"
+  requires_both_vertical_tests: true
+  multi_group_match: "mark competing groups and new singleton group ambiguous"
+  completed_group_postcheck: >-
+    If a token is compatible with more than one completed group, mark every
+    affected group ambiguous.
+  horizontal_overlap_policy: >-
+    Consecutive ordered cells become layout-ambiguous only above the configured
+    strict overlap boundary.
+  horizontal_disconnection_policy: >-
+    A consecutive-cell gap strictly above the derived maximum plus 1e-9 makes
+    the complete line layout-ambiguous.
+  joined_text_policy: "trim each view for matching, join with one space, retain source spans"
+
+spatial_graph:
+  horizontal_edges:
+    endpoints: "consecutive cells in one visual line"
+    distance: "non-negative horizontal gap"
+    maximum: "max(8.0 * median token height, 0.70 * observed envelope width)"
+    decoder_use: "required between consecutive split description boxes"
+  vertical_edges:
+    endpoints: "cells on later lines at most three line indices apart"
+    distance: "minimum of absolute right-edge and horizontal-centre differences"
+    maximum: "derived column tolerance"
+    decoder_use: "required to establish repeated-column support"
+  output_visibility: "internal only"
+
+column_grouping:
+  candidate_source: "non-reserved, non-ambiguous item-like lines"
+  separate_types:
+    - "complete amount tokens"
+    - "complete quantity tokens that are not complete amounts"
+  alignment_coordinate: "right edge"
+  join_rule: >-
+    A token must be within tolerance of every group member and within one to
+    three visual-line indices of at least one group member connected through a
+    recorded vertical edge.
+  exactly_one_eligible_group: "append token"
+  zero_eligible_groups: "start new candidate"
+  multiple_eligible_groups: "start new candidate; do not choose by token ID"
+  support_requirement: "at least two distinct visual-line indices"
+  representative: "median member right edge"
+  order: "left to right by representative right edge"
+
+deterministic_ordering:
+  token_views:
+    - "centre_y"
+    - "top"
+    - "left"
+    - "token_id"
+  visual_lines:
+    - "median member centre_y"
+    - "minimum member left"
+    - "sorted member token IDs"
+  cells_within_line:
+    - "left"
+    - "centre_x"
+    - "token_id"
+  output_item_rows:
+    - "line centre_y"
+    - "line left"
+    - "line token IDs"
+  semantic_tie_policy: >-
+    Token IDs stabilize serialization only. Layout or role ambiguity is not
+    resolved by choosing the lexicographically first token ID.
+
+receipt_role_assignment:
+  store_name:
+    context: "safe alphabetic line in observed-envelope top quarter"
+    exclusions:
+      - "ambiguous line"
+      - "generic control line"
+      - "generic column header"
+      - "item-like line"
+      - "exact generic footer-text line"
+      - "line containing a supported-date or generic-summary token flag"
+    selection: "geometrically top candidate"
+    tie: "candidates in the configured top tie band become UNRESOLVED"
+  purchase_date:
+    anchors:
+      - "DATE"
+      - "PURCHASE DATE"
+      - "TRANSACTION DATE"
+    anchored_priority: true
+    multiple_anchored: "UNRESOLVED with all candidate token references"
+    unanchored_fallback: "unique non-ambiguous complete date in upper half"
+    supported_forms:
+      - "YYYY-MM-DD"
+      - "uniquely interpretable DD/MM/YYYY, DD-MM-YYYY, MM/DD/YYYY, or MM-DD-YYYY"
+      - "DD English-month YYYY"
+    ambiguous_numeric_date: "UNRESOLVED"
+    repairs_invalid_date: false
+  receipt_total:
+    anchors:
+      - "TOTAL"
+      - "GRAND TOTAL"
+    multiple_anchor_policy: "UNRESOLVED regardless of value equality"
+    sole_candidate_requirements:
+      - "exactly one supported amount"
+      - "non-ambiguous layout"
+      - "centre in observed-envelope lower half"
+    uses_item_arithmetic: false
+
+item_role_assignment:
+  precedence:
+    - >-
+      Explicit joined description quantity x unit_price line_total; extract all
+      four observed roles.
+    - >-
+      Unsafe amount-bearing multiplier form; extract separable description and
+      quantity, leave unit price and line total UNRESOLVED.
+    - >-
+      One whole OCR region matching description quantity amount amount without
+      a multiplier; extract description, leave the quantity-shaped value and
+      both amount roles UNRESOLVED because word-level column geometry is absent.
+    - >-
+      Split-box geometry; description must be alphabetic evidence left of the
+      first numeric or multiplier box, then use stable quantity/amount columns.
+    - >-
+      Whole-region description with exactly one amount; extract description
+      and line total, leave quantity and unit price MISSING.
+    - >-
+      Whole-region description with multiple amounts and no safe full match;
+      leave amount roles UNRESOLVED.
+  quantity:
+    no_candidate: "MISSING"
+    multiple_candidates: "UNRESOLVED"
+    one_candidate: >-
+      EXTRACTED only with exactly one stable quantity column and unique
+      membership, and only when that column is strictly left of the first
+      amount column when amount columns exist; otherwise UNRESOLVED. A quantity
+      right edge greater than or equal to first_amount_right - 1e-9 is unsafe.
+  amounts:
+    one_amount_no_columns: "unit price MISSING; line total EXTRACTED"
+    one_amount_one_column: "unit price MISSING; line total EXTRACTED on unique membership"
+    one_amount_two_columns_left: "unit price EXTRACTED; line total MISSING"
+    one_amount_two_columns_right: "unit price MISSING; line total EXTRACTED"
+    two_amounts_two_columns: >-
+      EXTRACTED as unit price then line total only for unique left/right
+      membership in horizontal order.
+    unsupported_or_competing: "unit price and line total UNRESOLVED"
+  derives_unit_price: false
+  derives_line_total: false
+  reconstructs_undetected_row: false
+
+description_continuation:
+  candidate_requirements:
+    - "non-ambiguous alphabetic line"
+    - "normalized centre y strictly greater than 0.25 + 1e-9"
+    - "visual-line index differs from the candidate item row by exactly one"
+    - "no complete amount, quantity, or multiplier token"
+    - "no amount substring"
+    - "not a generic control or column header"
+    - "contains no supported-date or generic-summary token flag"
+    - "not a supported date"
+    - "not THANK YOU, PLEASE COME AGAIN, or RECEIPT COPY"
+  geometry_requirements:
+    - "edge gap within derived maximum"
+    - "left-edge difference within derived tolerance"
+  uniqueness_rule: >-
+    Attach only when the description has exactly one eligible row and that row
+    has exactly one eligible description.
+  ambiguity_rule: >-
+    Multiple plausible rows for one continuation, or multiple continuations
+    for one row, make each affected row description UNRESOLVED with the base
+    and competing continuation token references.
+  concatenation_order: "vertical reading order"
+  unattached_line_creates_row: false
+
+missing_and_unresolved:
+  MISSING: "no supported observed candidate is assigned; no value or confidence"
+  UNRESOLVED: >-
+    Relevant evidence exists but layout, interpretation, or role cannot be
+    selected safely; competing token references are retained where available.
+  EXTRACTED: "directly observed non-empty value with source token references"
+  field_confidence: null
+  raw_ocr_confidence_promoted: false
+
+generic_exclusions:
+  control_prefixes:
+    - "DATE"
+    - "PURCHASE DATE"
+    - "TRANSACTION DATE"
+    - "GRAND TOTAL"
+    - "TOTAL"
+    - "SUB TOTAL"
+    - "TAX"
+    - "CHANGE"
+    - "CASH"
+    - "TENDERED"
+    - "BALANCE"
+  exact_financial_summary_label_plus_amount:
+    - "DISCOUNT"
+    - "ROUNDING"
+    - "VOUCHER"
+    - "SERVICE CHARGE"
+    - "SERVICE TAX"
+    - "GST"
+    - "SST"
+    - "PAYMENT TOTAL"
+    - "AMOUNT PAID"
+  correction: false
+  retailer_matching: false
+  external_price_reference: false
+  product_normalization: false
+  arithmetic_inference: false
+  calibration: false
+  selective_verification: false
+  simulated_user_confirmation: false
+  oracle_substitution: false
+  flutter: false
+  sqlite_or_inventory_persistence: false
+
+excluded_data_and_reference_sources:
+  held_out_evaluation_partitions: "MUST_NOT_BE_USED for design, tuning, or runtime extraction"
+  SROIE_held_out_test_partition: "NOT_USED"
+  annotations_as_runtime_input: "NOT_USED"
+  external_retailer_prices: "NOT_USED"
+  ground_truth_as_runtime_input: "NOT_USED"
+
+shared_extractor_reuse:
+  required_consumers:
+    - "B2"
+    - "B3"
+    - "PT1"
+    - "PT2"
+  requirement: >-
+    Consumers must use the same implementation, constants, role rules, and
+    manifest rather than configuration-specific forks.
+  future_freeze_evidence:
+    - "repository commit"
+    - "implementation SHA-256"
+    - "manifest SHA-256"
+    - "OCR engine/model/configuration identifiers"
+    - "development-data provenance and split definitions"
+    - "synthetic and cross-runtime conformance fixture hashes"
+
+change_control:
+  semantic_changes:
+    - "numeric constant or inclusion boundary"
+    - "regex or lexical anchor"
+    - "line, edge, or column grouping"
+    - "field-role precedence"
+    - "missing or unresolved behavior"
+    - "tie-breaking or ambiguity handling"
+    - "source-token reference construction"
+  required_action: >-
+    Review the change, issue a new extractor version or explicit compatible
+    revision, update this manifest and its hashes, and rerun the complete
+    synthetic suite before evaluation.
+
+known_limitations:
+  - "axis-aligned extents do not model extreme skew or rotation"
+  - "observed-envelope zones are not true source-image zones"
+  - "whole-line OCR lacks internal word geometry"
+  - "complex side-by-side blocks and more than two amount columns can remain unresolved"
+  - "sparse columns or intervening lines can exceed the three-line support step"
+  - "only uniquely one-to-one description continuation is attached"
+  - "generic summary filters cannot cover every receipt convention"
+  - "invalid-geometry source tokens are preserved but unavailable to extraction"
+  - "synthetic conformance does not establish accuracy, F1, B1 superiority, or Android equivalence"
