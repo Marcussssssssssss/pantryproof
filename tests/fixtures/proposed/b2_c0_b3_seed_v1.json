@@ -1,0 +1,51 @@
+{
+  "b3_seed": {
+    "b3_event_ids": [
+      "synthetic-proposed-receipt:b3:event:000000"
+    ],
+    "b3_rule_ids": [
+      "B3-TEXT-NORMALIZE"
+    ],
+    "b3_ruleset_id": "B3-generic-rules-v0",
+    "c0_candidate_id": "synthetic-proposed-receipt:b2:store-name:c0",
+    "c0_value": "\uFF30\uFF21\uFF2E\uFF34\uFF32\uFF39 MART",
+    "field_id": "synthetic-proposed-receipt:b2:store-name",
+    "proposed_value": "pantry mart",
+    "receipt_id": "synthetic-proposed-receipt",
+    "record_version": "1",
+    "seed_id": "synthetic-proposed-receipt:b2:store-name:b3-seed:000",
+    "source_kind": "GENERIC_NORMALIZATION",
+    "source_spans": [
+      {
+        "end": 11,
+        "record_version": "1",
+        "start": 0,
+        "text": "\uFF30\uFF21\uFF2E\uFF34\uFF32\uFF39 MART",
+        "token_id": "store"
+      }
+    ]
+  },
+  "contract_version": "1",
+  "decimal_value": "0.8750",
+  "fixture_version": "proposed-b2-c0-b3-seed-v1",
+  "gate": {
+    "decision": "SUFFICIENT",
+    "gate_result_id": "synthetic-proposed-gate"
+  },
+  "method_ready_field": {
+    "b3_seed_ids": [
+      "synthetic-proposed-receipt:b2:store-name:b3-seed:000"
+    ],
+    "c0_candidate_id": "synthetic-proposed-receipt:b2:store-name:c0",
+    "c0_value": "\uFF30\uFF21\uFF2E\uFF34\uFF32\uFF39 MART",
+    "field_id": "synthetic-proposed-receipt:b2:store-name",
+    "field_name": "STORE_NAME",
+    "method_field_id": "synthetic-proposed-receipt:b2:store-name:method:v1",
+    "original_value": "\uFF30\uFF21\uFF2E\uFF34\uFF32\uFF39 MART",
+    "source_token_ids": [
+      "store"
+    ]
+  },
+  "receipt_id": "synthetic-proposed-receipt",
+  "unavailable_value": null
+}
