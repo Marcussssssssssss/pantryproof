@@ -1,0 +1,591 @@
+manifest_version: "0"
+status: "PROVISIONAL_IMPLEMENTATION"
+held_out_evaluation_frozen: false
+recorded_date: "2026-10-16"
+
+algorithm:
+  identifier: "B3-generic-rules-v0"
+  ruleset_identifier: "B3-generic-rules-v0"
+  source_module: "pipeline/baseline_b3.py"
+  public_api: "apply_b3(b2_result: B2ExtractionResult) -> B3Result"
+  contract_version: "0"
+  implementation_commit: null
+  implementation_sha256: null
+  configuration_sha256: null
+  manifest_sha256: null
+  hash_status: >-
+    Intentionally unset while this provisional implementation is uncommitted
+    and not frozen for held-out evaluation.
+  training_status: "NOT_APPLICABLE"
+  learned_parameters: false
+
+required_upstream:
+  extractor_identifier: "B2-layout-graph-v0"
+  implementation_sha256: null
+  manifest_sha256: null
+  hash_status: >-
+    Required for formal freeze but intentionally unset during provisional
+    implementation.
+  input_wrapper: "B2ExtractionResult"
+  invokes_extract_b2: false
+  invokes_source_gate: false
+  accesses_private_b2_layout_graph: false
+  changes_b2_configuration: false
+
+source_gate:
+  sufficient_branch: >-
+    Retain the exact original B2 result and create a distinct B3
+    PRE_REVIEW_AUTOMATIC ReceiptOutput.
+  insufficient_branch: >-
+    Return no B3 ReceiptOutput, preserve the original FALLBACK_NO_UPDATE
+    disposition, and execute no downstream rules.
+  structurally_partial_or_failed_b2_output: "retained in automatic evaluation"
+
+output_contract:
+  wrapper: "B3Result"
+  automatic_output_type: "ReceiptOutput"
+  automatic_output_extractor_version: "B3-generic-rules-v0"
+  preserves:
+    - "exact original B2ExtractionResult"
+    - "receipt ID"
+    - "exact ReceiptSourceEvidence object"
+    - "field IDs and deterministic field order"
+    - "item row IDs and row order"
+    - "field statuses"
+    - "field source-token tuples"
+    - "confidence and unresolved-reason semantics"
+    - "pantry product identity"
+    - "B2 ReceiptExtractionStatus"
+    - "PRE_REVIEW_AUTOMATIC output stage"
+  adds_or_deletes_item_rows: false
+  fills_missing_or_unresolved_fields: false
+  creates_review_or_policy_decision: false
+  creates_persistence_event: false
+  audit_collections:
+    - "field_transformations"
+    - "rule_events"
+    - "candidates"
+    - "arithmetic_diagnostics"
+    - "adjustments"
+    - "diagnostics"
+
+public_types:
+  enums:
+    - "B3ParseState"
+    - "B3RuleOutcome"
+    - "ArithmeticPhase"
+    - "ArithmeticScope"
+    - "ArithmeticOutcome"
+    - "AdjustmentKind"
+    - "AdjustmentDirection"
+    - "DiagnosticCode"
+    - "CandidateKind"
+  immutable_records:
+    - "SourceSlice"
+    - "DateParseResult"
+    - "QuantityParseResult"
+    - "MoneyParseResult"
+    - "B3Candidate"
+    - "B3RuleEvent"
+    - "B3Diagnostic"
+    - "ArithmeticDiagnostic"
+    - "AdjustmentEvidence"
+    - "B3FieldTransformation"
+    - "B3Result"
+  pure_helpers:
+    - "normalize_receipt_text"
+    - "parse_generic_date"
+    - "parse_positive_quantity"
+    - "parse_money"
+
+rule_order:
+  - sequence: 1
+    rule: "validate exact B2 result and source branch"
+  - sequence: 2
+    rule: "normalize extracted store and item-description text"
+  - sequence: 3
+    rule: "parse and normalize extracted purchase date"
+  - sequence: 4
+    rule: "parse and normalize extracted item quantities"
+  - sequence: 5
+    rule: "parse and normalize extracted monetary fields"
+  - sequence: 6
+    rule: "scan complete single-token adjustment evidence"
+  - sequence: 7
+    rule: "compute PRE_CORRECTION arithmetic diagnostics"
+  - sequence: 8
+    rule: >-
+      in B2 item order discover then conditionally apply each item candidate;
+      rebuild, recheck receipt arithmetic, then discover and conditionally
+      apply a receipt-total candidate
+  - sequence: 9
+    rule: "compute FINAL arithmetic diagnostics"
+  - sequence: 10
+    rule: "validate original/transformed provenance and source slices"
+
+rule_identifiers:
+  - "B3-TEXT-NORMALIZE"
+  - "B3-DATE-PARSE"
+  - "B3-QUANTITY-PARSE"
+  - "B3-MONEY-PARSE"
+  - "B3-ADJUSTMENT-SCAN"
+  - "B3-ARITHMETIC-ITEM"
+  - "B3-ARITHMETIC-RECEIPT"
+  - "B3-CANDIDATE-DISCOVERY"
+  - "B3-CANDIDATE-APPLY"
+
+normalization:
+  unicode_form: "NFKC"
+  case_method: "Unicode str.casefold"
+  whitespace: "split on Unicode whitespace, join with one ASCII space, trim"
+  unrestricted_punctuation_deletion: false
+  punctuation_mapping:
+    "‘": "'"
+    "’": "'"
+    "‚": "'"
+    "‛": "'"
+    "“": '"'
+    "”": '"'
+    "„": '"'
+    "‟": '"'
+    "‐": "-"
+    "‑": "-"
+    "‒": "-"
+    "–": "-"
+    "—": "-"
+    "−": "-"
+    "…": "..."
+  eligible_fields:
+    - "STORE_NAME when EXTRACTED"
+    - "ITEM_DESCRIPTION when EXTRACTED"
+  changes_pantry_product_identity: false
+  retailer_abbreviation_expansion: "DISABLED"
+  spelling_or_product_identity_guessing: "DISABLED"
+
+literal_grammars:
+  year_first_date: '(?P<year>\d{4})-(?P<month>\d{1,2})-(?P<day>\d{1,2})'
+  numeric_date: '(?P<first>\d{1,2})(?P<separator>[/-])(?P<second>\d{1,2})(?P=separator)(?P<year>\d{4})'
+  english_month: 'JAN(?:UARY)?|FEB(?:RUARY)?|MAR(?:CH)?|APR(?:IL)?|MAY|JUN(?:E)?|JUL(?:Y)?|AUG(?:UST)?|SEP(?:TEMBER)?|OCT(?:OBER)?|NOV(?:EMBER)?|DEC(?:EMBER)?'
+  day_month_name: '(?P<day>\d{1,2})\s+(?P<month>JAN(?:UARY)?|FEB(?:RUARY)?|MAR(?:CH)?|APR(?:IL)?|MAY|JUN(?:E)?|JUL(?:Y)?|AUG(?:UST)?|SEP(?:TEMBER)?|OCT(?:OBER)?|NOV(?:EMBER)?|DEC(?:EMBER)?)\s+(?P<year>\d{4})'
+  month_name_day: '(?P<month>JAN(?:UARY)?|FEB(?:RUARY)?|MAR(?:CH)?|APR(?:IL)?|MAY|JUN(?:E)?|JUL(?:Y)?|AUG(?:UST)?|SEP(?:TEMBER)?|OCT(?:OBER)?|NOV(?:EMBER)?|DEC(?:EMBER)?)\s+(?P<day>\d{1,2}),?\s+(?P<year>\d{4})'
+  quantity: '(?P<number>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)'
+  money_number: '(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{1,2}'
+  money: '(?:(?P<prefix>RM|MYR|\$)\s*)?(?P<number>(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{1,2})'
+  money_scan: '(?<![\w.,+-])(?:(?P<prefix>RM|MYR|\$)\s*)?(?P<number>(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{1,2})(?![\w.,])'
+  currency_marker_token: '(?:RM|MYR|\$)'
+  unsupported_currency_marker_token: '(?:[A-Z]{3}|[€£¥])'
+  unsupported_currency_context_suffix: '(?<![A-Za-z])([A-Za-z]{3})$'
+  adjustment: '^\s*(?P<label>SERVICE\s+CHARGE|SERVICE\s+TAX|DISCOUNT|VOUCHER|COUPON|REBATE|SURCHARGE|SUBTOTAL|ROUNDING|TAX|GST|SST)\b\s*[:=]?\s*(?P<sign>[+-])?\s*(?P<amount>(?:(?P<prefix>RM|MYR|\$)\s*)?(?P<number>(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{1,2}))\s*$'
+  promotion: '\b(?:PROMO(?:TION)?|SPECIAL\s+OFFER|OFFER|BUY\s+\d+\s+GET\s+\d+)\b'
+  weight_quantity: '(?<![\w.])(?P<quantity>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(?P<unit>kg|g|lbs?|oz)\b'
+  weight_denominator: '(?:(?P<prefix>RM|MYR|\$)\s*)?(?P<number>(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{1,2})\s*(?:/\s*|PER\s+)(?P<unit>kg|g|lbs?|oz)\b'
+  executable_authority: "pipeline/baseline_b3.py"
+  compile_flags:
+    year_first_date: "default Unicode semantics"
+    numeric_date: "default Unicode semantics"
+    day_month_name: "re.IGNORECASE"
+    month_name_day: "re.IGNORECASE"
+    quantity: "default Unicode semantics"
+    money: "re.IGNORECASE"
+    money_scan: "re.IGNORECASE"
+    currency_marker_token: "re.IGNORECASE"
+    unsupported_currency_marker_token: "re.IGNORECASE"
+    unsupported_currency_context_suffix: "default Unicode semantics"
+    adjustment: "re.IGNORECASE"
+    promotion: "re.IGNORECASE"
+    weight_quantity: "re.IGNORECASE"
+    weight_denominator: "re.IGNORECASE"
+
+parsing_precedence:
+  quantity:
+    - "NFKC and trim outer whitespace"
+    - "require one complete quantity grammar match"
+    - "parse finite positive Decimal"
+    - "emit plain non-scientific representation"
+  money:
+    - "NFKC and trim outer whitespace"
+    - "require one complete dot-decimal money grammar match"
+    - "parse finite non-negative Decimal"
+    - "quantize to currency quantum with frozen rounding mode"
+
+date_parsing:
+  complete_match_required: true
+  output: "zero-padded ISO YYYY-MM-DD"
+  precedence:
+    - "NFKC and trim outer whitespace"
+    - "year-first"
+    - "numeric day/month or month/day"
+    - "day English-month year"
+    - "English-month day year"
+  numeric_interpretation:
+    neither_valid: "INVALID"
+    exactly_one_valid: "VALID"
+    both_valid_same_date: "VALID"
+    both_valid_different_dates: "AMBIGUOUS"
+  same_numeric_separator_required: true
+  current_date_locale_or_retailer_guessing: false
+  invalid_or_ambiguous_action: "retain original automatic value and diagnose"
+
+quantity_parsing:
+  complete_match_required: true
+  numeric_type: "Decimal"
+  positive_only: true
+  zero: "INVALID"
+  comma_grouping: "groups of exactly three digits"
+  decimal_separator: "."
+  signs: "DISABLED"
+  exponent_notation: "DISABLED"
+  embedded_units: "DISABLED in the quantity parser"
+  default_quantity: "DISABLED"
+  output: "plain non-scientific Decimal without unnecessary trailing zeroes"
+
+money_parsing:
+  complete_match_required: true
+  numeric_type: "Decimal"
+  prefixes:
+    - "RM"
+    - "MYR"
+    - "$"
+  prefix_case_sensitive: false
+  decimal_separator: "."
+  accepted_fraction_digits:
+    - 1
+    - 2
+  output_fraction_digits: 2
+  comma_grouping: "groups of exactly three digits"
+  decimal_comma: "DISABLED"
+  mixed_separators: "DISABLED"
+  negative_ordinary_field_values: "DISABLED"
+  exponent_notation: "DISABLED"
+  currency_conversion: "DISABLED"
+  dollar_means_malaysian_ringgit: false
+  arithmetic_currency_groups:
+    RM: "MYR"
+    MYR: "MYR"
+    "$": "$"
+    unprefixed: "no explicit marker"
+  conflicting_explicit_groups: "CONFLICTING_CURRENCY_MARKERS"
+
+decimal_arithmetic:
+  implementation: "decimal.Decimal"
+  context_policy: >-
+    Each operation uses a fresh local Context whose precision is derived from
+    all accepted operand digit counts; ambient process Decimal precision and
+    rounding settings are not inputs.
+  exact_operations:
+    - "parse"
+    - "multiply before currency quantization"
+    - "observed-row sum"
+    - "absolute difference"
+  intentional_rounding_operation: "currency quantization only"
+  currency_quantum: "0.01"
+  currency_tolerance: "0.01"
+  tolerance_boundary: "absolute_difference <= Decimal('0.01')"
+  rounding_mode: "ROUND_HALF_UP"
+  item_equation: "quantity * unit_price compared with line_total"
+  observed_receipt_equation: >-
+    sum(parseable line-total values for observed B2 rows at the relevant
+    phase) compared with that phase's receipt_total
+  observed_receipt_completeness_claim: false
+  phase_order:
+    - "PRE_CORRECTION"
+    - "FINAL"
+  outcome_precedence:
+    - "RAW_EXACT_MATCH"
+    - "MATCH_AFTER_CURRENCY_ROUNDING"
+    - "WITHIN_INCLUSIVE_TOLERANCE"
+    - "MISMATCH_BEYOND_TOLERANCE"
+  non_numeric_outcomes:
+    - "INCOMPLETE_OPERANDS"
+    - "AMBIGUOUS_OR_CONFLICTING_UNITS"
+    - "CONFLICTING_CURRENCY_MARKERS"
+    - "EXPLICIT_PROMOTION_OR_ADJUSTMENT_EXCEPTION"
+  mismatch_alone_authorizes_replacement: false
+
+weighted_goods:
+  units:
+    - "kg"
+    - "g"
+    - "lb"
+    - "lbs"
+    - "oz"
+  case_sensitive: false
+  requires_explicit_quantity_unit: true
+  source_quantity_must_equal_structured_quantity: true
+  source_rate_amount_must_equal_structured_unit_price: true
+  requires_compatible_unit_price_denominator: true
+  association_boundary: >-
+    Scan individual referenced tokens and one whitespace-joined view within
+    each item field's ordered source_token_ids; never join across field roles
+    and never infer order from ReceiptSourceEvidence.tokens.
+  cardinality: >-
+    Exactly one distinct quantity/unit pair and one distinct
+    rate-amount/denominator pair must remain.
+  plural_unit_equivalence:
+    lbs: "lb"
+  grouped_source_quantities: "same frozen grammar as quantity parser"
+  explicit_currency_rule: >-
+    Approved denominator and structured-unit-price groups must be compatible;
+    multiple explicit groups conflict and unknown currency context is not
+    stripped to an unprefixed rate.
+  no_weight_evidence: "ordinary item arithmetic; infer no unit"
+  partial_or_conflicting_evidence: "diagnose and suppress forced equality"
+  default_unit: "DISABLED"
+  default_quantity: "DISABLED"
+  cross_unit_conversion: "DISABLED"
+  creates_item_rows: false
+
+adjustments:
+  scan_scope: "one complete immutable OCR token only"
+  split_token_layout_grouping: "DISABLED"
+  labels:
+    subtract:
+      - "DISCOUNT"
+      - "VOUCHER"
+      - "COUPON"
+      - "REBATE"
+    add:
+      - "TAX"
+      - "GST"
+      - "SST"
+      - "SERVICE TAX"
+      - "SERVICE CHARGE"
+      - "SURCHARGE"
+    reference_only:
+      - "SUBTOTAL"
+    explicit_sign_required:
+      - "ROUNDING"
+  direction_semantics:
+    subtract_labels: "unsigned or '-' means SUBTRACT; '+' means UNKNOWN"
+    add_labels: "unsigned or '+' means ADD; '-' means UNKNOWN"
+    subtotal: "REFERENCE_ONLY regardless of sign"
+    rounding: "'+' means ADD; '-' means SUBTRACT; unsigned means UNKNOWN"
+  contract_v0_scope: "always unknown and recorded in ambiguity_reason"
+  product_description_tokens: >-
+    Excluded when the token is referenced by a B2 ITEM_DESCRIPTION field,
+    even if its complete text matches an adjustment grammar.
+  numerical_application_to_equation: "DISABLED"
+  mismatch_behavior: >-
+    Unrepresented non-reference adjustment evidence qualifies a receipt
+    mismatch as EXPLICIT_PROMOTION_OR_ADJUSTMENT_EXCEPTION and vetoes
+    receipt-total correction; it is not added to or subtracted from the
+    equation. SUBTOTAL is reference-only and does not qualify a mismatch.
+  unrepresented_subtotal_vetoes_receipt_total_correction: true
+  unknown_scope_or_direction: "record diagnostic; do not force arithmetic equality"
+  prevents_double_counting: true
+  already_represented_test: >-
+    The adjustment token ID is referenced by a monetary equation field and
+    that field's parsed amount equals the adjustment amount.
+  currency_conflict_rule: >-
+    Conflicting explicit adjustment groups, or an explicit adjustment group
+    conflicting with an explicit receipt-equation group, produce
+    CONFLICTING_CURRENCY_MARKERS and cannot qualify the mismatch.
+  product_substring_is_adjustment: false
+
+promotions:
+  indicators:
+    - "PROMO"
+    - "PROMOTION"
+    - "SPECIAL OFFER"
+    - "OFFER"
+    - "BUY n GET n"
+  grammar_scope: "whole-word matching"
+  scan_scope: "tokens referenced by one B2 item row"
+  may_qualify_or_suppress_item_mismatch_beyond_tolerance: true
+  receipt_level_handling: "DISABLED"
+  may_force_price_rewrite: false
+
+candidate_policy:
+  representation_normalization_separate: true
+  arithmetic_expectation_is_candidate: false
+  semantic_candidate_kind: "DIRECT_MONETARY_SOURCE"
+  required_conditions:
+    - "alternative is directly present in immutable original OCR text"
+    - "exact original token and half-open character offsets are recorded"
+    - "token belongs to target field's existing source-reference tuple"
+    - "field role is unambiguous"
+    - "exactly one distinct eligible value remains"
+    - "arithmetic corroborates but does not create the value"
+    - "no applicable target-specific veto"
+  item_candidate_vetoes:
+    - "promotion evidence"
+    - "adjustment evidence inside the row boundary"
+    - "partial or conflicting weighted evidence"
+    - "currency conflict"
+    - "incomplete operands"
+  receipt_total_candidate_vetoes:
+    - "incomplete observed rows"
+    - "unrepresented adjustment evidence, including subtotal"
+    - "currency conflict"
+    - "ambiguous source support"
+  source_offsets: "original OCR token text, never normalized text"
+  item_targets:
+    - "UNIT_PRICE"
+    - "LINE_TOTAL"
+  quantity_correction: "DISABLED"
+  receipt_target: "RECEIPT_TOTAL"
+  discovery_trigger: "PRE_CORRECTION MISMATCH_BEYOND_TOLERANCE"
+  direct_candidate_boundary: >-
+    Scan only target field source-token IDs. A candidate amount must occupy
+    one original OCR token apart from whitespace. Reject support shared with
+    any other item or receipt monetary role, multi-value tokens, unsupported
+    currency marker/context, signs, parentheses, labels, and other enclosing
+    text. Retain separate approved currency-marker slices from the same target
+    boundary.
+  candidate_must_differ_from_current_canonical_value: true
+  arithmetic_corroboration_outcomes:
+    - "RAW_EXACT_MATCH"
+    - "MATCH_AFTER_CURRENCY_ROUNDING"
+  tolerance_alone_authorizes_candidate_application: false
+  identical_candidate_values: "deduplicate deterministically and retain all source slices"
+  shared_or_multi_value_token: >-
+    Exclude that token as non-unique support; an independent unambiguous target
+    token may still support a candidate.
+  competing_candidates: "retain original and diagnose"
+  forbidden_tie_breakers:
+    - "lexical order"
+    - "token ID"
+    - "smallest arithmetic residual"
+
+diagnostic_codes:
+  INVALID_DATE: "complete date is unsupported or calendar-invalid"
+  AMBIGUOUS_DATE: "numeric date has distinct valid calendar readings"
+  INVALID_QUANTITY: "value fails the positive Decimal quantity grammar"
+  INVALID_MONEY: "value fails the frozen monetary grammar"
+  ADJUSTMENT_OBSERVED: "complete single-token adjustment was recorded"
+  ADJUSTMENT_SCOPE_OR_DIRECTION_UNKNOWN: "adjustment cannot be safely applied to an equation"
+  WEIGHT_EVIDENCE_INCOMPLETE: "quantity unit or price denominator evidence is absent"
+  WEIGHT_UNIT_CONFLICT: >-
+    explicit source quantity, rate amount, denominator unit, multiplicity, or
+    compatible-currency evidence conflicts
+  CORRECTION_NO_DIRECT_SUPPORT: "arithmetic expectation lacks a direct role-bound source value"
+  CORRECTION_SHARED_TOKEN_AMBIGUOUS: >-
+    support is shared across monetary roles or a token contains multiple
+    monetary values
+  CORRECTION_COMPETING_CANDIDATES: "more than one distinct candidate remains"
+  CORRECTION_NOT_CORROBORATED: "direct candidates exist but none satisfies the frozen arithmetic boundary"
+  CORRECTION_APPLIED: "one directly supported non-vetoed candidate was applied"
+
+provenance:
+  source_slice_offsets: "half-open offsets into OcrSourceToken.original_text"
+  normalized_offsets_used_as_source_offsets: false
+  original_b2_result_retained: true
+  original_b2_field_object_retained_per_relationship: true
+  transformed_field_object_retained_per_relationship: true
+  rule_event_sequence: "contiguous zero-based order"
+  candidate_source_tokens_must_belong_to_target_field: true
+  candidate_source_tokens_must_not_belong_to_other_monetary_roles: true
+  candidate_literal_validation: >-
+    Every candidate slice is an approved standalone marker or a complete money
+    literal; at least one money literal exists and every such literal
+    canonicalizes to the recorded candidate value.
+  adjustment_literal_validation: >-
+    Revalidate anchored label, kind, sign-derived direction, amount, currency,
+    exact amount span, product-description exclusion, and representation state
+    against immutable OCR evidence.
+  candidate_uniqueness_key:
+    - "target_field_id"
+    - "value"
+  rejected_candidates_retained_in_result: true
+  source_text_or_geometry_mutated: false
+
+evaluation_policy:
+  no_abstention: true
+  ambiguous_outputs_remain_automatic: true
+  incomplete_outputs_remain_automatic: true
+  review_required: "DISABLED"
+  user_or_oracle_substitution: "DISABLED"
+  selective_verification: "DISABLED"
+  ground_truth_candidate_selection: "DISABLED"
+
+excluded_features:
+  retailer_specific_matching: "DISABLED"
+  external_price_references: "DISABLED"
+  product_identity_guessing: "DISABLED"
+  trained_rankers_or_models: "DISABLED"
+  scoring_or_calibration: "DISABLED"
+  inventory_persistence: "DISABLED"
+  alternate_or_hidden_extractor: "DISABLED"
+  paddleocr_initialization: "DISABLED"
+  flutter_or_sqlite: "DISABLED"
+
+excluded_data:
+  SROIE_held_out_test_partition: "NOT_USED"
+  Tier_A_held_out_receipts: "NOT_USED"
+  adjudicated_reference_labels_as_runtime_input: "NOT_USED"
+  held_out_results_for_rule_tuning: "MUST_NOT_BE_USED"
+
+shared_compatibility:
+  consumer: "future PantryProof upstream generic-rule path"
+  must_match:
+    - "CURRENCY_QUANTUM"
+    - "CURRENCY_TOLERANCE"
+    - "ROUNDING_MODE"
+    - "applicable parsing and exception semantics"
+  runtime_configuration_overrides: "DISABLED"
+
+thesis_table_4_10_traceability:
+  implemented_generic_families:
+    - "shared text/date/number normalization and parsing"
+    - "exact Decimal item and observed-row receipt consistency"
+    - "explicit weighted quantity/rate/unit compatibility"
+    - "anchored adjustment and item-promotion diagnostics"
+    - "conservative immutable-source-supported monetary correction"
+  intentionally_disabled_or_narrowed:
+    retailer_specific_rules: "DISABLED"
+    external_price_references: "DISABLED"
+    decimal_comma: "DISABLED"
+    cross_unit_conversion: "DISABLED"
+    split_token_adjustment_grouping: "DISABLED"
+    missing_field_or_row_invention: "DISABLED"
+    learned_ranking_or_calibration: "DISABLED"
+    selective_verification_or_abstention: "DISABLED"
+    user_or_oracle_substitution: "DISABLED"
+    label_bearing_candidate_substrings: "DISABLED conservatively in V0"
+  interpretation: >-
+    These are comparator boundaries, not held-out results or evidence that a
+    disabled thesis family is ineffective.
+
+freeze_evidence:
+  recorded_for_held_out_evaluation: false
+  synthetic_fixture_sha256: null
+  cross_runtime_fixture_sha256: null
+  development_data_provenance_sha256: null
+  required_before_freeze:
+    - "repository commit"
+    - "B3 implementation SHA-256"
+    - "B3 manifest SHA-256"
+    - "exact B2 implementation and manifest hashes"
+    - "synthetic fixture and cross-runtime conformance hashes"
+    - "development-data provenance and split definitions"
+
+change_control:
+  semantic_changes:
+    - "required B2 identifier or input/output invariant"
+    - "rule ordering or event ordering"
+    - "Unicode, case, whitespace, or punctuation behavior"
+    - "date, quantity, money, adjustment, promotion, or unit grammar"
+    - "Decimal quantum, tolerance, rounding mode, or inclusion boundary"
+    - "candidate eligibility, deduplication, application, or veto behavior"
+    - "diagnostic classification"
+    - "source-slice or original/transformed provenance behavior"
+  required_action: >-
+    Review and version the semantic change, update implementation and manifest,
+    rerun the complete synthetic suite, and record formal freeze evidence before
+    any held-out evaluation.
+
+known_limitations:
+  - "B2 has token-level references but no public field-role character spans"
+  - "shared whole-line tokens sharply limit safe semantic correction"
+  - >-
+    ordinary current B2 outputs generally expose no distinct role-bound
+    alternative, so semantic candidate application is exceptional
+  - "candidate substrings inside label-bearing tokens are conservatively disabled"
+  - "split-token adjustments are unsupported"
+  - "adjustment and promotion scope can remain unknown"
+  - "missing and unresolved B2 fields remain missing or unresolved"
+  - "undetected item rows are never reconstructed"
+  - "weighted units are not converted"
+  - "decimal-comma monetary input is disabled"
+  - "observed-row arithmetic cannot prove receipt completeness"
+  - "synthetic conformance does not establish extraction or correction accuracy"
