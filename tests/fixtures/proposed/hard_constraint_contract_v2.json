@@ -1,0 +1,360 @@
+{
+  "fixture_version": "hard-constraint-v2-fixture-v2",
+  "record_version": "2",
+  "positive_records": [
+    {
+      "aggregate_reason": "ALL_APPLICABLE_MANDATORY_RULES_PASSED",
+      "aggregate_state": "ELIGIBLE",
+      "c0_candidate": {
+        "c0_candidate_id": "hc-v2-receipt:store-name:c0",
+        "candidate_id": "hc-v2-receipt:store-name:c0",
+        "field_id": "hc-v2-receipt:store-name",
+        "limit_status": "RETAINED",
+        "normalized_dedup_key": "pantry mart",
+        "overflow_reason": null,
+        "preliminary_rank": null,
+        "provenance": [
+          {
+            "candidate_id": "hc-v2-receipt:store-name:c0",
+            "field_id": "hc-v2-receipt:store-name",
+            "generic_rule_id": null,
+            "original_observed_value": "PANTRY MART",
+            "provenance_id": "hc-v2-provenance-c0",
+            "receipt_id": "hc-v2-receipt",
+            "record_version": "1",
+            "resource_snapshot_id": null,
+            "source_kind": "ORIGINAL",
+            "source_order_position": null,
+            "source_order_relationship": null,
+            "source_spans": [
+              {
+                "end": 11,
+                "record_version": "1",
+                "start": 0,
+                "text": "PANTRY MART",
+                "token_id": "store-token"
+              }
+            ],
+            "source_token_ids": [
+              "store-token"
+            ]
+          }
+        ],
+        "receipt_id": "hc-v2-receipt",
+        "record_version": "1",
+        "role": "ORIGINAL",
+        "value": "PANTRY MART"
+      },
+      "candidate": {
+        "c0_candidate_id": "hc-v2-receipt:store-name:c0",
+        "candidate_id": "hc-v2-receipt:store-name:candidate:001",
+        "field_id": "hc-v2-receipt:store-name",
+        "limit_status": "RETAINED",
+        "normalized_dedup_key": "pantry mart altered",
+        "overflow_reason": null,
+        "preliminary_rank": {
+          "normalized_candidate_text": "pantry mart",
+          "normalized_edit_similarity": "0.8750",
+          "rank_position": 1,
+          "record_version": "1",
+          "source_order_displacement": 0,
+          "source_priority_rank": 2,
+          "tie_group_id": "rank-tie-001"
+        },
+        "provenance": [
+          {
+            "candidate_id": "hc-v2-receipt:store-name:candidate:001",
+            "field_id": "hc-v2-receipt:store-name",
+            "generic_rule_id": "B3_TEXT_NORMALIZE",
+            "original_observed_value": "PANTRY MART",
+            "provenance_id": "hc-v2-provenance-altered",
+            "receipt_id": "hc-v2-receipt",
+            "record_version": "1",
+            "resource_snapshot_id": null,
+            "source_kind": "GENERIC_NORMALIZATION",
+            "source_order_position": null,
+            "source_order_relationship": null,
+            "source_spans": [
+              {
+                "end": 11,
+                "record_version": "1",
+                "start": 0,
+                "text": "PANTRY MART",
+                "token_id": "store-token"
+              }
+            ],
+            "source_token_ids": [
+              "store-token"
+            ]
+          }
+        ],
+        "receipt_id": "hc-v2-receipt",
+        "record_version": "1",
+        "role": "ALTERED",
+        "value": "Pantry Mart"
+      },
+      "constraint_result_id": "hc-v2-receipt:store-name:candidate:001:constraints:v2",
+      "field_id": "hc-v2-receipt:store-name",
+      "receipt_id": "hc-v2-receipt",
+      "record_version": "2",
+      "rule_outcomes": [
+        {
+          "attempted": true,
+          "c0_candidate": {
+            "c0_candidate_id": "hc-v2-receipt:store-name:c0",
+            "candidate_id": "hc-v2-receipt:store-name:c0",
+            "field_id": "hc-v2-receipt:store-name",
+            "limit_status": "RETAINED",
+            "normalized_dedup_key": "pantry mart",
+            "overflow_reason": null,
+            "preliminary_rank": null,
+            "provenance": [
+              {
+                "candidate_id": "hc-v2-receipt:store-name:c0",
+                "field_id": "hc-v2-receipt:store-name",
+                "generic_rule_id": null,
+                "original_observed_value": "PANTRY MART",
+                "provenance_id": "hc-v2-provenance-c0",
+                "receipt_id": "hc-v2-receipt",
+                "record_version": "1",
+                "resource_snapshot_id": null,
+                "source_kind": "ORIGINAL",
+                "source_order_position": null,
+                "source_order_relationship": null,
+                "source_spans": [
+                  {
+                    "end": 11,
+                    "record_version": "1",
+                    "start": 0,
+                    "text": "PANTRY MART",
+                    "token_id": "store-token"
+                  }
+                ],
+                "source_token_ids": [
+                  "store-token"
+                ]
+              }
+            ],
+            "receipt_id": "hc-v2-receipt",
+            "record_version": "1",
+            "role": "ORIGINAL",
+            "value": "PANTRY MART"
+          },
+          "candidate": {
+            "c0_candidate_id": "hc-v2-receipt:store-name:c0",
+            "candidate_id": "hc-v2-receipt:store-name:candidate:001",
+            "field_id": "hc-v2-receipt:store-name",
+            "limit_status": "RETAINED",
+            "normalized_dedup_key": "pantry mart altered",
+            "overflow_reason": null,
+            "preliminary_rank": {
+              "normalized_candidate_text": "pantry mart",
+              "normalized_edit_similarity": "0.8750",
+              "rank_position": 1,
+              "record_version": "1",
+              "source_order_displacement": 0,
+              "source_priority_rank": 2,
+              "tie_group_id": "rank-tie-001"
+            },
+            "provenance": [
+              {
+                "candidate_id": "hc-v2-receipt:store-name:candidate:001",
+                "field_id": "hc-v2-receipt:store-name",
+                "generic_rule_id": "B3_TEXT_NORMALIZE",
+                "original_observed_value": "PANTRY MART",
+                "provenance_id": "hc-v2-provenance-altered",
+                "receipt_id": "hc-v2-receipt",
+                "record_version": "1",
+                "resource_snapshot_id": null,
+                "source_kind": "GENERIC_NORMALIZATION",
+                "source_order_position": null,
+                "source_order_relationship": null,
+                "source_spans": [
+                  {
+                    "end": 11,
+                    "record_version": "1",
+                    "start": 0,
+                    "text": "PANTRY MART",
+                    "token_id": "store-token"
+                  }
+                ],
+                "source_token_ids": [
+                  "store-token"
+                ]
+              }
+            ],
+            "receipt_id": "hc-v2-receipt",
+            "record_version": "1",
+            "role": "ALTERED",
+            "value": "Pantry Mart"
+          },
+          "evidence_availability": "AVAILABLE",
+          "evidence_references": [
+            {
+              "record_version": "2",
+              "reference_id": "hc-v2-receipt:store-name:candidate:001:FIELD_TYPE_COMPATIBLE:evidence",
+              "reference_namespace": "D3_OPERAND_AUDIT",
+              "source_record_version": "hard-constraint-operands-record-v0"
+            }
+          ],
+          "field_id": "hc-v2-receipt:store-name",
+          "outcome_code": null,
+          "outcome_detail": null,
+          "outcome_reason_kind": null,
+          "receipt_id": "hc-v2-receipt",
+          "record_version": "2",
+          "resource_references": [],
+          "rule_outcome_id": "hc-v2-receipt:store-name:candidate:001:FIELD_TYPE_COMPATIBLE:outcome",
+          "rule_profile_reference": {
+            "declared_content_hash": "sha256:synthetic-profile",
+            "ordered_rule_specs": [
+              {
+                "applicability_reference": "profile:field-type:v1",
+                "position": 0,
+                "record_version": "2",
+                "requirement": "MANDATORY",
+                "resource_reference_ids": [],
+                "rule_id": "FIELD_TYPE_COMPATIBLE",
+                "rule_version": "v1"
+              }
+            ],
+            "profile_id": "hard-constraint-profile-synthetic",
+            "profile_version": "v1",
+            "record_version": "2",
+            "resource_references": [],
+            "theta_a_reference": {
+              "configuration_id": "theta-a-hc-v2",
+              "configuration_version": "v1",
+              "content_hash": "sha256:synthetic-theta-a",
+              "kind": "THETA_A",
+              "record_version": "1",
+              "state": "READY",
+              "status_reason": null
+            }
+          },
+          "rule_spec": {
+            "applicability_reference": "profile:field-type:v1",
+            "position": 0,
+            "record_version": "2",
+            "requirement": "MANDATORY",
+            "resource_reference_ids": [],
+            "rule_id": "FIELD_TYPE_COMPATIBLE",
+            "rule_version": "v1"
+          },
+          "state": "PASS",
+          "theta_a_reference": {
+            "configuration_id": "theta-a-hc-v2",
+            "configuration_version": "v1",
+            "content_hash": "sha256:synthetic-theta-a",
+            "kind": "THETA_A",
+            "record_version": "1",
+            "state": "READY",
+            "status_reason": null
+          }
+        }
+      ],
+      "rule_profile_reference": {
+        "declared_content_hash": "sha256:synthetic-profile",
+        "ordered_rule_specs": [
+          {
+            "applicability_reference": "profile:field-type:v1",
+            "position": 0,
+            "record_version": "2",
+            "requirement": "MANDATORY",
+            "resource_reference_ids": [],
+            "rule_id": "FIELD_TYPE_COMPATIBLE",
+            "rule_version": "v1"
+          }
+        ],
+        "profile_id": "hard-constraint-profile-synthetic",
+        "profile_version": "v1",
+        "record_version": "2",
+        "resource_references": [],
+        "theta_a_reference": {
+          "configuration_id": "theta-a-hc-v2",
+          "configuration_version": "v1",
+          "content_hash": "sha256:synthetic-theta-a",
+          "kind": "THETA_A",
+          "record_version": "1",
+          "state": "READY",
+          "status_reason": null
+        }
+      },
+      "theta_a_reference": {
+        "configuration_id": "theta-a-hc-v2",
+        "configuration_version": "v1",
+        "content_hash": "sha256:synthetic-theta-a",
+        "kind": "THETA_A",
+        "record_version": "1",
+        "state": "READY",
+        "status_reason": null
+      }
+    },
+    {"aggregate_reason":"MANDATORY_RULE_UNAVAILABLE","aggregate_state":"CONSTRAINT_UNAVAILABLE","c0_candidate":{"c0_candidate_id":"hc-v2-receipt:store-name:c0","candidate_id":"hc-v2-receipt:store-name:c0","field_id":"hc-v2-receipt:store-name","limit_status":"RETAINED","normalized_dedup_key":"pantry mart","overflow_reason":null,"preliminary_rank":null,"provenance":[{"candidate_id":"hc-v2-receipt:store-name:c0","field_id":"hc-v2-receipt:store-name","generic_rule_id":null,"original_observed_value":"PANTRY MART","provenance_id":"hc-v2-provenance-c0","receipt_id":"hc-v2-receipt","record_version":"1","resource_snapshot_id":null,"source_kind":"ORIGINAL","source_order_position":null,"source_order_relationship":null,"source_spans":[{"end":11,"record_version":"1","start":0,"text":"PANTRY MART","token_id":"store-token"}],"source_token_ids":["store-token"]}],"receipt_id":"hc-v2-receipt","record_version":"1","role":"ORIGINAL","value":"PANTRY MART"},"candidate":{"c0_candidate_id":"hc-v2-receipt:store-name:c0","candidate_id":"hc-v2-receipt:store-name:c0","field_id":"hc-v2-receipt:store-name","limit_status":"RETAINED","normalized_dedup_key":"pantry mart","overflow_reason":null,"preliminary_rank":null,"provenance":[{"candidate_id":"hc-v2-receipt:store-name:c0","field_id":"hc-v2-receipt:store-name","generic_rule_id":null,"original_observed_value":"PANTRY MART","provenance_id":"hc-v2-provenance-c0","receipt_id":"hc-v2-receipt","record_version":"1","resource_snapshot_id":null,"source_kind":"ORIGINAL","source_order_position":null,"source_order_relationship":null,"source_spans":[{"end":11,"record_version":"1","start":0,"text":"PANTRY MART","token_id":"store-token"}],"source_token_ids":["store-token"]}],"receipt_id":"hc-v2-receipt","record_version":"1","role":"ORIGINAL","value":"PANTRY MART"},"constraint_result_id":"hc-v2-receipt:store-name:c0:constraints:v2","field_id":"hc-v2-receipt:store-name","receipt_id":"hc-v2-receipt","record_version":"2","rule_outcomes":[{"attempted":false,"c0_candidate":{"c0_candidate_id":"hc-v2-receipt:store-name:c0","candidate_id":"hc-v2-receipt:store-name:c0","field_id":"hc-v2-receipt:store-name","limit_status":"RETAINED","normalized_dedup_key":"pantry mart","overflow_reason":null,"preliminary_rank":null,"provenance":[{"candidate_id":"hc-v2-receipt:store-name:c0","field_id":"hc-v2-receipt:store-name","generic_rule_id":null,"original_observed_value":"PANTRY MART","provenance_id":"hc-v2-provenance-c0","receipt_id":"hc-v2-receipt","record_version":"1","resource_snapshot_id":null,"source_kind":"ORIGINAL","source_order_position":null,"source_order_relationship":null,"source_spans":[{"end":11,"record_version":"1","start":0,"text":"PANTRY MART","token_id":"store-token"}],"source_token_ids":["store-token"]}],"receipt_id":"hc-v2-receipt","record_version":"1","role":"ORIGINAL","value":"PANTRY MART"},"candidate":{"c0_candidate_id":"hc-v2-receipt:store-name:c0","candidate_id":"hc-v2-receipt:store-name:c0","field_id":"hc-v2-receipt:store-name","limit_status":"RETAINED","normalized_dedup_key":"pantry mart","overflow_reason":null,"preliminary_rank":null,"provenance":[{"candidate_id":"hc-v2-receipt:store-name:c0","field_id":"hc-v2-receipt:store-name","generic_rule_id":null,"original_observed_value":"PANTRY MART","provenance_id":"hc-v2-provenance-c0","receipt_id":"hc-v2-receipt","record_version":"1","resource_snapshot_id":null,"source_kind":"ORIGINAL","source_order_position":null,"source_order_relationship":null,"source_spans":[{"end":11,"record_version":"1","start":0,"text":"PANTRY MART","token_id":"store-token"}],"source_token_ids":["store-token"]}],"receipt_id":"hc-v2-receipt","record_version":"1","role":"ORIGINAL","value":"PANTRY MART"},"evidence_availability":"UNAVAILABLE","evidence_references":[{"record_version":"2","reference_id":"hc-v2-receipt:store-name:c0:FIELD_TYPE_COMPATIBLE:evidence","reference_namespace":"D3_OPERAND_AUDIT","source_record_version":"hard-constraint-operands-record-v0"}],"field_id":"hc-v2-receipt:store-name","outcome_code":"REQUIRED_OPERAND_UNAVAILABLE","outcome_detail":"Required synthetic evidence is unavailable.","outcome_reason_kind":"UNAVAILABILITY","receipt_id":"hc-v2-receipt","record_version":"2","resource_references":[],"rule_outcome_id":"hc-v2-receipt:store-name:c0:FIELD_TYPE_COMPATIBLE:outcome","rule_profile_reference":{"declared_content_hash":"sha256:synthetic-profile","ordered_rule_specs":[{"applicability_reference":"profile:field-type:v1","position":0,"record_version":"2","requirement":"MANDATORY","resource_reference_ids":[],"rule_id":"FIELD_TYPE_COMPATIBLE","rule_version":"v1"}],"profile_id":"hard-constraint-profile-synthetic","profile_version":"v1","record_version":"2","resource_references":[],"theta_a_reference":{"configuration_id":"theta-a-hc-v2","configuration_version":"v1","content_hash":"sha256:synthetic-theta-a","kind":"THETA_A","record_version":"1","state":"READY","status_reason":null}},"rule_spec":{"applicability_reference":"profile:field-type:v1","position":0,"record_version":"2","requirement":"MANDATORY","resource_reference_ids":[],"rule_id":"FIELD_TYPE_COMPATIBLE","rule_version":"v1"},"state":"UNAVAILABLE","theta_a_reference":{"configuration_id":"theta-a-hc-v2","configuration_version":"v1","content_hash":"sha256:synthetic-theta-a","kind":"THETA_A","record_version":"1","state":"READY","status_reason":null}}],"rule_profile_reference":{"declared_content_hash":"sha256:synthetic-profile","ordered_rule_specs":[{"applicability_reference":"profile:field-type:v1","position":0,"record_version":"2","requirement":"MANDATORY","resource_reference_ids":[],"rule_id":"FIELD_TYPE_COMPATIBLE","rule_version":"v1"}],"profile_id":"hard-constraint-profile-synthetic","profile_version":"v1","record_version":"2","resource_references":[],"theta_a_reference":{"configuration_id":"theta-a-hc-v2","configuration_version":"v1","content_hash":"sha256:synthetic-theta-a","kind":"THETA_A","record_version":"1","state":"READY","status_reason":null}},"theta_a_reference":{"configuration_id":"theta-a-hc-v2","configuration_version":"v1","content_hash":"sha256:synthetic-theta-a","kind":"THETA_A","record_version":"1","state":"READY","status_reason":null}}
+  ],
+  "negative_cases": [
+    {
+      "case_id": "missing_rule_outcome",
+      "boundary": "JSON_DESERIALIZATION",
+      "operation": "JSON_REMOVE_LAST_RULE_OUTCOME",
+      "expected_error": "HardConstraintSerializationError",
+      "claim": "Removing a declared rule outcome is wrapped as a JSON reconstruction failure; absence is not UNAVAILABLE."
+    },
+    {
+      "case_id": "duplicate_rule_outcome",
+      "boundary": "JSON_DESERIALIZATION",
+      "operation": "JSON_DUPLICATE_FIRST_RULE_OUTCOME",
+      "expected_error": "HardConstraintSerializationError",
+      "claim": "Replacing a declared outcome with a duplicate is rejected during JSON reconstruction."
+    },
+    {
+      "case_id": "unexpected_rule_outcome",
+      "boundary": "JSON_DESERIALIZATION",
+      "operation": "JSON_APPEND_UNEXPECTED_RULE_OUTCOME",
+      "expected_error": "HardConstraintSerializationError",
+      "claim": "Appending an outcome beyond the declared profile is rejected during JSON reconstruction."
+    },
+    {
+      "case_id": "reordered_rule_outcome",
+      "boundary": "JSON_DESERIALIZATION",
+      "operation": "JSON_SWAP_FIRST_TWO_RULE_OUTCOMES",
+      "expected_error": "HardConstraintSerializationError",
+      "claim": "Swapping declared rule outcomes is rejected during JSON reconstruction."
+    },
+    {
+      "case_id": "profile_invalid",
+      "boundary": "STANDALONE_CONSTRUCTOR",
+      "operation": "CONSTRUCT_NOT_READY_PROFILE",
+      "expected_error": "HardConstraintProfileConfigurationError",
+      "claim": "A non-READY Theta_A makes the supplied profile structurally invalid."
+    },
+    {
+      "case_id": "aggregate_mismatch",
+      "boundary": "STANDALONE_CONSTRUCTOR",
+      "operation": "CONSTRUCT_AGGREGATE_MISMATCH",
+      "expected_error": "HardConstraintAuditIntegrityError",
+      "claim": "A caller-supplied aggregate that contradicts mandatory outcomes is rejected."
+    },
+    {
+      "case_id": "candidate_c0_mismatch",
+      "boundary": "STANDALONE_CONSTRUCTOR",
+      "operation": "CONSTRUCT_C0_CONTENT_MISMATCH",
+      "expected_error": "HardConstraintAuditIntegrityError",
+      "claim": "A value-altered permanent c0 record cannot authorize the original candidate audit."
+    },
+    {
+      "case_id": "source_binding_not_proven_by_json",
+      "boundary": "LIVE_D3_FACTORY",
+      "operation": "LIVE_COPY_CANDIDATE_AUDIT",
+      "expected_error": "HardConstraintSourceBindingError",
+      "claim": "Valid JSON can preserve content equality but cannot make a value-equal copied D3 audit the exact live aggregate member."
+    }
+  ],
+  "serialization_notes": {
+    "arrays": "Ordered tuples are serialized as JSON arrays and retain declared order.",
+    "decimal": "Decimal values are base-10 JSON strings; 0.8750 retains trailing zeros.",
+    "enums": "Enum values are their exact uppercase strings.",
+    "null": "Optional absent values are explicit JSON null.",
+    "unknown_fields": "Readers reject missing or unknown fields and unsupported versions."
+  }
+}
