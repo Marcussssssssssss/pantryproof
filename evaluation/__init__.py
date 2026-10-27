@@ -49,6 +49,13 @@ from evaluation.prediction_schema import (
     serialize_prediction_bundle,
     serialize_prediction_collection,
 )
+from evaluation.prediction_adapters import (
+    PredictionAdapterError,
+    RowOrdinalDeclarations,
+    adapt_b1_result_to_prediction_receipt,
+    adapt_b2_result_to_prediction_receipt,
+    adapt_b3_result_to_prediction_receipt,
+)
 from evaluation.prediction_validation import (
     PredictionValidationError,
     validate_prediction_bundle,
@@ -114,6 +121,7 @@ __all__ = (
     "ManifestValidationError",
     "PartitionDefinition",
     "PartitionRole",
+    "PredictionAdapterError",
     "PredictionBundle",
     "PredictionExecutionState",
     "PredictionField",
@@ -121,6 +129,7 @@ __all__ = (
     "PredictionProvenance",
     "PredictionReceipt",
     "PredictionValidationError",
+    "RowOrdinalDeclarations",
     "QADiagnosticStatus",
     "ReferenceAvailability",
     "ReferenceField",
@@ -135,6 +144,9 @@ __all__ = (
     "RelatedRecordGroup",
     "TierAReferenceReceipt",
     "related_receipt_components",
+    "adapt_b1_result_to_prediction_receipt",
+    "adapt_b2_result_to_prediction_receipt",
+    "adapt_b3_result_to_prediction_receipt",
     "serialize_evaluation_manifest",
     "serialize_exclusion_ledger",
     "serialize_prediction_bundle",
