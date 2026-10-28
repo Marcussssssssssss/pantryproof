@@ -348,3 +348,138 @@ remain unaccepted until its own independent review and explicit acceptance.
 
 No other receipt-join, row-alignment, normalization, threshold, metric,
 dataset, runtime, or proposed-method decision is approved by this entry.
+
+## 11. Task 2.5C2B row-alignment schema approval entry
+
+### 11.1 Approval envelope and authorization boundary
+
+| Field | Recorded value |
+| --- | --- |
+| Approval-entry ID | `EVAL-APP-2026-10-27-C2B-01` — local log ID, not a conversation-message ID |
+| Decision date | `2026-10-27` (27 October 2026) |
+| Approval source | Explicit user-provided FYP project conversation approval, dated 27 October 2026 |
+| Source-evidence strength | Supplied conversation approval; not independently authenticated |
+| Repository foundation | Commit `2206692`; identifies implementation context only and is not approval evidence |
+| Proposal context | `docs/proposed_evaluation_receipt_join_alignment_contract_v0.md` |
+| Named approver | Tai Yong Xin |
+| Registered role authority used | Evaluation Lead; Schema Owner |
+| Role-attribution limitation | Existing registered roles held by one named person; not a new appointment, separate role-specific attestation, or independent approval |
+| Design status | `DESIGN_APPROVED_FOR_SYNTHETIC_IMPLEMENTATION` |
+| Implementation status | `IMPLEMENTATION_NOT_YET_ACCEPTED` |
+| Current task implementation authorization | `NOT AUTHORIZED IN THIS TASK` |
+| Freeze status | `NOT EVALUATION_FROZEN` |
+| Independent review | Required as a separate subsequent gate; not recorded by this entry |
+| Amendment/supersession | None; the earlier six approvals remain active and unchanged |
+
+Subject to a later, separately authorized implementation task, this approval
+permits synthetic-only development of:
+
+- row-alignment link records;
+- completed, blocked, and unexecuted alignment states;
+- structural validators;
+- complete-coverage and one-to-one-cardinality checks for completed
+  alignments;
+- deterministic serialization;
+- synthetic tests;
+- development documentation; and
+- evaluation-package exports for the approved interfaces.
+
+This approval expressly excludes:
+
+- an actual row-matching algorithm;
+- text normalization;
+- Levenshtein distance or other similarity scoring;
+- matching thresholds;
+- tie-breaking and source-order methodology;
+- metric or denominator computation;
+- real dataset operations;
+- validation or held-out evaluation;
+- runtime extraction changes; and
+- Leng-owned proposed-method changes.
+
+These decisions do not constitute real identity verification, methodology
+freeze, dataset authorization, or evaluation authorization. No implementation
+is created or accepted by this log entry.
+
+### 11.2 `SCH-JA-05` — row-alignment states and complete coverage
+
+| Field | Recorded value |
+| --- | --- |
+| Decision ID | `SCH-JA-05` |
+| Status | `APPROVED` |
+| Approver | Tai Yong Xin |
+| Approval roles | Evaluation Lead; Schema Owner — existing registered roles, not separate attestations |
+| Date/source | `2026-10-27`; explicit user-provided FYP project conversation approval; envelope `EVAL-APP-2026-10-27-C2B-01` |
+| Authorization boundary | Section 11.1 synthetic-only boundary |
+| Implementation/freeze | `IMPLEMENTATION_NOT_YET_ACCEPTED`; `NOT EVALUATION_FROZEN` |
+
+Approved decision:
+
+Explicit row-alignment links shall use `MATCHED`, `REFERENCE_ONLY`, and
+`PREDICTION_ONLY` states.
+
+Prediction-row and reference-row identities remain independent.
+
+A completed row alignment must account for every in-scope prediction row and
+reference row exactly once, with no duplicate or conflicting matches and
+one-to-one cardinality.
+
+Blocked or unexecuted alignment must be represented separately, with an
+explicit reason and provenance, without fabricated row links.
+
+A fallback receipt containing no prediction rows must not be interpreted as
+proof that the alignment algorithm executed.
+
+The schema must distinguish completion, blocking, and nonexecution without
+automatically assigning evaluation metrics or denominator consequences.
+
+### 11.3 `SCH-JA-06` — immutable links and representational serialization
+
+| Field | Recorded value |
+| --- | --- |
+| Decision ID | `SCH-JA-06` |
+| Status | `APPROVED` |
+| Approver | Tai Yong Xin |
+| Approval roles | Evaluation Lead; Schema Owner — existing registered roles, not separate attestations |
+| Date/source | `2026-10-27`; explicit user-provided FYP project conversation approval; envelope `EVAL-APP-2026-10-27-C2B-01` |
+| Authorization boundary | Section 11.1 synthetic-only boundary |
+| Implementation/freeze | `IMPLEMENTATION_NOT_YET_ACCEPTED`; `NOT EVALUATION_FROZEN` |
+
+Approved decision:
+
+Row-alignment link records must be versioned and immutable.
+
+Serialization must be deterministic and identity-based, independent of input
+tuple order.
+
+Canonical serialization order is representational only. It must not be
+interpreted as:
+
+- receipt source order;
+- reference-row source order;
+- prediction-row source order; or
+- matcher execution order.
+
+Exact serialization mechanics remain provisional development choices unless
+separately approved.
+
+### 11.4 Approval-integrity limitations and outstanding conditions
+
+This entry records one named person's supplied design approval under existing
+registered evaluation-workstream roles. It does not establish:
+
+- a signature or authenticated identity assertion;
+- a separate role-specific attestation;
+- an independent reviewer or second approver;
+- an immutable conversation-message identifier;
+- an external approval record;
+- correctness or acceptance of a future implementation;
+- approval of row-matching, normalization, distance, threshold, tie-breaking,
+  source-order, metric, or denominator methodology;
+- real-data, dataset, validation, or held-out authorization; or
+- evaluation, methodology, configuration, software, or evidence freeze.
+
+The immediate outstanding condition is independent review of this appended
+approval entry. A separate implementation task and later implementation review
+and acceptance remain required before these decisions have accepted executable
+form.
