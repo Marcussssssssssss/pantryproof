@@ -114,6 +114,21 @@ from evaluation.receipt_join_validation import (
     validate_receipt_join_collection,
     validate_receipt_join_set,
 )
+from evaluation.row_alignment_schema import (
+    ROW_ALIGNMENT_SCHEMA_VERSION,
+    PredictionReferenceRowLink,
+    ReceiptRowAlignment,
+    RowAlignmentExecutionStatus,
+    RowAlignmentProvenance,
+    RowLinkOutcome,
+    serialize_row_alignment,
+    serialize_row_alignment_collection,
+)
+from evaluation.row_alignment_validation import (
+    RowAlignmentValidationError,
+    validate_row_alignment,
+    validate_row_alignment_collection,
+)
 
 __all__ = (
     "EXCLUSION_LEDGER_SCHEMA_VERSION",
@@ -123,6 +138,7 @@ __all__ = (
     "RECEIPT_JOIN_SCHEMA_VERSION",
     "RECEIPT_LEVEL_FIELD_NAMES",
     "REFERENCE_SCHEMA_VERSION",
+    "ROW_ALIGNMENT_SCHEMA_VERSION",
     "AdjudicationEventReference",
     "AlignmentDevelopmentSubset",
     "AnnotationEventReference",
@@ -155,6 +171,7 @@ __all__ = (
     "PredictionItemRow",
     "PredictionProvenance",
     "PredictionReceipt",
+    "PredictionReferenceRowLink",
     "PredictionValidationError",
     "RowOrdinalDeclarations",
     "QADiagnosticStatus",
@@ -183,8 +200,13 @@ __all__ = (
     "ReceiptJoinVerificationEvidence",
     "ReceiptJoinVerificationState",
     "ReceiptManifestEntry",
+    "ReceiptRowAlignment",
     "RelatedGroupKind",
     "RelatedRecordGroup",
+    "RowAlignmentExecutionStatus",
+    "RowAlignmentProvenance",
+    "RowAlignmentValidationError",
+    "RowLinkOutcome",
     "TierAReferenceReceipt",
     "related_receipt_components",
     "adapt_b1_result_to_prediction_receipt",
@@ -198,6 +220,8 @@ __all__ = (
     "serialize_reference_receipt",
     "serialize_receipt_join_collection",
     "serialize_receipt_join_set",
+    "serialize_row_alignment",
+    "serialize_row_alignment_collection",
     "to_deterministic_json",
     "to_json_compatible",
     "validate_evaluation_ready_receipt",
@@ -210,4 +234,6 @@ __all__ = (
     "validate_receipt_join_alignment_readiness",
     "validate_receipt_join_collection",
     "validate_receipt_join_set",
+    "validate_row_alignment",
+    "validate_row_alignment_collection",
 )
