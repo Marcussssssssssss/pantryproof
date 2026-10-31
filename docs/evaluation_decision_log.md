@@ -483,3 +483,318 @@ The immediate outstanding condition is independent review of this appended
 approval entry. A separate implementation task and later implementation review
 and acceptance remain required before these decisions have accepted executable
 form.
+
+## 12. Task 2.5C2C deterministic row-matcher owner-approval entry
+
+### 12.1 Approval envelope
+
+| Field | Proposed recorded value |
+|---|---|
+| Approval-entry ID | `EVAL-APP-2026-10-31-C2C-01` — proposed evaluation-log-local ID, not a conversation-message identifier |
+| Decision date | `2026-10-31` |
+| Named approver | Tai Yong Xin |
+| Recorded approval capacity | Task Owner, Extraction and Evaluation Workstream; existing registered Evaluation Lead |
+| Approval source | Direct supplied project-conversation statement, `approve all`, approving by reference the immediately preceding 30 October 2026 methodology review and its exact amendments |
+| Evidence strength | Supplied conversational owner approval; no immutable conversation-message ID, signature, authenticated identity assertion, independent timestamp, GitHub approval or external approval record |
+| Methodology-review source | Supplied 30 October 2026 project-conversation technical review; assistant-authored specification supporting the owner decision, not an independent human approval |
+| Repository foundation | PR #33 merge `3d64793`; current evaluation foundation `6351e2f`; repository revisions identify context only and are not approval evidence |
+| Proposal context | `docs/proposed_evaluation_receipt_join_alignment_contract_v0.md` |
+| Owner-level decision status | `APPROVED` within Tai’s recorded owner capacity |
+| Separate methodology approval | Required; not supplied |
+| Separate annotation/reference approval | Required for `MTH-JA-06`; not supplied |
+| Separate configuration/conformance approval | Required; not supplied |
+| Effective for synthetic matcher implementation | `NO` |
+| Implementation status | `NOT AUTHORIZED`; `NOT IMPLEMENTED`; `NOT ACCEPTED` |
+| Freeze status | `NOT EVALUATION_FROZEN` |
+| Independent review | Required; not recorded |
+| Amendment/supersession | New resolution of pending C2C questions; does not amend or supersede `SCH-JA-01` through `SCH-JA-06`, `EVAL-JA-05`, or `EVAL-JA-06` |
+
+This envelope records Tai Yong Xin’s supplied owner-level approval. It does not represent Tai as an independent methodology reviewer, annotation reviewer, governance approver or independent implementation reviewer. Required separate human confirmations remain unsatisfied.
+
+### 12.2 `TAI-JA-01` — Prediction row order
+
+| Field | Proposed value |
+|---|---|
+| Status | `APPROVED` at Tai-owner level |
+| Separate approval required | Named methodology reviewer |
+| Effective for synthetic implementation | `NO` |
+| Date/source | `2026-10-31`; envelope `EVAL-APP-2026-10-31-C2C-01` |
+
+Approved owner rule:
+
+1. The monotonic matcher shall use a separately declared, versioned and verified prediction-order evidence record.
+2. The evidence shall bind to the complete prediction scope, exact bundle, receipt, producer artifact and producer version.
+3. It shall identify every applicable prediction row exactly once and assign a dense permutation of positions `0..n-1`.
+4. Original immutable prediction-row IDs shall be preserved.
+5. Declaration provenance and independent verification provenance shall be distinct.
+6. The declaration shall exist before access to reference descriptions, match labels or matcher results.
+7. Missing rows, extra rows, duplicate row IDs, duplicate positions, non-dense positions, conflicting evidence, scope mismatch or unverifiable producer binding shall invalidate the evidence.
+8. `PredictionItemRow.output_ordinal`, dictionary iteration, copied reference order and copied `source_order` shall not independently establish semantic prediction order.
+9. A `JOINED` receipt without valid order evidence shall not produce a completed monotonic alignment.
+10. Synthetic fixtures may declare synthetic order evidence if it is explicitly labelled synthetic and makes no authenticated evaluation-provenance claim.
+
+Remaining conditions:
+
+- Identify the real B1/B2/B3 producer artifact and evidence route.
+- Define and approve the order-evidence record schema and verifier.
+- Obtain separate methodology approval.
+
+### 12.3 `MTH-JA-01` — Description normalization
+
+| Field | Proposed value |
+|---|---|
+| Status | `APPROVED` at Tai-owner level |
+| Separate approval required | Named methodology reviewer |
+| Effective for synthetic implementation | `NO` |
+| Date/source | `2026-10-31`; envelope `EVAL-APP-2026-10-31-C2C-01` |
+
+Approved owner rule:
+
+1. Accept only Unicode strings.
+2. Reject input containing unpaired surrogate code points.
+3. Apply Unicode NFKC using the frozen Unicode profile.
+4. Apply locale-independent full Unicode case folding.
+5. Collapse each maximal run of the Unicode 16.0 `White_Space` set to one U+0020 ASCII space. The set is:
+
+   `U+0009–U+000D`, `U+0020`, `U+0085`, `U+00A0`, `U+1680`,
+   `U+2000–U+200A`, `U+2028`, `U+2029`, `U+202F`, `U+205F`, `U+3000`.
+
+6. Remove leading and trailing U+0020 after whitespace collapse.
+7. Preserve every remaining code point, including punctuation. No quote, dash, retailer, product or other contextual rewriting is permitted.
+8. An available description that normalizes to the empty string is unusable and follows `MTH-JA-06`.
+9. The initial profile is tied to CPython `3.14.4` with `unicodedata`/UCD `16.0.0`, or to a language-neutral Unicode 16.0 implementation proven equivalent by the same approved conformance corpus.
+
+Remaining conditions:
+
+- Assign the normalization profile ID and version.
+- Approve the cross-runtime conformance corpus and digest.
+- Decide whether normalized outputs are stored or reproducibly recomputed.
+- Obtain separate methodology approval.
+
+### 12.4 `MTH-JA-02` — Normalized Levenshtein distance
+
+| Field | Proposed value |
+|---|---|
+| Status | `APPROVED` at Tai-owner level |
+| Separate approval required | Named methodology reviewer |
+| Effective for synthetic implementation | `NO` |
+| Date/source | `2026-10-31`; envelope `EVAL-APP-2026-10-31-C2C-01` |
+
+Approved owner rule:
+
+For normalized descriptions `a` and `b`, Levenshtein operates on Unicode code points.
+
+For nonempty strings, retain:
+
+- `edit_count = Lev(a,b)`;
+- `max_length = max(len(a),len(b))`; and
+- exact distance `edit_count/max_length`.
+
+The threshold shall be represented as a canonical reduced rational `p/q`, with `q > 0` and `0 ≤ p ≤ q`. Eligibility shall be determined without binary floating point:
+
+\[
+\text{edit\_count}\times q \le p\times\text{max\_length}.
+\]
+
+Additional rules:
+
+- Equal nonempty normalized strings are classified as `EXACT_NORMALIZED_DESCRIPTION`, not approximate matches.
+- If exactly one normalized string is empty, the distance is exactly `1/1`.
+- If both normalized strings are empty, comparison is unusable and follows `MTH-JA-06`; it is not an exact match.
+- Binary floating point shall not control eligibility, objective comparison or stored distance evidence.
+
+Remaining conditions:
+
+- Explicitly specify unit edit costs and executable base cases.
+- Define canonical rational serialization.
+- Approve cross-runtime arithmetic fixtures.
+- Obtain separate methodology approval.
+
+### 12.5 `MTH-JA-03` — Global monotonic matching
+
+| Field | Proposed value |
+|---|---|
+| Status | `APPROVED` at Tai-owner level |
+| Separate approval required | Named methodology reviewer |
+| Effective for synthetic implementation | `NO` |
+| Date/source | `2026-10-31`; envelope `EVAL-APP-2026-10-31-C2C-01` |
+
+Approved owner rule:
+
+1. Sort prediction and reference rows by their approved dense order positions.
+2. All selected matches, including exact matches, shall form one strictly increasing, non-crossing path.
+3. Each prediction and reference row may participate in at most one match.
+4. A nonexact edge is permitted only when its exact normalized Levenshtein distance is within the supplied threshold.
+5. Select the path using this lexicographic objective:
+
+   1. maximize the number of nonempty exact normalized pairs;
+   2. maximize the total number of permitted pairs;
+   3. minimize the exact rational sum of normalized Levenshtein distances;
+   4. minimize the sum of absolute differences between dense zero-based prediction and reference positions;
+   5. apply `MTH-JA-05`.
+
+6. Objective 1 has priority over objective 2. A path with more exact pairs wins even when this reduces the total number of matches.
+7. Raw, non-dense source-rank values shall not be subtracted for displacement.
+8. Every unselected prediction or reference row shall be retained explicitly as unmatched.
+9. No reference correctness value or downstream metric effect may influence path selection.
+
+Remaining conditions:
+
+- Approve an executable recurrence or equivalent conformance definition.
+- Define exact rational-sum serialization/comparison.
+- Obtain separate methodology approval.
+
+### 12.6 `MTH-JA-04` — Duplicate-description assignment
+
+| Field | Proposed value |
+|---|---|
+| Status | `APPROVED` at Tai-owner level |
+| Separate approval required | Named methodology reviewer |
+| Effective for synthetic implementation | `NO` |
+| Date/source | `2026-10-31`; envelope `EVAL-APP-2026-10-31-C2C-01` |
+
+Approved owner rule:
+
+1. Preserve every prediction and reference row identity, including rows with identical normalized descriptions.
+2. Do not collapse, merge, deduplicate or locally pre-pair duplicate descriptions.
+3. Treat every permitted occurrence pair as a distinct candidate edge.
+4. Assign duplicate occurrences only through the global objective in `MTH-JA-03` and total ordering in `MTH-JA-05`.
+5. Preserve surplus prediction and reference occurrences as explicit unmatched rows.
+6. Do not use correctness labels, unrelated reference fields, dictionary order or downstream metric effects to resolve duplicate assignment.
+
+Remaining conditions:
+
+- Approve adversarial duplicate fixtures.
+- Obtain separate methodology approval.
+
+### 12.7 `MTH-JA-05` — Complete deterministic tie-breaking
+
+| Field | Proposed value |
+|---|---|
+| Status | `APPROVED` at Tai-owner level |
+| Separate approval required | Named methodology reviewer |
+| Effective for synthetic implementation | `NO` |
+| Date/source | `2026-10-31`; envelope `EVAL-APP-2026-10-31-C2C-01` |
+
+Approved owner rule:
+
+After the first four objectives in `MTH-JA-03` are equal, compare in order:
+
+1. the matched reference dense-position sequence lexicographically;
+2. the matched prediction dense-position sequence lexicographically;
+3. the sequence of `(prediction_row_id, reference_row_id)` pairs lexicographically.
+
+ID and path comparison shall use these rules:
+
+- Use original immutable IDs without normalization or case folding.
+- Compare strings by their Unicode code-point integer sequences.
+- If one sequence is an exact prefix of another, the shorter sequence sorts first.
+- Apply the same lexicographic prefix rule to variable-length paths.
+- Although tied paths normally have equal match counts, variable-length behavior remains defined.
+- Equality of the final ID-pair sequence means the selected match path is identical; no unresolved alternative remains.
+- Dictionary insertion order, hash iteration order and reference correctness labels shall have no effect.
+
+Remaining conditions:
+
+- Approve shuffled-input and cross-runtime total-order fixtures.
+- Obtain separate methodology approval.
+
+### 12.8 `MTH-JA-06` — Missing and unavailable descriptions
+
+| Field | Proposed value |
+|---|---|
+| Status | `APPROVED` at Tai-owner level |
+| Separate approval required | Named methodology reviewer and named annotation/reference owner |
+| Effective for synthetic implementation | `NO` |
+| Date/source | `2026-10-31`; envelope `EVAL-APP-2026-10-31-C2C-01` |
+
+Approved owner rule:
+
+| State | Handling |
+|---|---|
+| Prediction description `MISSING` | Forced unmatched; preserve row and state |
+| Prediction description `UNRESOLVED` | Forced unmatched; preserve row, state and reason |
+| Finalized reference description `UNAVAILABLE` | Block receipt alignment unless a separately approved, truth-independent alternate row-association route exists |
+| Reference adjudication pending | Block receipt alignment |
+| Draft or unfinalized reference | Block receipt alignment |
+| Available description normalizes to empty | Block as malformed or unusable |
+| Invalid type or unpaired surrogate | Block receipt alignment |
+| Invalid identity, order evidence, threshold or configuration | Block receipt alignment |
+
+For completed alignments, forced-unmatched prediction rows remain in the complete coverage ledger.
+
+For blocked alignments, preserve the immutable source binding and source inventories, but do not fabricate row links, execution evidence, partial completion or metric consequences.
+
+Adjudication-pending truth shall not be treated as finalized unavailable truth.
+
+Remaining conditions:
+
+- Approve downstream population and metric consequences separately.
+- Approve any alternate association route separately.
+- Obtain separate methodology and annotation/reference-owner approvals.
+
+### 12.9 `EVAL-MCFG-01` — Matcher-configuration contract
+
+`EVAL-MCFG-01` is a proposed evaluation-log-local administrative ID. It is not a previously approved decision ID.
+
+| Field | Proposed value |
+|---|---|
+| Status | `APPROVED` at Tai-owner level |
+| Separate approval required | Named methodology/configuration reviewer and named conformance reviewer |
+| Effective for synthetic implementation | `NO` |
+| Date/source | `2026-10-31`; envelope `EVAL-APP-2026-10-31-C2C-01` |
+
+Approved owner rule:
+
+Each matcher configuration shall be immutable and versioned and contain:
+
+- configuration ID and version;
+- predecessor identity and amendment reason when applicable;
+- normalization profile ID/version;
+- distance formula ID/version;
+- monotonic-objective ID/version;
+- tie-breaking ID/version;
+- missing/unavailable-description policy ID/version;
+- prediction-order policy version;
+- exact order-evidence record reference;
+- threshold numerator and denominator as a reduced rational;
+- threshold provenance classification;
+- runtime, Unicode and arithmetic compatibility profile;
+- matcher implementation/software version;
+- canonical serialization version;
+- declared digest algorithm and content digest;
+- conformance-fixture identity and verified digest; and
+- provenance for configuration creation and review.
+
+A threshold used only for synthetic matcher tests shall be classified explicitly as `SYNTHETIC_FIXED_NOT_FITTED`. It shall not carry trained, selected, validation-frozen or evaluation-frozen status.
+
+Configuration history shall be append-only. Changes require a new version, predecessor identity, amendment reason, provenance and review evidence. Conflicting active successors shall fail closed.
+
+Remaining conditions:
+
+- Define the exact record schema and field types.
+- Define canonical serialization bytes.
+- Select the digest algorithm and digest scope.
+- Define threshold-provenance enums and validation rules.
+- Create and approve the conformance corpus and verified digest.
+- Approve configuration amendment/conflict validation.
+- Obtain separate methodology/configuration and conformance approvals.
+
+### 12.10 Envelope restrictions
+
+This envelope does not authorize:
+
+- matcher implementation;
+- synthetic implementation files or tests;
+- real prediction-order evidence production;
+- threshold-grid creation or threshold fitting;
+- treating a synthetic threshold as trained;
+- real receipt matching;
+- metric or denominator computation;
+- dataset access;
+- validation or held-out execution;
+- comparator, configuration, methodology, software or evidence freeze;
+- modification of runtime or proposed-method contracts; or
+- modification of previously approved `SCH-JA` decisions.
+
+`TAI-JA-02`, `MTH-JA-07`, `MTH-JA-08`, applicable governance decisions and proposed-method integration decisions remain pending.
