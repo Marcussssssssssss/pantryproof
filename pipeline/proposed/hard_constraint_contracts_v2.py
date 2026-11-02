@@ -1094,7 +1094,7 @@ def _rank(value: Any) -> PreliminaryRankV1:
             data["normalized_candidate_text"], "normalized_candidate_text"
         ),
         rank_position=_integer(data["rank_position"], "rank_position"),
-        tie_group_id=_string(data["tie_group_id"], "tie_group_id"),
+        tie_group_id=_optional_string(data["tie_group_id"], "tie_group_id"),
         record_version=_string(data["record_version"], "record_version"),
     )
 
