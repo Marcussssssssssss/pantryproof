@@ -873,6 +873,66 @@ class ProposedHardConstraintContractV2Tests(unittest.TestCase):
         )
         self.assertIsNone(decoded["rule_outcomes"][0]["outcome_code"])
 
+    def test_rank_json_round_trip_preserves_nullable_and_non_null_tie_groups(
+        self,
+    ) -> None:
+        c0 = self.original()
+        altered = self.altered(c0)
+        cases = (
+            ("nullable", None),
+            ("non_null", "rank-tie-001"),
+        )
+        for case_name, tie_group_id in cases:
+            with self.subTest(case_name=case_name):
+                candidate = replace(
+                    altered,
+                    preliminary_rank=replace(
+                        altered.preliminary_rank,
+                        tie_group_id=tie_group_id,
+                    ),
+                )
+                payload = constraint_result_v2_to_json(
+                    self.result(candidate=candidate, c0=c0)
+                )
+                rebuilt = constraint_result_v2_from_json(payload)
+                self.assertEqual(
+                    rebuilt.candidate.preliminary_rank.tie_group_id,
+                    tie_group_id,
+                )
+                self.assertEqual(constraint_result_v2_to_json(rebuilt), payload)
+
+    def test_rank_decoder_rejects_invalid_non_null_tie_group_values(self) -> None:
+        c0 = self.original()
+        document = json.loads(
+            constraint_result_v2_to_json(
+                self.result(candidate=self.altered(c0), c0=c0)
+            )
+        )
+        invalid_values = (1, True, 1.5, [], {}, "")
+        for invalid_value in invalid_values:
+            with self.subTest(invalid_value=invalid_value):
+                mutation = json.loads(json.dumps(document))
+                mutation["candidate"]["preliminary_rank"]["tie_group_id"] = (
+                    invalid_value
+                )
+                with self.assertRaises(HardConstraintSerializationError):
+                    constraint_result_v2_from_json(json.dumps(mutation))
+
+    def test_rank_decoder_requires_every_rank_field(self) -> None:
+        c0 = self.original()
+        document = json.loads(
+            constraint_result_v2_to_json(
+                self.result(candidate=self.altered(c0), c0=c0)
+            )
+        )
+        rank_fields = tuple(document["candidate"]["preliminary_rank"])
+        for field_name in rank_fields:
+            with self.subTest(field_name=field_name):
+                mutation = json.loads(json.dumps(document))
+                del mutation["candidate"]["preliminary_rank"][field_name]
+                with self.assertRaises(HardConstraintSerializationError):
+                    constraint_result_v2_from_json(json.dumps(mutation))
+
     def test_serialization_rejects_unknown_fields_versions_enums_and_decimal_numbers(self) -> None:
         decoded = json.loads(constraint_result_v2_to_json(self.result()))
         mutations = []
