@@ -265,40 +265,50 @@ def _parse_candidate_literal(value: str) -> tuple[bool, _b3.DateParseResult]:
         raise PurchaseDateParserCompatibilityError(
             "The public B3 parser returned an incompatible result type."
         )
-    if parsed.original != value or not isinstance(parsed.state, _b3.B3ParseState):
+    try:
+        original = parsed.original
+        state = parsed.state
+        normalized_value = parsed.normalized_value
+        interpretations = parsed.interpretations
+    except AttributeError as exc:
+        raise PurchaseDateParserCompatibilityError(
+            "The public B3 parser result is missing required attributes."
+        ) from exc
+
+    if original != value or not isinstance(state, _b3.B3ParseState):
         raise PurchaseDateParserCompatibilityError(
             "The public B3 parser changed literal or state semantics."
         )
-    if not isinstance(parsed.interpretations, tuple) or any(
-        not isinstance(item, str) or not item for item in parsed.interpretations
+    if not isinstance(interpretations, tuple) or any(
+        not isinstance(item, str) or not item for item in interpretations
     ):
         raise PurchaseDateParserCompatibilityError(
             "The public B3 parser returned malformed interpretations."
         )
-    if len(parsed.interpretations) != len(set(parsed.interpretations)):
+    if len(interpretations) != len(set(interpretations)):
         raise PurchaseDateParserCompatibilityError(
             "The public B3 parser did not collapse duplicate interpretations."
         )
 
-    if parsed.state is _b3.B3ParseState.VALID:
+    if state is _b3.B3ParseState.VALID:
         if (
             not recognized
-            or not isinstance(parsed.normalized_value, str)
-            or not parsed.normalized_value
-            or parsed.interpretations != (parsed.normalized_value,)
+            or not isinstance(normalized_value, str)
+            or not normalized_value
+            or interpretations != (normalized_value,)
         ):
             raise PurchaseDateParserCompatibilityError(
                 "B3 VALID behavior differs from the approved grammar contract."
             )
-    elif parsed.state is _b3.B3ParseState.AMBIGUOUS:
-        if recognized is False or parsed.normalized_value is not None or len(
-            parsed.interpretations
+    elif state is _b3.B3ParseState.AMBIGUOUS:
+        if recognized is False or normalized_value is not None or len(
+            interpretations
         ) < 2:
             raise PurchaseDateParserCompatibilityError(
                 "B3 AMBIGUOUS behavior differs from the approved grammar contract."
             )
-    elif parsed.state is _b3.B3ParseState.INVALID:
-        if parsed.normalized_value is not None or parsed.interpretations:
+    elif state is _b3.B3ParseState.INVALID:
+        if normalized_value is not None or interpretations:
             raise PurchaseDateParserCompatibilityError(
                 "B3 INVALID behavior differs from the approved grammar contract."
             )
