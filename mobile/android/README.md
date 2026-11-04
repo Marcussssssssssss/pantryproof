@@ -111,6 +111,21 @@ documented under `verification/m2d`. The report distinguishes verified
 TalkBack focus/navigation from spoken output that still requires a human
 listening pass.
 
+## Verified Android versions
+
+**API26_VERIFIED** — On 2026-11-04 the complete workflow ran on Android 8.0 /
+API 26 using the official `system-images;android-26;google_apis;x86_64` image:
+debug assembly and lint passed, all 15 unit tests passed, and all 13
+instrumentation tests passed. The real `ACTION_OPEN_DOCUMENT` picker was also
+opened and cancelled successfully on the isolated API 26 AVD. The app-scoped
+synthetic image fixture required no shared-storage permission.
+
+The same post-fix suite passed on Android 16 / API 36 with 15 unit and 13
+instrumentation tests. API 26 and API 36 XML/HTML reports and synthetic-only
+screenshots are preserved under `verification/m3a`. Audible TalkBack speech and
+high-contrast rendering remain hardware/environment verification gaps rather
+than claims of completed accessibility coverage.
+
 The local machine needs JDK 17 or newer and Android SDK platform 36. Set
 ANDROID_HOME or provide an ignored local.properties when the SDK is not
 discovered automatically.

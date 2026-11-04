@@ -6,6 +6,7 @@ import android.widget.EditText
 import android.widget.TextView
 import android.os.ParcelFileDescriptor.AutoCloseInputStream
 import android.os.SystemClock
+import androidx.core.view.ViewCompat
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.Espresso.pressBack
 import androidx.test.espresso.action.ViewActions.click
@@ -126,7 +127,10 @@ class PantryProofStateAccessibilityInstrumentedTest {
 
             assertNotNull(findLabelFor(root, storeField.id))
             assertNotNull(findLabelFor(root, dateField.id))
-            assertEquals(activity.getString(R.string.review_title), root.accessibilityPaneTitle)
+            assertEquals(
+                activity.getString(R.string.review_title),
+                ViewCompat.getAccessibilityPaneTitle(root),
+            )
             assertEquals(View.ACCESSIBILITY_LIVE_REGION_POLITE, errorSummary.accessibilityLiveRegion)
             assertTrue(confirm.measuredHeight >= minimum)
             assertTrue(back.measuredWidth >= minimum)
@@ -191,18 +195,22 @@ class PantryProofStateAccessibilityInstrumentedTest {
                 assertTrue(field.lineCount >= 2)
             }
         } finally {
-            restoreFontScale(originalFontScale)
-            awaitStableFontScale(originalConfigurationScale)
-            activityRule.scenario.recreate()
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-            assertEquals(originalFontScale, readFontScale())
-            activityRule.scenario.onActivity { activity ->
-                assertEquals(
-                    originalConfigurationScale,
-                    activity.resources.configuration.fontScale,
-                    0.01f,
-                )
+            try {
+                setFontScale(originalFontScale ?: originalConfigurationScale.toString())
+                awaitStableFontScale(originalConfigurationScale)
+                activityRule.scenario.recreate()
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                activityRule.scenario.onActivity { activity ->
+                    assertEquals(
+                        originalConfigurationScale,
+                        activity.resources.configuration.fontScale,
+                        0.01f,
+                    )
+                }
+            } finally {
+                if (originalFontScale == null) restoreFontScale(null)
             }
+            assertEquals(originalFontScale, readFontScale())
         }
     }
 
