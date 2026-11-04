@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- PantryProof semantic light-theme roles. -->
+    <color name="pantry_primary">#176B52</color>
+    <color name="pantry_on_primary">#FFFFFF</color>
+    <color name="pantry_primary_container">#D1EFE4</color>
+    <color name="pantry_on_primary_container">#0A3D2F</color>
+    <color name="pantry_secondary">#8A451F</color>
+    <color name="pantry_secondary_container">#FFE1CC</color>
+    <color name="pantry_on_secondary_container">#6D3517</color>
+    <color name="pantry_surface">#FFF9EF</color>
+    <color name="pantry_surface_container">#F4F0E7</color>
+    <color name="pantry_surface_bright">#FFFFFF</color>
+    <color name="pantry_on_surface">#17312A</color>
+    <color name="pantry_on_surface_variant">#56645F</color>
+    <color name="pantry_outline">#6F7975</color>
+    <color name="pantry_outline_variant">#D8DFDC</color>
+    <color name="pantry_error">#B3261E</color>
+    <color name="pantry_error_container">#F9DEDC</color>
+    <color name="pantry_on_error_container">#601410</color>
+    <color name="pantry_info_container">#E2F0FA</color>
+    <color name="pantry_on_info_container">#194F75</color>
+
+    <!-- Existing aliases retained for compatibility with the prototype theme/icon. -->
+    <color name="pantry_green_dark">#0C4938</color>
+    <color name="pantry_cream">#FFF9EF</color>
+    <color name="pantry_orange">#E47C3C</color>
+</resources>

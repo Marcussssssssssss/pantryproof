@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PantryProof</string>
+    <string name="demo_label">Demo</string>
+    <string name="status_temporary">Temporary</string>
+    <string name="status_synthetic">Synthetic</string>
+    <string name="navigate_back">Navigate back</string>
+
+    <string name="home_brand_eyebrow">PANTRYPROOF</string>
+    <string name="home_brand_title">Receipt to pantry,\nwith you in control.</string>
+    <string name="home_brand_subtitle">Local-first grocery receipt intelligence</string>
+    <string name="home_add_receipt">Add receipt</string>
+    <string name="home_local_note_title">Local image access</string>
+    <string name="home_local_note_body">A chosen image stays on this device in the current prototype. No OCR or upload runs.</string>
+    <string name="home_inventory_title">Household inventory</string>
+    <plurals name="home_inventory_count">
+        <item quantity="one">%1$d temporary mock item</item>
+        <item quantity="other">%1$d temporary mock items</item>
+    </plurals>
+    <string name="home_inventory_action">View inventory</string>
+    <string name="home_demo_title">Try the synthetic demo</string>
+    <string name="home_demo_body">Preview a fictional receipt and sample fields without selecting an image.</string>
+    <string name="home_demo_action">Open synthetic demo</string>
+    <string name="home_boundary_title">Prototype mode</string>
+    <string name="home_boundary_body">Synthetic data only. OCR, automatic correction, scoring and durable inventory are not connected.</string>
+
+    <string name="add_receipt_title">Add receipt</string>
+    <string name="add_receipt_step_title">Choose a receipt source</string>
+    <string name="add_receipt_step_description">Import an image locally or continue with the clearly labelled synthetic demo.</string>
+    <string name="add_receipt_import">Import receipt image</string>
+    <string name="add_receipt_import_help">Uses Android’s system image picker. No broad storage permission is requested.</string>
+    <string name="add_receipt_camera">Take a photo</string>
+    <string name="add_receipt_camera_unavailable">Not available in this prototype</string>
+    <string name="add_receipt_camera_help">Camera capture is deferred. This control is shown for clarity but cannot be activated.</string>
+    <string name="add_receipt_demo">Use synthetic demo</string>
+    <string name="add_receipt_demo_help">Opens the deterministic fictional receipt without using a personal image.</string>
+    <string name="add_receipt_privacy_title">On-device selection</string>
+    <string name="add_receipt_privacy_body">The current prototype can preview the image you choose. It does not upload or process the image.</string>
+
+    <string name="preview_title">Receipt preview</string>
+    <string name="preview_step_title">Check the receipt image</string>
+    <string name="preview_step_description">Confirm the source before continuing.</string>
+    <string name="preview_synthetic_status">Synthetic demo</string>
+    <string name="preview_synthetic_status_body">This illustrated receipt is fictional and deterministic.</string>
+    <string name="preview_local_status">Local image · Not processed</string>
+    <string name="preview_local_status_body">No OCR or field extraction has run on this image.</string>
+    <string name="preview_local_warning_title">Sample data follows</string>
+    <string name="preview_local_warning_body">The next values are synthetic sample data and are not extracted from or associated with this image.</string>
+    <string name="preview_view_sample_fields">View sample receipt fields</string>
+    <string name="preview_continue_demo">Continue to synthetic demo</string>
+    <string name="preview_choose_image">Choose receipt image</string>
+    <string name="preview_choose_another">Choose another image</string>
+    <string name="preview_remove_image">Remove selected image</string>
+    <string name="preview_cancel">Cancel receipt flow</string>
+    <string name="preview_image_unavailable_title">Image unavailable</string>
+    <string name="preview_image_unavailable_body">The image can no longer be opened. Choose it again or use the synthetic demo.</string>
+    <string name="preview_use_demo_instead">Use synthetic demo instead</string>
+    <string name="preview_selected_image_description">Locally selected receipt image preview</string>
+    <string name="preview_synthetic_image_description">Illustrated synthetic demo receipt for Demo Grocery Store</string>
+    <string name="selection_unavailable_title">Selection unavailable</string>
+
+    <string name="progress_accessibility">Step %1$d of 4, %2$s</string>
+    <string name="progress_visible">%1$d OF 4</string>
+    <string name="action_arrow">%1$s  →</string>
+
+    <string name="details_title">Sample receipt fields</string>
+    <string name="details_step_title">Review the sample fields</string>
+    <string name="details_step_description">Check every synthetic value before making temporary corrections.</string>
+    <string name="details_demo_title">Synthetic receipt source</string>
+    <string name="details_demo_body">These deterministic sample values were not produced by OCR or automatic correction.</string>
+    <string name="details_local_demo_body">These synthetic sample values are unrelated to the locally selected image.</string>
+    <string name="details_summary_title">Receipt summary</string>
+    <string name="field_store_name">Store name</string>
+    <string name="field_purchase_date">Purchase date</string>
+    <string name="field_receipt_total">Receipt total</string>
+    <string name="field_description">Description</string>
+    <string name="field_quantity">Quantity</string>
+    <string name="field_unit_price">Unit price</string>
+    <string name="field_line_total">Line total</string>
+    <string name="details_items_title">Receipt items</string>
+    <string name="details_item_number">Item %1$d</string>
+    <plurals name="details_item_status">
+        <item quantity="one">%1$d item · %2$d optional value not provided</item>
+        <item quantity="other">%1$d items · %2$d optional value not provided</item>
+    </plurals>
+    <string name="details_unit_price_missing">Not provided (optional)</string>
+    <string name="details_review_action">Review and correct</string>
+    <string name="details_back_action">Back to image preview</string>
+
+    <string name="review_title">Manual review</string>
+    <string name="review_step_title">Review and correct</string>
+    <string name="review_step_description">Correct the synthetic sample, then confirm it for a temporary inventory preview.</string>
+    <string name="review_boundary_title">In-memory demo only</string>
+    <string name="review_boundary_body">Changes do not retrain a model, verify arithmetic, process an image or write to a database.</string>
+    <string name="review_status_clean">No unsaved changes</string>
+    <string name="review_status_dirty">Unsaved temporary edits</string>
+    <string name="review_status_saved">Temporary edits applied for this app session</string>
+    <plurals name="review_error_summary_title">
+        <item quantity="one">%1$d field needs attention</item>
+        <item quantity="other">%1$d fields need attention</item>
+    </plurals>
+    <string name="review_error_summary_body">Correct the highlighted fields. Focus moved to the first issue.</string>
+    <string name="review_receipt_section">Receipt information</string>
+    <string name="review_items_section">Items</string>
+    <string name="review_item_number">Item %1$d</string>
+    <string name="review_required_helper">Required</string>
+    <string name="review_date_helper">Required · Use YYYY-MM-DD</string>
+    <string name="review_unit_price_helper">Optional · Amount in RM · Leave blank when unavailable</string>
+    <string name="review_money_helper">Required · Amount in RM</string>
+    <string name="review_apply_action">Apply temporary edits</string>
+    <string name="review_confirm_action">Confirm for temporary inventory</string>
+    <string name="review_discard_action">Discard unsaved changes</string>
+    <string name="review_revert_action">Revert demo values</string>
+    <string name="review_back_action">Return to receipt details</string>
+    <string name="review_discard_title">Discard unsaved edits?</string>
+    <string name="review_discard_message">The current form changes will be replaced with the last applied temporary values.</string>
+    <string name="review_keep_editing">Keep editing</string>
+    <string name="review_discard_confirm">Discard changes</string>
+    <string name="review_revert_title">Revert demo values?</string>
+    <string name="review_revert_message">This restores the original deterministic synthetic receipt and removes its temporary confirmation.</string>
+    <string name="review_revert_confirm">Revert values</string>
+    <string name="review_success_title">Temporary receipt confirmed</string>
+    <string name="review_success_body">The local demo state is ready to preview. Nothing was uploaded or saved permanently.</string>
+    <string name="review_view_inventory">View temporary inventory</string>
+    <string name="review_return_home">Return home</string>
+
+    <string name="inventory_title">Household inventory</string>
+    <string name="inventory_banner_title">Temporary preview · Not saved permanently</string>
+    <string name="inventory_banner_confirmed">Confirmed synthetic receipt items are included for this app session.</string>
+    <string name="inventory_banner_mock">These fictional stock values exist only in the current UI session.</string>
+    <plurals name="inventory_summary">
+        <item quantity="one">%1$d temporary item row</item>
+        <item quantity="other">%1$d temporary item rows</item>
+    </plurals>
+    <string name="inventory_item_source">From temporary receipt preview</string>
+    <string name="inventory_quantity_label">Temporary quantity: %1$d</string>
+    <string name="inventory_decrease">Decrease %1$s quantity</string>
+    <string name="inventory_increase">Increase %1$s quantity</string>
+    <string name="inventory_minimum_hint">Minimum quantity reached</string>
+    <string name="inventory_maximum_hint">Maximum temporary quantity reached</string>
+    <string name="inventory_empty_title">No temporary items yet</string>
+    <string name="inventory_empty_body">Confirm the synthetic receipt to preview its items here.</string>
+    <string name="inventory_add_receipt">Add another receipt</string>
+    <string name="inventory_back_home">Back to dashboard</string>
+</resources>

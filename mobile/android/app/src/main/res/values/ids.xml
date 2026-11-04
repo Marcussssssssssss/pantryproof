@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="screen_home" type="id" />
+    <item name="screen_add_receipt" type="id" />
+    <item name="screen_preview" type="id" />
+    <item name="screen_details" type="id" />
+    <item name="screen_review" type="id" />
+    <item name="screen_inventory" type="id" />
+
+    <item name="app_bar_back" type="id" />
+    <item name="home_add_receipt" type="id" />
+    <item name="home_synthetic_demo" type="id" />
+    <item name="home_inventory" type="id" />
+    <item name="add_import_image" type="id" />
+    <item name="add_use_demo" type="id" />
+    <item name="preview_continue" type="id" />
+    <item name="preview_choose_another" type="id" />
+    <item name="preview_use_demo" type="id" />
+    <item name="details_review" type="id" />
+    <item name="details_item_0" type="id" />
+    <item name="details_item_1" type="id" />
+    <item name="details_item_2" type="id" />
+
+    <item name="review_error_summary" type="id" />
+    <item name="review_status" type="id" />
+    <item name="review_store_name" type="id" />
+    <item name="review_purchase_date" type="id" />
+    <item name="review_item_0_description" type="id" />
+    <item name="review_item_0_quantity" type="id" />
+    <item name="review_item_0_unit_price" type="id" />
+    <item name="review_item_0_line_total" type="id" />
+    <item name="review_item_1_description" type="id" />
+    <item name="review_item_1_quantity" type="id" />
+    <item name="review_item_1_unit_price" type="id" />
+    <item name="review_item_1_line_total" type="id" />
+    <item name="review_item_2_description" type="id" />
+    <item name="review_item_2_quantity" type="id" />
+    <item name="review_item_2_unit_price" type="id" />
+    <item name="review_item_2_line_total" type="id" />
+    <item name="review_receipt_total" type="id" />
+    <item name="review_confirm" type="id" />
+    <item name="review_apply" type="id" />
+    <item name="review_discard" type="id" />
+    <item name="review_revert" type="id" />
+    <item name="review_success" type="id" />
+    <item name="review_view_inventory" type="id" />
+
+    <item name="inventory_summary" type="id" />
+    <item name="inventory_stock_rice_decrease" type="id" />
+    <item name="inventory_stock_rice_value" type="id" />
+    <item name="inventory_stock_rice_increase" type="id" />
+</resources>
