@@ -1,0 +1,127 @@
+{
+  "fixtureStatus": "DRAFT_NOT_APPROVED — SYNTHETIC_ONLY",
+  "scenario": "missing-required-store-name",
+  "expectedResult": "ACCEPT",
+  "envelope": {
+    "schemaName": "receipt-presentation",
+    "schemaVersion": "1",
+    "sourceContractVersion": "0",
+    "requestId": "request-synthetic-store-missing-001",
+    "imageId": "image-synthetic-store-missing-001",
+    "source": {
+      "type": "SYNTHETIC_FIXTURE",
+      "provenance": {
+        "sourceSystem": "M3D_SYNTHETIC_FIXTURE",
+        "sourceReference": "source-synthetic-store-missing-001",
+        "contentSha256": null
+      }
+    },
+    "outcome": { "status": "RESULT_AVAILABLE", "failure": null },
+    "sourceEvidence": {
+      "sourceProcessingStatus": "OCR_PARTIAL",
+      "tokenIds": [
+        "token-store-missing-date",
+        "token-store-missing-description",
+        "token-store-missing-quantity",
+        "token-store-missing-unit-price",
+        "token-store-missing-line-total",
+        "token-store-missing-receipt-total"
+      ]
+    },
+    "sourceGate": {
+      "gateResultId": "gate-synthetic-store-missing-001",
+      "decision": "SUFFICIENT",
+      "reasons": []
+    },
+    "automaticExtraction": {
+      "stage": "PRE_REVIEW_AUTOMATIC",
+      "extractionStatus": "PARTIAL",
+      "producer": {
+        "producerId": "SYNTHETIC_FIXTURE_PRODUCER",
+        "producerVersion": "draft-1"
+      }
+    },
+    "receipt": {
+      "receiptId": "receipt-synthetic-store-missing-001",
+      "receiptFields": [
+        {
+          "fieldId": "field-store-missing-store",
+          "role": "STORE_NAME",
+          "status": "MISSING",
+          "originalAutomaticValue": null,
+          "presentationValue": null,
+          "absenceReason": "STORE_NAME_NOT_OBSERVED",
+          "sourceTokenIds": [],
+          "nativeConfidence": null
+        },
+        {
+          "fieldId": "field-store-missing-date",
+          "role": "PURCHASE_DATE",
+          "status": "EXTRACTED",
+          "originalAutomaticValue": "2026-10-22",
+          "presentationValue": "2026-10-22",
+          "absenceReason": null,
+          "sourceTokenIds": ["token-store-missing-date"],
+          "nativeConfidence": null
+        },
+        {
+          "fieldId": "field-store-missing-receipt-total",
+          "role": "RECEIPT_TOTAL",
+          "status": "EXTRACTED",
+          "originalAutomaticValue": "RM 9.40",
+          "presentationValue": "9.40",
+          "absenceReason": null,
+          "sourceTokenIds": ["token-store-missing-receipt-total"],
+          "nativeConfidence": null
+        }
+      ],
+      "itemRows": [
+        {
+          "rowId": "row-store-missing-001",
+          "fields": [
+            {
+              "fieldId": "field-store-missing-description",
+              "role": "ITEM_DESCRIPTION",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "Telur Gred B",
+              "presentationValue": "Telur Gred B",
+              "absenceReason": null,
+              "sourceTokenIds": ["token-store-missing-description"],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-store-missing-quantity",
+              "role": "QUANTITY",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "1",
+              "presentationValue": "1",
+              "absenceReason": null,
+              "sourceTokenIds": ["token-store-missing-quantity"],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-store-missing-unit-price",
+              "role": "UNIT_PRICE",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "RM 9.40",
+              "presentationValue": "9.40",
+              "absenceReason": null,
+              "sourceTokenIds": ["token-store-missing-unit-price"],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-store-missing-line-total",
+              "role": "LINE_TOTAL",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "RM 9.40",
+              "presentationValue": "9.40",
+              "absenceReason": null,
+              "sourceTokenIds": ["token-store-missing-line-total"],
+              "nativeConfidence": null
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
