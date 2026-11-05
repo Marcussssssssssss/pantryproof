@@ -142,6 +142,66 @@ class ProposedBackendObservationalPathTests(unittest.TestCase):
             path_module.__all__,
         )
 
+    def test_private_graph_helper_returns_exact_audit_supplied_to_g2a(self) -> None:
+        inputs = self.inputs(
+            synthetic_values=("31/02/2026", "10/11/2026"),
+            candidate_limit=3,
+        )
+        stage = path_module._evaluate_purchase_date_constraint_stage_v0
+        with patch.object(
+            path_module,
+            "_evaluate_purchase_date_constraint_stage_v0",
+            wraps=stage,
+        ) as stage_call:
+            operand_audit, results = (
+                path_module._execute_purchase_date_observational_graph_v0(
+                    **inputs
+                )
+            )
+
+        stage_call.assert_called_once()
+        self.assertIs(operand_audit, stage_call.call_args.kwargs["operand_audit"])
+        self.assertEqual(len(operand_audit.candidate_audits), len(results))
+        self.assertTrue(
+            all(
+                result.candidate is audit.candidate
+                for audit, result in zip(
+                    operand_audit.candidate_audits,
+                    results,
+                    strict=True,
+                )
+            )
+        )
+        c0 = operand_audit.candidate_audits[0].candidate
+        self.assertTrue(all(result.c0_candidate is c0 for result in results))
+
+    def test_private_graph_helper_executes_generation_d3_and_g2a_once(self) -> None:
+        inputs = self.inputs(
+            synthetic_values=("31/02/2026", "10/11/2026"),
+            candidate_limit=3,
+        )
+        generation = path_module._generate_candidate_drafts
+        d3 = path_module._audit_hard_constraint_operands
+        g2a = path_module._evaluate_purchase_date_constraint_stage_v0
+        with patch.object(
+            path_module,
+            "_generate_candidate_drafts",
+            wraps=generation,
+        ) as generation_call, patch.object(
+            path_module,
+            "_audit_hard_constraint_operands",
+            wraps=d3,
+        ) as d3_call, patch.object(
+            path_module,
+            "_evaluate_purchase_date_constraint_stage_v0",
+            wraps=g2a,
+        ) as g2a_call:
+            path_module._execute_purchase_date_observational_graph_v0(**inputs)
+
+        generation_call.assert_called_once()
+        d3_call.assert_called_once()
+        g2a_call.assert_called_once()
+
     def test_natural_adapter_path_preserves_c0_and_does_not_rerun_upstream(self) -> None:
         inputs = self.inputs(synthetic_values=None, candidate_limit=2)
         adapter = inputs["adapter_result"]

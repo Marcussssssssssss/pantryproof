@@ -39,6 +39,7 @@ from pipeline.proposed.hard_constraint_contracts_v2 import (
     HardConstraintProfileRefV2,
 )
 from pipeline.proposed.hard_constraint_operands import (
+    HardConstraintOperandAuditResultV0,
     audit_hard_constraint_operands as _audit_hard_constraint_operands,
 )
 from pipeline.proposed.purchase_date_constraint_stage import (
@@ -64,6 +65,33 @@ def execute_purchase_date_observational_path_v0(
     Every intermediate record is immutable and remains local.  Existing typed
     validation exceptions propagate unchanged, so no partial result tuple is
     returned when any candidate or binding fails.
+    """
+
+    _, constraint_results = _execute_purchase_date_observational_graph_v0(
+        adapter_result=adapter_result,
+        suspicion_result=suspicion_result,
+        ranking_configuration=ranking_configuration,
+        limiting_configuration=limiting_configuration,
+        rule_profile_reference=rule_profile_reference,
+        grammar_reference=grammar_reference,
+    )
+    return constraint_results
+
+
+def _execute_purchase_date_observational_graph_v0(
+    *,
+    adapter_result: ProposedAdapterResultV1,
+    suspicion_result: SuspicionResultV0,
+    ranking_configuration: CandidateRankingConfigurationV0,
+    limiting_configuration: CandidateLimitingConfigurationV0,
+    rule_profile_reference: HardConstraintProfileRefV2,
+    grammar_reference: str,
+) -> tuple[HardConstraintOperandAuditResultV0, tuple[ConstraintResultV2, ...]]:
+    """Return the exact in-process D3 audit and its G2A result tuple.
+
+    The helper is intentionally private.  It exposes the already-constructed
+    graph to the next local observational stage without changing the existing
+    public API or reconstructing any upstream component.
     """
 
     candidate_drafts = _generate_candidate_drafts(
@@ -96,8 +124,9 @@ def execute_purchase_date_observational_path_v0(
     operand_audit = _audit_hard_constraint_operands(
         hard_constraint_input=hard_constraint_input
     )
-    return _evaluate_purchase_date_constraint_stage_v0(
+    constraint_results = _evaluate_purchase_date_constraint_stage_v0(
         operand_audit=operand_audit,
         rule_profile_reference=rule_profile_reference,
         grammar_reference=grammar_reference,
     )
+    return operand_audit, constraint_results
