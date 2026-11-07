@@ -1334,5 +1334,3 @@ __all__ = (
     "scoring_operation_result_v2_from_json_bytes",
     "scoring_operation_result_v2_to_json_bytes",
 )
-
-
