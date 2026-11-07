@@ -1,0 +1,112 @@
+{
+  "claims_empirical_validity": false,
+  "claims_operational_trust": false,
+  "decimal_cases": [
+    {
+      "accepted": true,
+      "precision": 16,
+      "scale": 4,
+      "value": "0.8750"
+    },
+    {
+      "accepted": true,
+      "precision": 1,
+      "scale": 4,
+      "value": "0.0001"
+    },
+    {
+      "accepted": false,
+      "precision": 16,
+      "scale": 4,
+      "value": "8.750e-1"
+    },
+    {
+      "accepted": false,
+      "precision": 16,
+      "scale": 4,
+      "value": "-0.0000"
+    },
+    {
+      "accepted": false,
+      "precision": 16,
+      "scale": 4,
+      "value": "0.875"
+    }
+  ],
+  "feature_slot_order": [
+    "q_o",
+    "q_e",
+    "a_l",
+    "a_y",
+    "s_r",
+    "s_a",
+    "s_p"
+  ],
+  "fixture_version": "scoring-contract-v2-synthetic-v1",
+  "invalid_state_examples": [
+    {
+      "expected": "REJECT",
+      "name": "available_score_with_null_value",
+      "raw_score": null,
+      "score_status": "AVAILABLE"
+    },
+    {
+      "expected": "REJECT",
+      "name": "candidate_local_unavailable_not_in_closed_enum",
+      "raw_score": null,
+      "score_status": "UNAVAILABLE"
+    },
+    {
+      "expected": "REJECT",
+      "name": "zero_admitted_with_fabricated_ready",
+      "resolver_invocation": "NOT_INVOKED_ZERO_ADMITTED",
+      "resolver_result": {
+        "state": "READY"
+      }
+    }
+  ],
+  "notes": [
+    "All identifiers and values are synthetic contract examples.",
+    "A structural READY example does not authenticate an artifact.",
+    "Python object identity is checked only at the live source-bound boundary.",
+    "Kotlin must independently reproduce canonical bytes and rejection outcomes."
+  ],
+  "record_version": "scoring-record-v2",
+  "schema_id": "pantryproof.scoring-evidence",
+  "schema_version": 2,
+  "synthetic_only": true,
+  "valid_state_examples": [
+    {
+      "admission_state": "ADMITTED",
+      "name": "synthetic_available_raw_score",
+      "raw_score": "0.8750",
+      "score_status": "AVAILABLE"
+    },
+    {
+      "admission_state": "NOT_APPLICABLE_CONSTRAINT_REJECTED",
+      "name": "constraint_rejected_not_scored",
+      "raw_score": null,
+      "score_status": "NOT_APPLICABLE"
+    },
+    {
+      "admission_state": "NOT_APPLICABLE_CONSTRAINT_UNAVAILABLE",
+      "name": "constraint_unavailable_not_scored",
+      "raw_score": null,
+      "score_status": "NOT_APPLICABLE"
+    },
+    {
+      "admission_state": "REJECTED_PRICE_ONLY_SUPPORT",
+      "name": "hard_eligible_admission_rejected",
+      "raw_score": null,
+      "score_status": "NOT_APPLICABLE"
+    },
+    {
+      "admitted_candidate_count": 0,
+      "completion_state": "COMPLETE_ZERO_ADMITTED_BYPASS",
+      "name": "zero_admitted_bypass",
+      "resolver_invocation": "NOT_INVOKED_ZERO_ADMITTED",
+      "resolver_result": null,
+      "trusted_scorer_binding": null
+    }
+  ]
+}
