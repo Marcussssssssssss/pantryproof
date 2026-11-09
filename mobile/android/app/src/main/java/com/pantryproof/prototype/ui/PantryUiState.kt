@@ -2,6 +2,7 @@ package com.pantryproof.prototype.ui
 
 import com.pantryproof.prototype.data.InventoryItem
 import com.pantryproof.prototype.data.Receipt
+import com.pantryproof.prototype.data.ReceiptPresentationUiResult
 import com.pantryproof.prototype.data.ReceiptPresentationSource
 
 class PantryUiState(private val source: ReceiptPresentationSource) {
@@ -10,7 +11,10 @@ class PantryUiState(private val source: ReceiptPresentationSource) {
         const val MAX_INVENTORY_QUANTITY = 99
     }
 
-    var receipt: Receipt = source.syntheticReceipt()
+    var presentationResult: ReceiptPresentationUiResult = source.syntheticPresentation()
+        private set
+
+    var receipt: Receipt? = inventoryCompatibleReceipt(presentationResult)
         private set
 
     var inventory: MutableList<InventoryItem> = source.syntheticInventory().toMutableList()
@@ -20,18 +24,22 @@ class PantryUiState(private val source: ReceiptPresentationSource) {
         private set
 
     fun applyReceipt(updated: Receipt) {
+        if (presentationResult !is ReceiptPresentationUiResult.Available) return
         receipt = updated
         demoConfirmed = false
         inventory.removeAll { it.id.startsWith("receipt-") }
     }
 
     fun revertReceipt() {
-        receipt = source.syntheticReceipt()
+        presentationResult = source.syntheticPresentation()
+        receipt = inventoryCompatibleReceipt(presentationResult)
         demoConfirmed = false
         inventory.removeAll { it.id.startsWith("receipt-") }
     }
 
-    fun confirmForInventoryPreview() {
+    fun confirmForInventoryPreview(): Boolean {
+        val confirmedReceipt = receipt ?: return false
+        if (presentationResult !is ReceiptPresentationUiResult.Available) return false
         val adjustedStockById = inventory
             .filterNot { it.id.startsWith("receipt-") }
             .associateBy(InventoryItem::id)
@@ -40,7 +48,7 @@ class PantryUiState(private val source: ReceiptPresentationSource) {
                 baseline.copy(quantity = adjusted.quantity)
             } ?: baseline
         }
-        val receiptPreview = receipt.items.map { item ->
+        val receiptPreview = confirmedReceipt.items.map { item ->
             InventoryItem(
                 id = "receipt-${item.id}",
                 name = item.description,
@@ -50,6 +58,7 @@ class PantryUiState(private val source: ReceiptPresentationSource) {
         }
         inventory = (existingStock + receiptPreview).toMutableList()
         demoConfirmed = true
+        return true
     }
 
     fun adjustInventory(id: String, delta: Int) {
@@ -65,12 +74,36 @@ class PantryUiState(private val source: ReceiptPresentationSource) {
     }
 
     fun restore(
-        restoredReceipt: Receipt,
+        restoredReceipt: Receipt?,
         restoredInventory: List<InventoryItem>,
         restoredDemoConfirmed: Boolean,
     ) {
-        receipt = restoredReceipt
-        inventory = restoredInventory.toMutableList()
-        demoConfirmed = restoredDemoConfirmed
+        receipt = if (presentationResult is ReceiptPresentationUiResult.Available) {
+            restoredReceipt
+        } else {
+            null
+        }
+        val expectedReceiptRowIds = receipt
+            ?.items
+            ?.map { item -> "receipt-${item.id}" }
+            .orEmpty()
+        val restoredReceiptRowIds = restoredInventory
+            .filter { item -> item.id.startsWith("receipt-") }
+            .map(InventoryItem::id)
+        val receiptRowsMatch = expectedReceiptRowIds.isNotEmpty() &&
+            expectedReceiptRowIds.distinct().size == expectedReceiptRowIds.size &&
+            restoredReceiptRowIds.size == expectedReceiptRowIds.size &&
+            restoredReceiptRowIds.toSet() == expectedReceiptRowIds.toSet()
+        demoConfirmed = restoredDemoConfirmed && receipt != null && receiptRowsMatch
+        inventory = restoredInventory
+            .filterNot { item ->
+                item.id.startsWith("receipt-") && !demoConfirmed
+            }
+            .toMutableList()
     }
+
+    private fun inventoryCompatibleReceipt(result: ReceiptPresentationUiResult): Receipt? =
+        (result as? ReceiptPresentationUiResult.Available)
+            ?.receipt
+            ?.toInventoryCompatibleReceiptOrNull()
 }

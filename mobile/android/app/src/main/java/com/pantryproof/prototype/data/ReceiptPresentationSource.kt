@@ -5,6 +5,13 @@ package com.pantryproof.prototype.data
  * interface without coupling this prototype to Python evaluation objects.
  */
 interface ReceiptPresentationSource {
-    fun syntheticReceipt(): Receipt
+    fun syntheticPresentation(): ReceiptPresentationUiResult
+
+    fun syntheticReceipt(): Receipt =
+        ((syntheticPresentation() as? ReceiptPresentationUiResult.Available)
+            ?.receipt
+            ?.toInventoryCompatibleReceiptOrNull())
+            ?: error("Synthetic presentation is not inventory-compatible")
+
     fun syntheticInventory(): List<InventoryItem>
 }
