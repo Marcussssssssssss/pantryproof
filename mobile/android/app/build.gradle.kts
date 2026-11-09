@@ -49,6 +49,7 @@ kotlin {
 
 dependencies {
     implementation("androidx.activity:activity-ktx:1.9.0")
+    implementation("com.fasterxml.jackson.core:jackson-core:2.21.8")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit-ktx:1.3.0")
