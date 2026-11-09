@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.PantryProof" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">@color/pantry_green_dark</item>
+        <item name="android:navigationBarColor">@color/pantry_green_dark</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:colorAccent">@color/pantry_primary</item>
+        <item name="android:windowBackground">@color/pantry_surface</item>
+    </style>
+
+    <style name="TextAppearance.PantryProof.Display" parent="android:style/TextAppearance.Material.Headline">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:textColor">@color/pantry_on_surface</item>
+        <item name="android:textSize">32sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.PantryProof.ScreenTitle" parent="android:style/TextAppearance.Material.Title">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:textColor">@color/pantry_on_surface</item>
+        <item name="android:textSize">24sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.PantryProof.SectionTitle" parent="android:style/TextAppearance.Material.Title">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:textColor">@color/pantry_on_surface</item>
+        <item name="android:textSize">20sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.PantryProof.ItemTitle" parent="android:style/TextAppearance.Material.Subhead">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:textColor">@color/pantry_on_surface</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.PantryProof.Body" parent="android:style/TextAppearance.Material.Body1">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:textColor">@color/pantry_on_surface_variant</item>
+        <item name="android:textSize">14sp</item>
+    </style>
+
+    <style name="TextAppearance.PantryProof.Label" parent="android:style/TextAppearance.Material.Caption">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:textColor">@color/pantry_on_surface_variant</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+</resources>

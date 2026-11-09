@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="pantry_space_1">4dp</dimen>
+    <dimen name="pantry_space_2">8dp</dimen>
+    <dimen name="pantry_space_3">12dp</dimen>
+    <dimen name="pantry_space_4">16dp</dimen>
+    <dimen name="pantry_space_6">24dp</dimen>
+    <dimen name="pantry_space_8">32dp</dimen>
+    <dimen name="pantry_space_10">40dp</dimen>
+
+    <dimen name="pantry_page_gutter">16dp</dimen>
+    <dimen name="pantry_page_gutter_wide">24dp</dimen>
+    <dimen name="pantry_touch_target">48dp</dimen>
+    <dimen name="pantry_button_height">52dp</dimen>
+    <dimen name="pantry_app_bar_height">64dp</dimen>
+
+    <dimen name="pantry_radius_control">12dp</dimen>
+    <dimen name="pantry_radius_banner">14dp</dimen>
+    <dimen name="pantry_radius_card">16dp</dimen>
+    <dimen name="pantry_radius_hero">24dp</dimen>
+    <dimen name="pantry_stroke">1dp</dimen>
+    <dimen name="pantry_form_max_width">640dp</dimen>
+</resources>
