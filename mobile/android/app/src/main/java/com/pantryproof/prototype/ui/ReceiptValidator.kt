@@ -2,6 +2,7 @@ package com.pantryproof.prototype.ui
 
 import com.pantryproof.prototype.data.Receipt
 import com.pantryproof.prototype.data.ReceiptItem
+import com.pantryproof.prototype.data.PresentedReceipt
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
@@ -78,6 +79,21 @@ data class EditableReceipt(
                 )
             }.toMutableList(),
             receiptTotal = receipt.receiptTotal.toPlainString(),
+        )
+
+        fun from(receipt: PresentedReceipt) = EditableReceipt(
+            storeName = receipt.storeName.value.orEmpty(),
+            purchaseDate = receipt.purchaseDate.value.orEmpty(),
+            items = receipt.items.map { item ->
+                EditableReceiptItem(
+                    id = item.rowId,
+                    description = item.description.value.orEmpty(),
+                    quantity = item.quantity.value.orEmpty(),
+                    unitPrice = item.unitPrice.value.orEmpty(),
+                    lineTotal = item.lineTotal.value.orEmpty(),
+                )
+            }.toMutableList(),
+            receiptTotal = receipt.receiptTotal.value.orEmpty(),
         )
     }
 }

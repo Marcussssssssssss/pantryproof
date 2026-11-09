@@ -33,8 +33,13 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.pantryproof.prototype.data.MockReceiptPresentationSource
 import com.pantryproof.prototype.data.InventoryItem
+import com.pantryproof.prototype.data.PresentedField
+import com.pantryproof.prototype.data.PresentedFieldStatus
+import com.pantryproof.prototype.data.PresentedReceipt
+import com.pantryproof.prototype.data.PresentedReceiptItem
 import com.pantryproof.prototype.data.Receipt
 import com.pantryproof.prototype.data.ReceiptItem
+import com.pantryproof.prototype.data.ReceiptPresentationUiResult
 import com.pantryproof.prototype.ui.EditableReceipt
 import com.pantryproof.prototype.ui.EditableReceiptItem
 import com.pantryproof.prototype.ui.MoneyFormatter
@@ -122,7 +127,7 @@ class MainActivity : ComponentActivity() {
         outState.putBoolean("reviewSavedTemporarily", reviewSavedTemporarily)
         outState.putBoolean("temporaryConfirmationVisible", temporaryConfirmationVisible)
         outState.putBoolean("reviewValidationAttempted", reviewValidationAttempted)
-        writeReceipt(outState, "receipt", state.receipt)
+        state.receipt?.let { writeReceipt(outState, "receipt", it) }
         writeInventory(outState, state.inventory)
         outState.putBoolean("demoConfirmed", state.demoConfirmed)
         reviewDraft?.let { writeDraft(outState, it) }
@@ -297,27 +302,32 @@ class MainActivity : ComponentActivity() {
         val localImageAvailable = uri?.let(::canReadSelectedImage) == true
         when {
             uri == null -> {
-                add(ui.banner(
-                    getString(R.string.preview_synthetic_status),
-                    getString(R.string.preview_synthetic_status_body),
-                    PantryBannerTone.SUCCESS,
-                ))
-                add(space(14))
-                add(syntheticReceiptPreview())
-                previewMessage?.let {
-                    add(space(10))
-                    add(ui.statePanel(
-                        getString(R.string.selection_unavailable_title),
-                        it,
-                        PantryBannerTone.ERROR,
+                val presentation = state.presentationResult
+                if (presentation is ReceiptPresentationUiResult.Available) {
+                    add(ui.banner(
+                        getString(R.string.preview_synthetic_status),
+                        getString(R.string.preview_synthetic_status_body),
+                        PantryBannerTone.SUCCESS,
                     ))
+                    add(space(14))
+                    add(syntheticReceiptPreview(presentation.receipt))
+                    previewMessage?.let {
+                        add(space(10))
+                        add(ui.statePanel(
+                            getString(R.string.selection_unavailable_title),
+                            it,
+                            PantryBannerTone.ERROR,
+                        ))
+                    }
+                    add(space(18))
+                    add(ui.actionButton(
+                        getString(R.string.preview_view_sample_fields),
+                        PantryActionStyle.PRIMARY,
+                        viewId = R.id.preview_continue,
+                    ) { navigate(Screen.DETAILS) })
+                } else {
+                    add(presentationStatePanel(presentation))
                 }
-                add(space(18))
-                add(ui.actionButton(
-                    getString(R.string.preview_view_sample_fields),
-                    PantryActionStyle.PRIMARY,
-                    viewId = R.id.preview_continue,
-                ) { navigate(Screen.DETAILS) })
                 add(space(10))
                 add(ui.actionButton(
                     getString(R.string.preview_choose_image),
@@ -391,18 +401,31 @@ class MainActivity : ComponentActivity() {
         ) { navigateHome() })
     }
 
-    private fun syntheticReceiptPreview(): View = ui.card {
+    private fun syntheticReceiptPreview(receipt: PresentedReceipt): View = ui.card {
         gravity = Gravity.CENTER_HORIZONTAL
         setPadding(dp(28), dp(28), dp(28), dp(28))
         addView(TextView(this@MainActivity).apply {
-            text = "DEMO GROCERY STORE"
+            text = presentedText(receipt.storeName).uppercase(Locale.ROOT)
             textSize = 18f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setTextColor(ui.color(R.color.pantry_on_surface))
         })
         addView(TextView(this@MainActivity).apply {
-            text = "SYNTHETIC RECEIPT\n31 OCT 2026\n\nUHT MILK 1L      RM 13.00\nWHOLEMEAL BREAD    RM 4.20\nBANANAS            RM 5.80\n---------------------------\nTOTAL             RM 23.00"
+            text = buildString {
+                append("SYNTHETIC RECEIPT\n")
+                append(presentedText(receipt.purchaseDate))
+                append("\n\n")
+                receipt.items.forEach { item ->
+                    append(presentedText(item.description).uppercase(Locale.ROOT))
+                    append("    ")
+                    append(presentedMoney(item.lineTotal))
+                    append('\n')
+                }
+                append("---------------------------\n")
+                append("TOTAL    ")
+                append(presentedMoney(receipt.receiptTotal))
+            }
             typeface = Typeface.MONOSPACE
             textSize = 13f
             setTextColor(ui.color(R.color.pantry_on_surface))
@@ -446,8 +469,6 @@ class MainActivity : ComponentActivity() {
     }.getOrDefault(false)
 
     private fun renderDetails() = setScreen(getString(R.string.details_title), true) {
-        val receipt = state.receipt
-        val missingOptionalCount = receipt.items.count { it.unitPrice == null }
         add(ui.progressHeader(
             step = 3,
             title = getString(R.string.details_step_title),
@@ -463,47 +484,54 @@ class MainActivity : ComponentActivity() {
             PantryBannerTone.DEMO,
         ))
         add(space(16))
-        add(ui.card {
-            addView(sectionTitle(getString(R.string.details_summary_title)))
-            addView(space(8))
-            addView(summaryRow(getString(R.string.field_store_name), receipt.storeName))
-            addView(divider())
-            addView(summaryRow(
-                getString(R.string.field_purchase_date),
-                receipt.purchaseDate.format(
-                    DateTimeFormatter.ofPattern(
-                        "d MMMM yyyy",
-                        Locale.Builder().setLanguage("en").setRegion("MY").build(),
-                    ),
-                ),
-            ))
-            addView(divider())
-            addView(summaryRow(
-                getString(R.string.field_receipt_total),
-                MoneyFormatter.ringgit(receipt.receiptTotal),
-                emphasize = true,
-            ))
-        })
-        add(space(12))
-        add(ui.statusChip(resources.getQuantityString(
-            R.plurals.details_item_status,
-            receipt.items.size,
-            receipt.items.size,
-            missingOptionalCount,
-        )))
-        add(space(20))
-        add(sectionTitle(getString(R.string.details_items_title)))
-        add(space(8))
-        receipt.items.forEachIndexed { index, item ->
-            add(receiptItemCard(index + 1, item))
-            add(space(10))
+        val available = state.presentationResult as? ReceiptPresentationUiResult.Available
+        if (available == null) {
+            add(presentationStatePanel(state.presentationResult))
+        } else {
+            val receipt = receiptForDetails(available.receipt)
+            val missingOptionalCount = receipt.items.count {
+                it.unitPrice.status == PresentedFieldStatus.MISSING
+            }
+            add(ui.card {
+                addView(sectionTitle(getString(R.string.details_summary_title)))
+                addView(space(8))
+                addView(summaryRow(
+                    getString(R.string.field_store_name),
+                    presentedText(receipt.storeName),
+                ))
+                addView(divider())
+                addView(summaryRow(
+                    getString(R.string.field_purchase_date),
+                    presentedDate(receipt.purchaseDate),
+                ))
+                addView(divider())
+                addView(summaryRow(
+                    getString(R.string.field_receipt_total),
+                    presentedMoney(receipt.receiptTotal),
+                    emphasize = receipt.receiptTotal.status == PresentedFieldStatus.EXTRACTED,
+                ))
+            })
+            add(space(12))
+            add(ui.statusChip(resources.getQuantityString(
+                R.plurals.details_item_status,
+                receipt.items.size,
+                receipt.items.size,
+                missingOptionalCount,
+            )))
+            add(space(20))
+            add(sectionTitle(getString(R.string.details_items_title)))
+            add(space(8))
+            receipt.items.forEachIndexed { index, item ->
+                add(receiptItemCard(index + 1, item))
+                add(space(10))
+            }
+            add(space(8))
+            add(ui.actionButton(
+                getString(R.string.details_review_action),
+                PantryActionStyle.PRIMARY,
+                viewId = R.id.details_review,
+            ) { navigate(Screen.REVIEW) })
         }
-        add(space(8))
-        add(ui.actionButton(
-            getString(R.string.details_review_action),
-            PantryActionStyle.PRIMARY,
-            viewId = R.id.details_review,
-        ) { navigate(Screen.REVIEW) })
         add(space(10))
         add(ui.actionButton(
             getString(R.string.details_back_action),
@@ -511,7 +539,7 @@ class MainActivity : ComponentActivity() {
         ) { goBack() })
     }
 
-    private fun receiptItemCard(number: Int, item: ReceiptItem): View = ui.card {
+    private fun receiptItemCard(number: Int, item: PresentedReceiptItem): View = ui.card {
         id = when (number) {
             1 -> R.id.details_item_0
             2 -> R.id.details_item_1
@@ -524,30 +552,134 @@ class MainActivity : ComponentActivity() {
             letterSpacing = 0.12f
         })
         addView(TextView(this@MainActivity, null, 0, R.style.TextAppearance_PantryProof_ItemTitle).apply {
-            text = item.description
+            text = presentedText(item.description)
             setPadding(0, dp(6), 0, dp(8))
         })
-        addView(detailMetric(getString(R.string.field_quantity), item.quantity.toString()))
+        addView(detailMetric(getString(R.string.field_quantity), presentedText(item.quantity)))
         addView(detailMetric(
             getString(R.string.field_unit_price),
-            item.unitPrice?.let(MoneyFormatter::ringgit)
-                ?: getString(R.string.details_unit_price_missing),
-            optionalMissing = item.unitPrice == null,
+            if (item.unitPrice.status == PresentedFieldStatus.MISSING) {
+                getString(R.string.details_unit_price_missing)
+            } else {
+                presentedMoney(item.unitPrice)
+            },
+            optionalMissing = item.unitPrice.status == PresentedFieldStatus.MISSING,
         ))
         addView(detailMetric(
             getString(R.string.field_line_total),
-            MoneyFormatter.ringgit(item.lineTotal),
+            presentedMoney(item.lineTotal),
         ))
     }
 
+    private fun presentedText(field: PresentedField): String =
+        when (field.status) {
+            PresentedFieldStatus.EXTRACTED -> requireNotNull(field.value)
+            PresentedFieldStatus.MISSING -> getString(R.string.presentation_field_missing)
+            PresentedFieldStatus.UNRESOLVED -> getString(R.string.presentation_field_unresolved)
+        }
+
+    private fun presentedMoney(field: PresentedField): String =
+        if (field.status == PresentedFieldStatus.EXTRACTED) {
+            MoneyFormatter.ringgit(BigDecimal(requireNotNull(field.value)))
+        } else {
+            presentedText(field)
+        }
+
+    private fun presentedDate(field: PresentedField): String =
+        if (field.status == PresentedFieldStatus.EXTRACTED) {
+            LocalDate.parse(requireNotNull(field.value)).format(
+                DateTimeFormatter.ofPattern(
+                    "d MMMM yyyy",
+                    Locale.Builder().setLanguage("en").setRegion("MY").build(),
+                ),
+            )
+        } else {
+            presentedText(field)
+        }
+
+    private fun receiptForDetails(automatic: PresentedReceipt): PresentedReceipt {
+        if (!reviewSavedTemporarily) return automatic
+        val reviewed = state.receipt ?: return automatic
+        val reviewedItems = reviewed.items.associateBy(ReceiptItem::id)
+        return automatic.copy(
+            storeName = automatic.storeName.withReviewedValue(reviewed.storeName),
+            purchaseDate = automatic.purchaseDate.withReviewedValue(reviewed.purchaseDate.toString()),
+            receiptTotal = automatic.receiptTotal.withReviewedValue(
+                reviewed.receiptTotal.toPlainString(),
+            ),
+            items = automatic.items.map { item ->
+                val reviewedItem = reviewedItems[item.rowId] ?: return@map item
+                item.copy(
+                    description = item.description.withReviewedValue(reviewedItem.description),
+                    quantity = item.quantity.withReviewedValue(reviewedItem.quantity.toString()),
+                    unitPrice = reviewedItem.unitPrice?.let { value ->
+                        item.unitPrice.withReviewedValue(value.toPlainString())
+                    } ?: item.unitPrice.copy(
+                        status = PresentedFieldStatus.MISSING,
+                        value = null,
+                    ),
+                    lineTotal = item.lineTotal.withReviewedValue(
+                        reviewedItem.lineTotal.toPlainString(),
+                    ),
+                )
+            },
+        )
+    }
+
+    private fun PresentedField.withReviewedValue(reviewedValue: String): PresentedField =
+        copy(
+            status = PresentedFieldStatus.EXTRACTED,
+            value = reviewedValue,
+            absenceReason = null,
+        )
+
+    private fun presentationStatePanel(result: ReceiptPresentationUiResult): View =
+        when (result) {
+            is ReceiptPresentationUiResult.Available -> ui.statePanel(
+                getString(R.string.presentation_available_title),
+                getString(R.string.presentation_available_body),
+                PantryBannerTone.SUCCESS,
+            )
+            is ReceiptPresentationUiResult.ProcessingUnavailable -> ui.statePanel(
+                getString(R.string.presentation_unavailable_title),
+                getString(R.string.presentation_unavailable_body, result.failureCode),
+                PantryBannerTone.INFO,
+            )
+            is ReceiptPresentationUiResult.ProcessingFailed -> ui.statePanel(
+                getString(R.string.presentation_failed_title),
+                getString(R.string.presentation_failed_body, result.failureCode),
+                PantryBannerTone.ERROR,
+            )
+            is ReceiptPresentationUiResult.InsufficientEvidence -> ui.statePanel(
+                getString(R.string.presentation_insufficient_title),
+                getString(R.string.presentation_insufficient_body),
+                PantryBannerTone.INFO,
+            )
+            is ReceiptPresentationUiResult.Rejected -> ui.statePanel(
+                getString(R.string.presentation_rejected_title),
+                getString(R.string.presentation_rejected_body, result.issue.code),
+                PantryBannerTone.ERROR,
+            )
+        }
+
     private fun renderReview() = setScreen(getString(R.string.review_title), true, formWidth = true) {
-        val draft = reviewDraft ?: EditableReceipt.from(state.receipt).also { reviewDraft = it }
         add(ui.progressHeader(
             step = 4,
             title = getString(R.string.review_step_title),
             description = getString(R.string.review_step_description),
         ))
         add(space(16))
+        val available = state.presentationResult as? ReceiptPresentationUiResult.Available
+        if (available == null) {
+            add(presentationStatePanel(state.presentationResult))
+            add(space(10))
+            add(ui.actionButton(
+                getString(R.string.review_back_action),
+                PantryActionStyle.TERTIARY,
+            ) { goBack() })
+            return@setScreen
+        }
+        val draft = reviewDraft ?: currentEditableDraft(available.receipt).also { reviewDraft = it }
         add(ui.banner(
             getString(R.string.review_boundary_title),
             getString(R.string.review_boundary_body),
@@ -778,14 +910,13 @@ class MainActivity : ComponentActivity() {
             }
 
             state.applyReceipt(requireNotNull(result.receipt))
-            reviewDraft = EditableReceipt.from(state.receipt)
+            reviewDraft = EditableReceipt.from(requireNotNull(state.receipt))
             reviewHasUnsavedChanges = false
             reviewSavedTemporarily = true
             reviewValidationAttempted = false
             reviewValidationErrors.clear()
             if (confirm) {
-                state.confirmForInventoryPreview()
-                temporaryConfirmationVisible = true
+                temporaryConfirmationVisible = state.confirmForInventoryPreview()
             }
             render()
         }
@@ -1071,7 +1202,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun discardReviewDraft() {
-        reviewDraft = EditableReceipt.from(state.receipt)
+        reviewDraft = currentEditableDraft()
         reviewHasUnsavedChanges = false
         reviewValidationAttempted = false
         reviewValidationErrors.clear()
@@ -1086,7 +1217,7 @@ class MainActivity : ComponentActivity() {
             .setNegativeButton(R.string.review_keep_editing, null)
             .setPositiveButton(R.string.review_revert_confirm) { _, _ ->
                 state.revertReceipt()
-                reviewDraft = EditableReceipt.from(state.receipt)
+                reviewDraft = currentEditableDraft()
                 reviewHasUnsavedChanges = false
                 reviewSavedTemporarily = false
                 reviewValidationAttempted = false
@@ -1377,7 +1508,7 @@ class MainActivity : ComponentActivity() {
     private fun restoreSessionState(bundle: Bundle) {
         val restoredReceipt = readReceipt(bundle, "receipt")
         val restoredInventory = readInventory(bundle)
-        if (restoredReceipt != null && restoredInventory != null) {
+        if (restoredInventory != null) {
             state.restore(
                 restoredReceipt = restoredReceipt,
                 restoredInventory = restoredInventory,
@@ -1422,7 +1553,7 @@ class MainActivity : ComponentActivity() {
             .setNegativeButton(R.string.review_keep_editing, null)
             .setPositiveButton(R.string.review_discard_confirm) { _, _ ->
                 reviewHasUnsavedChanges = false
-                reviewDraft = EditableReceipt.from(state.receipt)
+                reviewDraft = currentEditableDraft()
                 reviewValidationAttempted = false
                 reviewValidationErrors.clear()
                 temporaryConfirmationVisible = state.demoConfirmed
@@ -1430,6 +1561,13 @@ class MainActivity : ComponentActivity() {
             }
             .show()
     }
+
+    private fun currentEditableDraft(
+        presentedReceipt: PresentedReceipt? =
+            (state.presentationResult as? ReceiptPresentationUiResult.Available)?.receipt,
+    ): EditableReceipt =
+        state.receipt?.let(EditableReceipt::from)
+            ?: EditableReceipt.from(requireNotNull(presentedReceipt))
 
     private fun LinearLayout.add(view: View) {
         addView(view)

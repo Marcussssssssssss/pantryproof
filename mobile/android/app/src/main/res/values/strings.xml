@@ -84,6 +84,18 @@
         <item quantity="other">%1$d items · %2$d optional value not provided</item>
     </plurals>
     <string name="details_unit_price_missing">Not provided (optional)</string>
+    <string name="presentation_field_missing">Missing · Needs review</string>
+    <string name="presentation_field_unresolved">Unresolved · Needs review</string>
+    <string name="presentation_available_title">Validated synthetic receipt</string>
+    <string name="presentation_available_body">The synthetic presentation passed the local M3E contract checks.</string>
+    <string name="presentation_unavailable_title">Receipt processing unavailable</string>
+    <string name="presentation_unavailable_body">No receipt fields are available. Synthetic status code: %1$s</string>
+    <string name="presentation_failed_title">Receipt processing failed</string>
+    <string name="presentation_failed_body">No receipt fields were accepted. Synthetic failure code: %1$s</string>
+    <string name="presentation_insufficient_title">Not enough receipt evidence</string>
+    <string name="presentation_insufficient_body">The validated synthetic source did not contain enough evidence to present receipt fields.</string>
+    <string name="presentation_rejected_title">Receipt presentation rejected</string>
+    <string name="presentation_rejected_body">The local contract rejected this presentation (%1$s). No receipt fields can be confirmed.</string>
     <string name="details_review_action">Review and correct</string>
     <string name="details_back_action">Back to image preview</string>
 

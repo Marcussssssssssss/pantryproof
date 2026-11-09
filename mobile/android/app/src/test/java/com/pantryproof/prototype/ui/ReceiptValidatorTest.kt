@@ -113,4 +113,19 @@ class ReceiptValidatorTest {
         assertEquals("Unsaved store", dirtyDraft.storeName)
         assertEquals(receipt.storeName, discardedDraft.storeName)
     }
+
+    @Test
+    fun validatedPresentationBuildsEditableStringsWithoutInventingMissingValues() {
+        val result = source.syntheticPresentation()
+        val presented =
+            (result as com.pantryproof.prototype.data.ReceiptPresentationUiResult.Available).receipt
+
+        val draft = EditableReceipt.from(presented)
+
+        assertEquals("Demo Grocery Store (Synthetic)", draft.storeName)
+        assertEquals("2026-10-31", draft.purchaseDate)
+        assertEquals("2", draft.items.first().quantity)
+        assertEquals("", draft.items.last().unitPrice)
+        assertEquals("23.00", draft.receiptTotal)
+    }
 }
