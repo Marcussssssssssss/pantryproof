@@ -1,0 +1,533 @@
+{
+  "schemaName": "receipt-presentation-v1-conformance-fixtures",
+  "schemaVersion": "1",
+  "fixtureCount": 32,
+  "acceptCount": 17,
+  "rejectCount": 15,
+  "fixtures": [
+    {
+      "path": "fixtures/01-complete-extracted-receipt.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-01",
+        "T-04",
+        "L-01",
+        "L-02",
+        "L-03",
+        "L-04",
+        "L-05",
+        "L-06",
+        "L-07",
+        "S-01",
+        "S-02",
+        "S-03",
+        "S-04",
+        "S-05",
+        "S-06",
+        "S-07",
+        "S-08",
+        "S-09",
+        "S-11"
+      ],
+      "sha256": "4a988699523d508ef4ada459c1bb1bf18516cf6f38671dad4d1b25e7055d9380",
+      "byteLength": 6246,
+      "sourceClassification": "HISTORICAL_SUCCESSOR"
+    },
+    {
+      "path": "fixtures/02-missing-optional-unit-price.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-02",
+        "T-04",
+        "T-05",
+        "L-01",
+        "L-02",
+        "L-04",
+        "L-05",
+        "L-06",
+        "S-01",
+        "S-02",
+        "S-03",
+        "S-05",
+        "S-06",
+        "S-08",
+        "S-09",
+        "S-10",
+        "S-11"
+      ],
+      "sha256": "a00c95d4f82f0a3e7e60e9c01455b40ec298fa833a9241ce830e818f50d7a4da",
+      "byteLength": 4311,
+      "sourceClassification": "HISTORICAL_SUCCESSOR"
+    },
+    {
+      "path": "fixtures/03-missing-required-store-name.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-02",
+        "T-04",
+        "L-01",
+        "L-02",
+        "L-04",
+        "L-05",
+        "L-06",
+        "S-01",
+        "S-02",
+        "S-03",
+        "S-05",
+        "S-06",
+        "S-08",
+        "S-09",
+        "S-11"
+      ],
+      "sha256": "8701a3b7f371eb6dd7bbc60405f799231a70a1cb82dc4e4c6fa31ed84c6c3070",
+      "byteLength": 4317,
+      "sourceClassification": "HISTORICAL_SUCCESSOR"
+    },
+    {
+      "path": "fixtures/04-unresolved-purchase-date.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-02",
+        "T-04",
+        "T-07",
+        "L-01",
+        "L-02",
+        "L-04",
+        "L-05",
+        "L-06",
+        "S-01",
+        "S-02",
+        "S-03",
+        "S-05",
+        "S-06",
+        "S-08",
+        "S-09",
+        "S-11"
+      ],
+      "sha256": "3f550cc00d416234d04e2ceca1e90464a82764000dfe6fceeeb3efcb7969f0a6",
+      "byteLength": 4459,
+      "sourceClassification": "HISTORICAL_SUCCESSOR"
+    },
+    {
+      "path": "fixtures/05-decimal-weighted-quantity.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-04",
+        "T-06",
+        "L-01",
+        "L-02",
+        "L-04",
+        "L-05",
+        "L-06",
+        "S-01",
+        "S-02",
+        "S-03",
+        "S-05",
+        "S-06",
+        "S-08",
+        "S-09",
+        "S-11"
+      ],
+      "sha256": "814d57f41c6f8bb12a93cef7da3c9ad735580c3096f0bd579ba92637e7b56189",
+      "byteLength": 4277,
+      "sourceClassification": "HISTORICAL_SUCCESSOR"
+    },
+    {
+      "path": "fixtures/06-processing-unavailable.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-07",
+        "L-06",
+        "L-07",
+        "S-04",
+        "S-05",
+        "S-06",
+        "S-07"
+      ],
+      "sha256": "c5f74b21d43e6362fc500cb394d0210b0c7c55f5dbdf6b4c0c02ab9622ae3eb2",
+      "byteLength": 891,
+      "sourceClassification": "HISTORICAL_BYTES_UNCHANGED"
+    },
+    {
+      "path": "fixtures/07-processing-failure.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-07",
+        "L-06",
+        "L-07",
+        "S-04",
+        "S-05",
+        "S-06",
+        "S-07",
+        "S-09"
+      ],
+      "sha256": "97b665b8baf4f464372222dd4b60babe48314c5a7e9e718704009de6725ce82e",
+      "byteLength": 925,
+      "sourceClassification": "HISTORICAL_BYTES_UNCHANGED"
+    },
+    {
+      "path": "fixtures/08-unsupported-schema-version.json",
+      "expectedResult": "REJECT_UNSUPPORTED_SCHEMA_VERSION",
+      "decisionIds": [
+        "T-01",
+        "T-07",
+        "L-02",
+        "S-07"
+      ],
+      "sha256": "6338e21a41ac681015cbd665ca7e3d5ea8c3be1a80dd3532ddebf2c82d082e77",
+      "byteLength": 924,
+      "sourceClassification": "HISTORICAL_BYTES_UNCHANGED"
+    },
+    {
+      "path": "fixtures/09-malformed-status-value.json",
+      "expectedResult": "REJECT_CONTRADICTORY_FIELD_STATE",
+      "decisionIds": [
+        "T-01",
+        "T-02",
+        "L-02",
+        "L-04",
+        "L-05",
+        "S-02",
+        "S-06",
+        "S-09"
+      ],
+      "sha256": "435408273ad1a42f4894d8804709bfece3a7289713739c76c713a422540485dd",
+      "byteLength": 4331,
+      "sourceClassification": "HISTORICAL_SUCCESSOR"
+    },
+    {
+      "path": "fixtures/15-result-available-extraction-failed.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-02",
+        "T-07",
+        "L-01",
+        "L-02",
+        "L-05",
+        "L-06",
+        "L-07",
+        "S-06",
+        "S-08",
+        "S-09",
+        "S-11"
+      ],
+      "sha256": "fc0f43c6f35871e43e27073c1f45abfdf7507cab7daa6c4af54a1b539a93f1ff",
+      "byteLength": 2423,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/16-source-evidence-insufficient.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-07",
+        "L-03",
+        "L-04",
+        "L-06",
+        "S-04",
+        "S-05",
+        "S-06",
+        "S-09"
+      ],
+      "sha256": "ece605e106882babcceed5ae56b428231ae94203a07f4506e75c8f07add79e48",
+      "byteLength": 1128,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/23-unit-price-three-decimals.json",
+      "expectedResult": "REJECT_INVALID_MONEY",
+      "decisionIds": [
+        "T-01",
+        "L-02",
+        "L-05",
+        "S-01",
+        "S-02"
+      ],
+      "sha256": "3a1d5888abb61336983c8eef3890be7c093488b5fe3dd0cad42ce88d2f9119a9",
+      "byteLength": 4802,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/29-quantity-scale-four.json",
+      "expectedResult": "REJECT_INVALID_QUANTITY",
+      "decisionIds": [
+        "T-01",
+        "T-06",
+        "L-02",
+        "L-05",
+        "S-02"
+      ],
+      "sha256": "d12075232585924b594e601a5372f38f866639b48634a44cc54cbcfb92876a1a",
+      "byteLength": 4861,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/33-invalid-gregorian-date.json",
+      "expectedResult": "REJECT_INVALID_DATE",
+      "decisionIds": [
+        "T-01",
+        "T-07",
+        "L-02",
+        "L-05",
+        "S-02"
+      ],
+      "sha256": "b4cc44a7497654080d16f167833a44043c1c18f0db0e92543aec4854ca8ceac6",
+      "byteLength": 4931,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/36-unknown-envelope-member.json",
+      "expectedResult": "REJECT_UNKNOWN_MEMBER",
+      "decisionIds": [
+        "T-01",
+        "T-07",
+        "L-02",
+        "S-07"
+      ],
+      "sha256": "c2ed4534de4b789ee4aa41ebec96586799649ad656364e7abd68546dcbad6c3c",
+      "byteLength": 4991,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/38-duplicate-json-key.json",
+      "expectedResult": "REJECT_DUPLICATE_JSON_KEY",
+      "decisionIds": [
+        "T-01",
+        "T-07",
+        "L-02",
+        "S-07"
+      ],
+      "sha256": "32e323e6125de69da265ab5bf2c014da182991b637d1241be68aa4168b5bda1e",
+      "byteLength": 950,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/44-request-context-mismatch.json",
+      "expectedResult": "REJECT_REQUEST_ID_MISMATCH",
+      "decisionIds": [
+        "T-01",
+        "T-07",
+        "L-03",
+        "S-04"
+      ],
+      "sha256": "f9ee3f8625bbe0ab15669eba9867f0fc1e647b151c24db2f2d9bd81ef71ec083",
+      "byteLength": 5135,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/45-image-context-mismatch.json",
+      "expectedResult": "REJECT_IMAGE_ID_MISMATCH",
+      "decisionIds": [
+        "T-01",
+        "T-07",
+        "L-03",
+        "S-04"
+      ],
+      "sha256": "d9c1d481fe6b67e650624a65d2028c2b38519ceb801eca0b38b66e5b705fdbaa",
+      "byteLength": 5075,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/57-unknown-token-reference.json",
+      "expectedResult": "REJECT_UNKNOWN_TOKEN_REFERENCE",
+      "decisionIds": [
+        "T-01",
+        "T-02",
+        "L-04",
+        "S-09"
+      ],
+      "sha256": "f014561615d10f08ca694f8228afe64efedfec01158a90d73427b2966b18b6a4",
+      "byteLength": 4974,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/65-result-with-insufficient-gate.json",
+      "expectedResult": "REJECT_GATE_OUTCOME_MISMATCH",
+      "decisionIds": [
+        "T-07",
+        "L-06",
+        "S-06"
+      ],
+      "sha256": "65d34cca9e2e153604e5a34f00a075c319eec14b909db2844c570d43f5cf0c60",
+      "byteLength": 5195,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/67-result-with-ocr-failed-evidence.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-07",
+        "L-01",
+        "L-03",
+        "L-04",
+        "L-06",
+        "S-04",
+        "S-05",
+        "S-06",
+        "S-08",
+        "S-09",
+        "S-11"
+      ],
+      "sha256": "2d14b64cf96520ca18b26e08be853c7889fa3a79cbb2b2fb51b627535693f1a4",
+      "byteLength": 4785,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/67a-result-with-received-evidence.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-07",
+        "L-01",
+        "L-03",
+        "L-04",
+        "L-06",
+        "S-04",
+        "S-05",
+        "S-06",
+        "S-08",
+        "S-09",
+        "S-11"
+      ],
+      "sha256": "d8a284316794f87c24a2eeb140b5986c346c8405f75604a69becf7599d6116a6",
+      "byteLength": 4731,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/75-source-evidence-insufficient-partial.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-07",
+        "L-03",
+        "L-04",
+        "L-06",
+        "S-04",
+        "S-05",
+        "S-06",
+        "S-09"
+      ],
+      "sha256": "75f5144839ba4ad7b0b5a488df8cc8d2dab640df77fdced852e0f093a0940b9e",
+      "byteLength": 1124,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/76-source-evidence-insufficient-received.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-07",
+        "L-03",
+        "L-04",
+        "L-06",
+        "S-04",
+        "S-05",
+        "S-06",
+        "S-09"
+      ],
+      "sha256": "2c20386240c0038f7e6d6314c6c5a0f86d9dc34e6c266ccfdeea2f498bed5d7e",
+      "byteLength": 1127,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/77-source-evidence-insufficient-ocr-failed.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-07",
+        "L-03",
+        "L-04",
+        "L-06",
+        "S-04",
+        "S-05",
+        "S-06",
+        "S-09"
+      ],
+      "sha256": "14ac95eb1d52ecac7cce318346d995376acfcc89b8fa20bcb65594eca191d241",
+      "byteLength": 1141,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/s06-02-source-gate-failure-after-completed-ocr.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-07",
+        "L-06",
+        "L-07",
+        "S-06"
+      ],
+      "sha256": "a84924ecb38af2973dfaf4a1625fb69053115d3a03746415205546c8dd9f22ec",
+      "byteLength": 1097,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/s06-04-extraction-failure-after-completed-ocr-and-sufficient-gate.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-07",
+        "L-06",
+        "L-07",
+        "S-06"
+      ],
+      "sha256": "628da8ce48701e973cd557920884c6713977f0fd74d96a4f44a5a785162bdb92",
+      "byteLength": 1225,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/s06-06-presentation-adapter-failure-after-completed-ocr.json",
+      "expectedResult": "ACCEPT",
+      "decisionIds": [
+        "T-07",
+        "L-06",
+        "L-07",
+        "S-06"
+      ],
+      "sha256": "396bb796cb91a480ce8c0a18a7c682007019f80506d92a1a7a60d87063a74d7a",
+      "byteLength": 1216,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/s06-18-extraction-failure-with-ocr-failed-evidence.json",
+      "expectedResult": "REJECT_EVIDENCE_STAGE_MISMATCH",
+      "decisionIds": [
+        "T-07",
+        "L-06",
+        "S-06"
+      ],
+      "sha256": "6f3792b5a0d653406558b88cad232a2e287b4cd120ae4f3e875505e0ca8308d0",
+      "byteLength": 1236,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/s06-26-ocr-failure-with-received-evidence.json",
+      "expectedResult": "REJECT_EVIDENCE_STAGE_MISMATCH",
+      "decisionIds": [
+        "T-07",
+        "L-06",
+        "S-06"
+      ],
+      "sha256": "3cb537ec0d1366bc7c6270756ea07d8b053595227f860a0eb3cbd648827aa4e1",
+      "byteLength": 1056,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/s06-29-source-gate-failure-with-ocr-failed-evidence.json",
+      "expectedResult": "REJECT_EVIDENCE_STAGE_MISMATCH",
+      "decisionIds": [
+        "T-07",
+        "L-06",
+        "S-06"
+      ],
+      "sha256": "f87a005eeb70904d3da3610bf57b89b5462f60a050ce51126dab5a4748eb77c8",
+      "byteLength": 1127,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    },
+    {
+      "path": "fixtures/s06-32-presentation-adapter-failure-with-ocr-failed-evidence.json",
+      "expectedResult": "REJECT_EVIDENCE_STAGE_MISMATCH",
+      "decisionIds": [
+        "T-07",
+        "L-06",
+        "S-06"
+      ],
+      "sha256": "2d611212813d7a1e7756dc34e5f3e4b4504582b213a07d05c519e79ad351eb41",
+      "byteLength": 1247,
+      "sourceClassification": "NEW_APPROVED_SCENARIO"
+    }
+  ]
+}

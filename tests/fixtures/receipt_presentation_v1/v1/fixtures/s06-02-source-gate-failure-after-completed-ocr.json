@@ -1,0 +1,38 @@
+{
+  "fixtureStatus": "DRAFT_NOT_APPROVED — SYNTHETIC_ONLY",
+  "scenario": "source-gate-failure-after-completed-ocr",
+  "expectedResult": "ACCEPT",
+  "consumerContext": null,
+  "envelope": {
+    "schemaName": "receipt-presentation",
+    "schemaVersion": "1",
+    "sourceContractVersion": "0",
+    "requestId": "request-source-gate-failure-completed-001",
+    "imageId": "image-source-gate-failure-completed-001",
+    "source": {
+      "type": "SYNTHETIC_FIXTURE",
+      "provenance": {
+        "sourceSystem": "M3E_SYNTHETIC_FIXTURE",
+        "sourceReference": "source-source-gate-failure-completed-001",
+        "contentSha256": null
+      }
+    },
+    "outcome": {
+      "status": "PROCESSING_FAILED",
+      "failure": {
+        "stage": "SOURCE_GATE",
+        "code": "SOURCE_GATE_EXECUTION_FAILURE",
+        "retryable": true
+      }
+    },
+    "sourceEvidence": {
+      "sourceProcessingStatus": "OCR_COMPLETED",
+      "tokenIds": [
+        "token-source-gate-failure-completed-001-evidence"
+      ]
+    },
+    "sourceGate": null,
+    "automaticExtraction": null,
+    "receipt": null
+  }
+}

@@ -1,0 +1,181 @@
+{
+  "fixtureStatus": "DRAFT_NOT_APPROVED — SYNTHETIC_ONLY",
+  "scenario": "complete-extracted-receipt",
+  "expectedResult": "ACCEPT",
+  "envelope": {
+    "schemaName": "receipt-presentation",
+    "schemaVersion": "1",
+    "sourceContractVersion": "0",
+    "requestId": "request-synthetic-complete-001",
+    "imageId": "image-synthetic-complete-001",
+    "source": {
+      "type": "SYNTHETIC_FIXTURE",
+      "provenance": {
+        "sourceSystem": "M3D_SYNTHETIC_FIXTURE",
+        "sourceReference": "source-synthetic-complete-001",
+        "contentSha256": null
+      }
+    },
+    "outcome": {
+      "status": "RESULT_AVAILABLE",
+      "failure": null
+    },
+    "sourceEvidence": {
+      "sourceProcessingStatus": "OCR_COMPLETED",
+      "tokenIds": [
+        "token-complete-store",
+        "token-complete-date",
+        "token-complete-item-1-description",
+        "token-complete-item-1-quantity",
+        "token-complete-item-1-unit-price",
+        "token-complete-item-1-line-total",
+        "token-complete-item-2-description",
+        "token-complete-item-2-quantity",
+        "token-complete-item-2-unit-price",
+        "token-complete-item-2-line-total",
+        "token-complete-receipt-total"
+      ]
+    },
+    "sourceGate": {
+      "gateResultId": "gate-synthetic-complete-001",
+      "decision": "SUFFICIENT",
+      "reasons": []
+    },
+    "automaticExtraction": {
+      "stage": "PRE_REVIEW_AUTOMATIC",
+      "extractionStatus": "EXTRACTED",
+      "producer": {
+        "producerId": "SYNTHETIC_FIXTURE_PRODUCER",
+        "producerVersion": "draft-1"
+      }
+    },
+    "receipt": {
+      "receiptId": "receipt-synthetic-complete-001",
+      "currencyCode": "MYR",
+      "receiptFields": [
+        {
+          "fieldId": "field-complete-store",
+          "role": "STORE_NAME",
+          "status": "EXTRACTED",
+          "originalAutomaticValue": "Kedai Runcit Harmoni",
+          "presentationValue": "Kedai Runcit Harmoni",
+          "absenceReason": null,
+          "sourceTokenIds": ["token-complete-store"],
+          "nativeConfidence": 0.94
+        },
+        {
+          "fieldId": "field-complete-date",
+          "role": "PURCHASE_DATE",
+          "status": "EXTRACTED",
+          "originalAutomaticValue": "2026-10-15",
+          "presentationValue": "2026-10-15",
+          "absenceReason": null,
+          "sourceTokenIds": ["token-complete-date"],
+          "nativeConfidence": null
+        },
+        {
+          "fieldId": "field-complete-receipt-total",
+          "role": "RECEIPT_TOTAL",
+          "status": "EXTRACTED",
+          "originalAutomaticValue": "RM 31.90",
+          "presentationValue": "31.90",
+          "absenceReason": null,
+          "sourceTokenIds": ["token-complete-receipt-total"],
+          "nativeConfidence": null
+        }
+      ],
+      "itemRows": [
+        {
+          "rowId": "row-complete-001",
+          "fields": [
+            {
+              "fieldId": "field-complete-001-description",
+              "role": "ITEM_DESCRIPTION",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "Beras Tempatan 5kg",
+              "presentationValue": "Beras Tempatan 5kg",
+              "absenceReason": null,
+              "sourceTokenIds": ["token-complete-item-1-description"],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-complete-001-quantity",
+              "role": "QUANTITY",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "1",
+              "presentationValue": "1",
+              "absenceReason": null,
+              "sourceTokenIds": ["token-complete-item-1-quantity"],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-complete-001-unit-price",
+              "role": "UNIT_PRICE",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "RM 18.90",
+              "presentationValue": "18.90",
+              "absenceReason": null,
+              "sourceTokenIds": ["token-complete-item-1-unit-price"],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-complete-001-line-total",
+              "role": "LINE_TOTAL",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "RM 18.90",
+              "presentationValue": "18.90",
+              "absenceReason": null,
+              "sourceTokenIds": ["token-complete-item-1-line-total"],
+              "nativeConfidence": null
+            }
+          ]
+        },
+        {
+          "rowId": "row-complete-002",
+          "fields": [
+            {
+              "fieldId": "field-complete-002-description",
+              "role": "ITEM_DESCRIPTION",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "Susu UHT 1L",
+              "presentationValue": "Susu UHT 1L",
+              "absenceReason": null,
+              "sourceTokenIds": ["token-complete-item-2-description"],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-complete-002-quantity",
+              "role": "QUANTITY",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "2",
+              "presentationValue": "2",
+              "absenceReason": null,
+              "sourceTokenIds": ["token-complete-item-2-quantity"],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-complete-002-unit-price",
+              "role": "UNIT_PRICE",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "RM 6.50",
+              "presentationValue": "6.50",
+              "absenceReason": null,
+              "sourceTokenIds": ["token-complete-item-2-unit-price"],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-complete-002-line-total",
+              "role": "LINE_TOTAL",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "RM 13.00",
+              "presentationValue": "13.00",
+              "absenceReason": null,
+              "sourceTokenIds": ["token-complete-item-2-line-total"],
+              "nativeConfidence": null
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "fixtureStatus": "DRAFT_NOT_APPROVED — SYNTHETIC_ONLY",
+  "scenario": "source-evidence-insufficient-received",
+  "expectedResult": "ACCEPT",
+  "consumerContext": null,
+  "envelope": {
+    "schemaName": "receipt-presentation",
+    "schemaVersion": "1",
+    "sourceContractVersion": "0",
+    "requestId": "request-insufficient-received-001",
+    "imageId": "image-insufficient-received-001",
+    "source": {
+      "type": "SYNTHETIC_FIXTURE",
+      "provenance": {
+        "sourceSystem": "M3E_SYNTHETIC_FIXTURE",
+        "sourceReference": "source-insufficient-received-001",
+        "contentSha256": null
+      }
+    },
+    "outcome": {
+      "status": "SOURCE_EVIDENCE_INSUFFICIENT",
+      "failure": null
+    },
+    "sourceEvidence": {
+      "sourceProcessingStatus": "RECEIVED",
+      "tokenIds": [
+        "token-insufficient-received-001-evidence"
+      ]
+    },
+    "sourceGate": {
+      "gateResultId": "gate-insufficient-received-001",
+      "decision": "INSUFFICIENT",
+      "reasons": [
+        "RECEIPT_STRUCTURE_NOT_RELIABLY_OBSERVED"
+      ]
+    },
+    "automaticExtraction": null,
+    "receipt": null
+  }
+}

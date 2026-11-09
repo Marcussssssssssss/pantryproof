@@ -1,0 +1,128 @@
+{
+  "fixtureStatus": "DRAFT_NOT_APPROVED — SYNTHETIC_ONLY",
+  "scenario": "missing-optional-unit-price",
+  "expectedResult": "ACCEPT",
+  "envelope": {
+    "schemaName": "receipt-presentation",
+    "schemaVersion": "1",
+    "sourceContractVersion": "0",
+    "requestId": "request-synthetic-unit-missing-001",
+    "imageId": "image-synthetic-unit-missing-001",
+    "source": {
+      "type": "SYNTHETIC_FIXTURE",
+      "provenance": {
+        "sourceSystem": "M3D_SYNTHETIC_FIXTURE",
+        "sourceReference": "source-synthetic-unit-missing-001",
+        "contentSha256": null
+      }
+    },
+    "outcome": { "status": "RESULT_AVAILABLE", "failure": null },
+    "sourceEvidence": {
+      "sourceProcessingStatus": "OCR_COMPLETED",
+      "tokenIds": [
+        "token-unit-missing-store",
+        "token-unit-missing-date",
+        "token-unit-missing-description",
+        "token-unit-missing-quantity",
+        "token-unit-missing-line-total",
+        "token-unit-missing-receipt-total"
+      ]
+    },
+    "sourceGate": {
+      "gateResultId": "gate-synthetic-unit-missing-001",
+      "decision": "SUFFICIENT",
+      "reasons": []
+    },
+    "automaticExtraction": {
+      "stage": "PRE_REVIEW_AUTOMATIC",
+      "extractionStatus": "PARTIAL",
+      "producer": {
+        "producerId": "SYNTHETIC_FIXTURE_PRODUCER",
+        "producerVersion": "draft-1"
+      }
+    },
+    "receipt": {
+      "receiptId": "receipt-synthetic-unit-missing-001",
+      "currencyCode": "MYR",
+      "receiptFields": [
+        {
+          "fieldId": "field-unit-missing-store",
+          "role": "STORE_NAME",
+          "status": "EXTRACTED",
+          "originalAutomaticValue": "Pasar Mini Setia",
+          "presentationValue": "Pasar Mini Setia",
+          "absenceReason": null,
+          "sourceTokenIds": ["token-unit-missing-store"],
+          "nativeConfidence": null
+        },
+        {
+          "fieldId": "field-unit-missing-date",
+          "role": "PURCHASE_DATE",
+          "status": "EXTRACTED",
+          "originalAutomaticValue": "2026-10-20",
+          "presentationValue": "2026-10-20",
+          "absenceReason": null,
+          "sourceTokenIds": ["token-unit-missing-date"],
+          "nativeConfidence": null
+        },
+        {
+          "fieldId": "field-unit-missing-receipt-total",
+          "role": "RECEIPT_TOTAL",
+          "status": "EXTRACTED",
+          "originalAutomaticValue": "RM 4.80",
+          "presentationValue": "4.80",
+          "absenceReason": null,
+          "sourceTokenIds": ["token-unit-missing-receipt-total"],
+          "nativeConfidence": null
+        }
+      ],
+      "itemRows": [
+        {
+          "rowId": "row-unit-missing-001",
+          "fields": [
+            {
+              "fieldId": "field-unit-missing-description",
+              "role": "ITEM_DESCRIPTION",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "Roti Gandum",
+              "presentationValue": "Roti Gandum",
+              "absenceReason": null,
+              "sourceTokenIds": ["token-unit-missing-description"],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-unit-missing-quantity",
+              "role": "QUANTITY",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "1",
+              "presentationValue": "1",
+              "absenceReason": null,
+              "sourceTokenIds": ["token-unit-missing-quantity"],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-unit-missing-unit-price",
+              "role": "UNIT_PRICE",
+              "status": "MISSING",
+              "originalAutomaticValue": null,
+              "presentationValue": null,
+              "absenceReason": "NO_EXPLICIT_UNIT_PRICE_OBSERVED",
+              "sourceTokenIds": [],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-unit-missing-line-total",
+              "role": "LINE_TOTAL",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "RM 4.80",
+              "presentationValue": "4.80",
+              "absenceReason": null,
+              "sourceTokenIds": ["token-unit-missing-line-total"],
+              "nativeConfidence": null
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

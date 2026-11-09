@@ -1,0 +1,32 @@
+{
+  "fixtureStatus": "DRAFT_NOT_APPROVED — SYNTHETIC_ONLY",
+  "scenario": "unsupported-schema-version",
+  "expectedResult": "REJECT_UNSUPPORTED_SCHEMA_VERSION",
+  "envelope": {
+    "schemaName": "receipt-presentation",
+    "schemaVersion": "999",
+    "sourceContractVersion": "0",
+    "requestId": "request-synthetic-unsupported-001",
+    "imageId": "image-synthetic-unsupported-001",
+    "source": {
+      "type": "SYNTHETIC_FIXTURE",
+      "provenance": {
+        "sourceSystem": "M3D_SYNTHETIC_FIXTURE",
+        "sourceReference": "source-synthetic-unsupported-001",
+        "contentSha256": null
+      }
+    },
+    "outcome": {
+      "status": "PROCESSING_UNAVAILABLE",
+      "failure": {
+        "stage": "AVAILABILITY",
+        "code": "PROCESSOR_NOT_AVAILABLE",
+        "retryable": false
+      }
+    },
+    "sourceEvidence": null,
+    "sourceGate": null,
+    "automaticExtraction": null,
+    "receipt": null
+  }
+}

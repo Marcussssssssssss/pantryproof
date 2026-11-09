@@ -1,0 +1,42 @@
+{
+  "fixtureStatus": "DRAFT_NOT_APPROVED — SYNTHETIC_ONLY",
+  "scenario": "presentation-adapter-failure-with-ocr-failed-evidence",
+  "expectedResult": "REJECT_EVIDENCE_STAGE_MISMATCH",
+  "consumerContext": null,
+  "envelope": {
+    "schemaName": "receipt-presentation",
+    "schemaVersion": "1",
+    "sourceContractVersion": "0",
+    "requestId": "request-adapter-failure-ocr-failed-001",
+    "imageId": "image-adapter-failure-ocr-failed-001",
+    "source": {
+      "type": "SYNTHETIC_FIXTURE",
+      "provenance": {
+        "sourceSystem": "M3E_SYNTHETIC_FIXTURE",
+        "sourceReference": "source-adapter-failure-ocr-failed-001",
+        "contentSha256": null
+      }
+    },
+    "outcome": {
+      "status": "PROCESSING_FAILED",
+      "failure": {
+        "stage": "PRESENTATION_ADAPTER",
+        "code": "PRESENTATION_PROJECTION_FAILURE",
+        "retryable": true
+      }
+    },
+    "sourceEvidence": {
+      "sourceProcessingStatus": "OCR_FAILED",
+      "tokenIds": [
+        "token-adapter-failure-ocr-failed-001-evidence"
+      ]
+    },
+    "sourceGate": {
+      "gateResultId": "gate-adapter-failure-ocr-failed-001",
+      "decision": "SUFFICIENT",
+      "reasons": []
+    },
+    "automaticExtraction": null,
+    "receipt": null
+  }
+}

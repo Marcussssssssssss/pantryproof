@@ -1,0 +1,34 @@
+{
+  "fixtureStatus": "DRAFT_NOT_APPROVED — SYNTHETIC_ONLY",
+  "scenario": "duplicate-json-key",
+  "expectedResult": "REJECT_DUPLICATE_JSON_KEY",
+  "consumerContext": null,
+  "envelope": {
+    "schemaName": "receipt-presentation",
+    "schemaVersion": "1",
+    "schemaVersion": "1",
+    "sourceContractVersion": "0",
+    "requestId": "request-duplicate-json-key-001",
+    "imageId": "image-duplicate-json-key-001",
+    "source": {
+      "type": "SYNTHETIC_FIXTURE",
+      "provenance": {
+        "sourceSystem": "M3E_SYNTHETIC_FIXTURE",
+        "sourceReference": "source-duplicate-json-key-001",
+        "contentSha256": null
+      }
+    },
+    "outcome": {
+      "status": "PROCESSING_UNAVAILABLE",
+      "failure": {
+        "stage": "AVAILABILITY",
+        "code": "PROCESSOR_NOT_AVAILABLE",
+        "retryable": false
+      }
+    },
+    "sourceEvidence": null,
+    "sourceGate": null,
+    "automaticExtraction": null,
+    "receipt": null
+  }
+}
