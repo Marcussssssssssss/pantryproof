@@ -1,0 +1,147 @@
+{
+  "fixtureStatus": "DRAFT_NOT_APPROVED — SYNTHETIC_ONLY",
+  "scenario": "quantity-scale-four",
+  "expectedResult": "REJECT_INVALID_QUANTITY",
+  "consumerContext": null,
+  "envelope": {
+    "schemaName": "receipt-presentation",
+    "schemaVersion": "1",
+    "sourceContractVersion": "0",
+    "requestId": "request-quantity-scale-four-001",
+    "imageId": "image-quantity-scale-four-001",
+    "source": {
+      "type": "SYNTHETIC_FIXTURE",
+      "provenance": {
+        "sourceSystem": "M3E_SYNTHETIC_FIXTURE",
+        "sourceReference": "source-quantity-scale-four-001",
+        "contentSha256": null
+      }
+    },
+    "outcome": {
+      "status": "RESULT_AVAILABLE",
+      "failure": null
+    },
+    "sourceEvidence": {
+      "sourceProcessingStatus": "OCR_COMPLETED",
+      "tokenIds": [
+        "token-quantity-scale-four-001-store",
+        "token-quantity-scale-four-001-date",
+        "token-quantity-scale-four-001-description",
+        "token-quantity-scale-four-001-quantity",
+        "token-quantity-scale-four-001-unit-price",
+        "token-quantity-scale-four-001-line-total",
+        "token-quantity-scale-four-001-receipt-total"
+      ]
+    },
+    "sourceGate": {
+      "gateResultId": "gate-quantity-scale-four-001",
+      "decision": "SUFFICIENT",
+      "reasons": []
+    },
+    "automaticExtraction": {
+      "stage": "PRE_REVIEW_AUTOMATIC",
+      "extractionStatus": "EXTRACTED",
+      "producer": {
+        "producerId": "SYNTHETIC_CONTRACT_V0_PROJECTOR",
+        "producerVersion": "m3e-1"
+      }
+    },
+    "receipt": {
+      "receiptId": "receipt-quantity-scale-four-001",
+      "currencyCode": "MYR",
+      "receiptFields": [
+        {
+          "fieldId": "field-quantity-scale-four-001-store",
+          "role": "STORE_NAME",
+          "status": "EXTRACTED",
+          "originalAutomaticValue": "Pasar Mini Harmoni",
+          "presentationValue": "Pasar Mini Harmoni",
+          "absenceReason": null,
+          "sourceTokenIds": [
+            "token-quantity-scale-four-001-store"
+          ],
+          "nativeConfidence": null
+        },
+        {
+          "fieldId": "field-quantity-scale-four-001-date",
+          "role": "PURCHASE_DATE",
+          "status": "EXTRACTED",
+          "originalAutomaticValue": "2026-11-05",
+          "presentationValue": "2026-11-05",
+          "absenceReason": null,
+          "sourceTokenIds": [
+            "token-quantity-scale-four-001-date"
+          ],
+          "nativeConfidence": null
+        },
+        {
+          "fieldId": "field-quantity-scale-four-001-receipt-total",
+          "role": "RECEIPT_TOTAL",
+          "status": "EXTRACTED",
+          "originalAutomaticValue": "RM 2.50",
+          "presentationValue": "2.50",
+          "absenceReason": null,
+          "sourceTokenIds": [
+            "token-quantity-scale-four-001-receipt-total"
+          ],
+          "nativeConfidence": null
+        }
+      ],
+      "itemRows": [
+        {
+          "rowId": "row-quantity-scale-four-001-001",
+          "fields": [
+            {
+              "fieldId": "field-quantity-scale-four-001-description",
+              "role": "ITEM_DESCRIPTION",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "Garam Halus",
+              "presentationValue": "Garam Halus",
+              "absenceReason": null,
+              "sourceTokenIds": [
+                "token-quantity-scale-four-001-description"
+              ],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-quantity-scale-four-001-quantity",
+              "role": "QUANTITY",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "0.7500",
+              "presentationValue": "0.7500",
+              "absenceReason": null,
+              "sourceTokenIds": [
+                "token-quantity-scale-four-001-quantity"
+              ],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-quantity-scale-four-001-unit-price",
+              "role": "UNIT_PRICE",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "RM 2.50",
+              "presentationValue": "2.50",
+              "absenceReason": null,
+              "sourceTokenIds": [
+                "token-quantity-scale-four-001-unit-price"
+              ],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-quantity-scale-four-001-line-total",
+              "role": "LINE_TOTAL",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "RM 2.50",
+              "presentationValue": "2.50",
+              "absenceReason": null,
+              "sourceTokenIds": [
+                "token-quantity-scale-four-001-line-total"
+              ],
+              "nativeConfidence": null
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

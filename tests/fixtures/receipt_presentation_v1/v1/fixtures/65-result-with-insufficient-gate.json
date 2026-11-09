@@ -1,0 +1,149 @@
+{
+  "fixtureStatus": "DRAFT_NOT_APPROVED — SYNTHETIC_ONLY",
+  "scenario": "result-with-insufficient-gate",
+  "expectedResult": "REJECT_GATE_OUTCOME_MISMATCH",
+  "consumerContext": null,
+  "envelope": {
+    "schemaName": "receipt-presentation",
+    "schemaVersion": "1",
+    "sourceContractVersion": "0",
+    "requestId": "request-result-with-insufficient-gate-001",
+    "imageId": "image-result-with-insufficient-gate-001",
+    "source": {
+      "type": "SYNTHETIC_FIXTURE",
+      "provenance": {
+        "sourceSystem": "M3E_SYNTHETIC_FIXTURE",
+        "sourceReference": "source-result-with-insufficient-gate-001",
+        "contentSha256": null
+      }
+    },
+    "outcome": {
+      "status": "RESULT_AVAILABLE",
+      "failure": null
+    },
+    "sourceEvidence": {
+      "sourceProcessingStatus": "OCR_COMPLETED",
+      "tokenIds": [
+        "token-result-with-insufficient-gate-001-store",
+        "token-result-with-insufficient-gate-001-date",
+        "token-result-with-insufficient-gate-001-description",
+        "token-result-with-insufficient-gate-001-quantity",
+        "token-result-with-insufficient-gate-001-unit-price",
+        "token-result-with-insufficient-gate-001-line-total",
+        "token-result-with-insufficient-gate-001-receipt-total"
+      ]
+    },
+    "sourceGate": {
+      "gateResultId": "gate-result-with-insufficient-gate-001",
+      "decision": "INSUFFICIENT",
+      "reasons": [
+        "RECEIPT_STRUCTURE_NOT_RELIABLY_OBSERVED"
+      ]
+    },
+    "automaticExtraction": {
+      "stage": "PRE_REVIEW_AUTOMATIC",
+      "extractionStatus": "EXTRACTED",
+      "producer": {
+        "producerId": "SYNTHETIC_CONTRACT_V0_PROJECTOR",
+        "producerVersion": "m3e-1"
+      }
+    },
+    "receipt": {
+      "receiptId": "receipt-result-with-insufficient-gate-001",
+      "currencyCode": "MYR",
+      "receiptFields": [
+        {
+          "fieldId": "field-result-with-insufficient-gate-001-store",
+          "role": "STORE_NAME",
+          "status": "EXTRACTED",
+          "originalAutomaticValue": "Pasar Mini Harmoni",
+          "presentationValue": "Pasar Mini Harmoni",
+          "absenceReason": null,
+          "sourceTokenIds": [
+            "token-result-with-insufficient-gate-001-store"
+          ],
+          "nativeConfidence": null
+        },
+        {
+          "fieldId": "field-result-with-insufficient-gate-001-date",
+          "role": "PURCHASE_DATE",
+          "status": "EXTRACTED",
+          "originalAutomaticValue": "2026-11-05",
+          "presentationValue": "2026-11-05",
+          "absenceReason": null,
+          "sourceTokenIds": [
+            "token-result-with-insufficient-gate-001-date"
+          ],
+          "nativeConfidence": null
+        },
+        {
+          "fieldId": "field-result-with-insufficient-gate-001-receipt-total",
+          "role": "RECEIPT_TOTAL",
+          "status": "EXTRACTED",
+          "originalAutomaticValue": "RM 2.50",
+          "presentationValue": "2.50",
+          "absenceReason": null,
+          "sourceTokenIds": [
+            "token-result-with-insufficient-gate-001-receipt-total"
+          ],
+          "nativeConfidence": null
+        }
+      ],
+      "itemRows": [
+        {
+          "rowId": "row-result-with-insufficient-gate-001-001",
+          "fields": [
+            {
+              "fieldId": "field-result-with-insufficient-gate-001-description",
+              "role": "ITEM_DESCRIPTION",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "Garam Halus",
+              "presentationValue": "Garam Halus",
+              "absenceReason": null,
+              "sourceTokenIds": [
+                "token-result-with-insufficient-gate-001-description"
+              ],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-result-with-insufficient-gate-001-quantity",
+              "role": "QUANTITY",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "1",
+              "presentationValue": "1",
+              "absenceReason": null,
+              "sourceTokenIds": [
+                "token-result-with-insufficient-gate-001-quantity"
+              ],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-result-with-insufficient-gate-001-unit-price",
+              "role": "UNIT_PRICE",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "RM 2.50",
+              "presentationValue": "2.50",
+              "absenceReason": null,
+              "sourceTokenIds": [
+                "token-result-with-insufficient-gate-001-unit-price"
+              ],
+              "nativeConfidence": null
+            },
+            {
+              "fieldId": "field-result-with-insufficient-gate-001-line-total",
+              "role": "LINE_TOTAL",
+              "status": "EXTRACTED",
+              "originalAutomaticValue": "RM 2.50",
+              "presentationValue": "2.50",
+              "absenceReason": null,
+              "sourceTokenIds": [
+                "token-result-with-insufficient-gate-001-line-total"
+              ],
+              "nativeConfidence": null
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

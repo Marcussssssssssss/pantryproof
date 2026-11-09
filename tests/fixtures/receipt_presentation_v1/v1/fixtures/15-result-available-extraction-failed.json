@@ -1,0 +1,81 @@
+{
+  "fixtureStatus": "DRAFT_NOT_APPROVED — SYNTHETIC_ONLY",
+  "scenario": "result-available-extraction-failed",
+  "expectedResult": "ACCEPT",
+  "consumerContext": null,
+  "envelope": {
+    "schemaName": "receipt-presentation",
+    "schemaVersion": "1",
+    "sourceContractVersion": "0",
+    "requestId": "request-extraction-failed-001",
+    "imageId": "image-extraction-failed-001",
+    "source": {
+      "type": "SYNTHETIC_FIXTURE",
+      "provenance": {
+        "sourceSystem": "M3E_SYNTHETIC_FIXTURE",
+        "sourceReference": "source-extraction-failed-001",
+        "contentSha256": null
+      }
+    },
+    "outcome": {
+      "status": "RESULT_AVAILABLE",
+      "failure": null
+    },
+    "sourceEvidence": {
+      "sourceProcessingStatus": "OCR_PARTIAL",
+      "tokenIds": [
+        "token-extraction-failed-001-observation"
+      ]
+    },
+    "sourceGate": {
+      "gateResultId": "gate-extraction-failed-001",
+      "decision": "SUFFICIENT",
+      "reasons": []
+    },
+    "automaticExtraction": {
+      "stage": "PRE_REVIEW_AUTOMATIC",
+      "extractionStatus": "FAILED",
+      "producer": {
+        "producerId": "SYNTHETIC_CONTRACT_V0_PROJECTOR",
+        "producerVersion": "m3e-1"
+      }
+    },
+    "receipt": {
+      "receiptId": "receipt-extraction-failed-001",
+      "currencyCode": "MYR",
+      "receiptFields": [
+        {
+          "fieldId": "field-extraction-failed-001-store",
+          "role": "STORE_NAME",
+          "status": "MISSING",
+          "originalAutomaticValue": null,
+          "presentationValue": null,
+          "absenceReason": "STORE_NAME_NOT_OBSERVED",
+          "sourceTokenIds": [],
+          "nativeConfidence": null
+        },
+        {
+          "fieldId": "field-extraction-failed-001-date",
+          "role": "PURCHASE_DATE",
+          "status": "UNRESOLVED",
+          "originalAutomaticValue": null,
+          "presentationValue": null,
+          "absenceReason": "PURCHASE_DATE_NOT_RESOLVED",
+          "sourceTokenIds": [],
+          "nativeConfidence": null
+        },
+        {
+          "fieldId": "field-extraction-failed-001-receipt-total",
+          "role": "RECEIPT_TOTAL",
+          "status": "MISSING",
+          "originalAutomaticValue": null,
+          "presentationValue": null,
+          "absenceReason": "RECEIPT_TOTAL_NOT_OBSERVED",
+          "sourceTokenIds": [],
+          "nativeConfidence": null
+        }
+      ],
+      "itemRows": []
+    }
+  }
+}
