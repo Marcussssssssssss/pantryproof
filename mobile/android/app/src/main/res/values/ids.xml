@@ -12,10 +12,16 @@
     <item name="home_synthetic_demo" type="id" />
     <item name="home_inventory" type="id" />
     <item name="add_import_image" type="id" />
+    <item name="add_capture_image" type="id" />
     <item name="add_use_demo" type="id" />
+    <item name="image_input_notice" type="id" />
     <item name="preview_continue" type="id" />
     <item name="preview_choose_another" type="id" />
     <item name="preview_use_demo" type="id" />
+    <item name="preview_source_status" type="id" />
+    <item name="preview_selected_image" type="id" />
+    <item name="preview_image_error" type="id" />
+    <item name="preview_remove_image" type="id" />
     <item name="details_review" type="id" />
     <item name="details_item_0" type="id" />
     <item name="details_item_1" type="id" />

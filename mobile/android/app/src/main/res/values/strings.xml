@@ -11,7 +11,7 @@
     <string name="home_brand_subtitle">Local-first grocery receipt intelligence</string>
     <string name="home_add_receipt">Add receipt</string>
     <string name="home_local_note_title">Local image access</string>
-    <string name="home_local_note_body">A chosen image stays on this device in the current prototype. No OCR or upload runs.</string>
+    <string name="home_local_note_body">A chosen or captured image stays on this device in the current prototype. No OCR or upload runs.</string>
     <string name="home_inventory_title">Household inventory</string>
     <plurals name="home_inventory_count">
         <item quantity="one">%1$d temporary mock item</item>
@@ -26,16 +26,22 @@
 
     <string name="add_receipt_title">Add receipt</string>
     <string name="add_receipt_step_title">Choose a receipt source</string>
-    <string name="add_receipt_step_description">Import an image locally or continue with the clearly labelled synthetic demo.</string>
+    <string name="add_receipt_step_description">Take a photo, import an image locally or continue with the clearly labelled synthetic demo.</string>
     <string name="add_receipt_import">Import receipt image</string>
     <string name="add_receipt_import_help">Uses Android’s system image picker. No broad storage permission is requested.</string>
     <string name="add_receipt_camera">Take a photo</string>
     <string name="add_receipt_camera_unavailable">Not available in this prototype</string>
-    <string name="add_receipt_camera_help">Camera capture is deferred. This control is shown for clarity but cannot be activated.</string>
+    <string name="add_receipt_camera_help">Opens a camera app and keeps a temporary image in PantryProof’s private cache. No OCR runs.</string>
+    <string name="camera_capture_unavailable_title">Camera unavailable</string>
+    <string name="camera_capture_unavailable_body">A camera app could not be opened. You can import an existing image or use the synthetic demo.</string>
+    <string name="camera_capture_cancelled_title">Photo not captured</string>
+    <string name="camera_capture_cancelled_body">Camera capture was cancelled. No new photo was retained; your previous selection is unchanged.</string>
+    <string name="camera_capture_invalid_title">Photo unavailable</string>
+    <string name="camera_capture_invalid_body">The camera did not return a readable image. Try taking the photo again or import an image.</string>
     <string name="add_receipt_demo">Use synthetic demo</string>
     <string name="add_receipt_demo_help">Opens the deterministic fictional receipt without using a personal image.</string>
-    <string name="add_receipt_privacy_title">On-device selection</string>
-    <string name="add_receipt_privacy_body">The current prototype can preview the image you choose. It does not upload or process the image.</string>
+    <string name="add_receipt_privacy_title">On-device image input</string>
+    <string name="add_receipt_privacy_body">The app renders the image locally for preview. OCR, receipt-field extraction and upload do not run.</string>
 
     <string name="preview_title">Receipt preview</string>
     <string name="preview_step_title">Check the receipt image</string>
@@ -44,6 +50,8 @@
     <string name="preview_synthetic_status_body">This illustrated receipt is fictional and deterministic.</string>
     <string name="preview_local_status">Local image · Not processed</string>
     <string name="preview_local_status_body">No OCR or field extraction has run on this image.</string>
+    <string name="preview_camera_status">Camera photo · Not processed</string>
+    <string name="preview_camera_status_body">This temporary photo remains local. No OCR or field extraction has run.</string>
     <string name="preview_local_warning_title">Sample data follows</string>
     <string name="preview_local_warning_body">The next values are synthetic sample data and are not extracted from or associated with this image.</string>
     <string name="preview_view_sample_fields">View sample receipt fields</string>
@@ -56,9 +64,8 @@
     <string name="preview_image_unavailable_body">The image can no longer be opened. Choose it again or use the synthetic demo.</string>
     <string name="preview_use_demo_instead">Use synthetic demo instead</string>
     <string name="preview_selected_image_description">Locally selected receipt image preview</string>
+    <string name="preview_captured_image_description">Temporary camera receipt photo preview</string>
     <string name="preview_synthetic_image_description">Illustrated synthetic demo receipt for Demo Grocery Store</string>
-    <string name="selection_unavailable_title">Selection unavailable</string>
-
     <string name="progress_accessibility">Step %1$d of 4, %2$s</string>
     <string name="progress_visible">%1$d OF 4</string>
     <string name="action_arrow">%1$s  →</string>
