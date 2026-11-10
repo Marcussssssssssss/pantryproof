@@ -9,6 +9,7 @@ class PantryUiState(private val source: ReceiptPresentationSource) {
     companion object {
         const val MIN_INVENTORY_QUANTITY = 0
         const val MAX_INVENTORY_QUANTITY = 99
+        const val MANUAL_ROW_PREFIX = "manual-receipt-"
     }
 
     var presentationResult: ReceiptPresentationUiResult = source.syntheticPresentation()
@@ -56,8 +57,25 @@ class PantryUiState(private val source: ReceiptPresentationSource) {
                 state = "Temporary receipt preview",
             )
         }
-        inventory = (existingStock + receiptPreview).toMutableList()
+        val manualRows = inventory.filter { it.id.startsWith(MANUAL_ROW_PREFIX) }
+        inventory = (existingStock + receiptPreview + manualRows).toMutableList()
         demoConfirmed = true
+        return true
+    }
+
+    fun confirmManualReceipt(draft: EditableReceipt): Boolean {
+        val confirmed = ReceiptValidator.validateManual(draft).receipt ?: return false
+        val rows = confirmed.items.map { item ->
+            InventoryItem(
+                id = "$MANUAL_ROW_PREFIX${item.id}",
+                name = item.description,
+                quantity = item.quantity,
+                state = "Manually entered receipt",
+            )
+        }
+        val rowIds = rows.map(InventoryItem::id).toSet()
+        if (rowIds.size != rows.size || inventory.any { it.id in rowIds }) return false
+        inventory.addAll(rows)
         return true
     }
 

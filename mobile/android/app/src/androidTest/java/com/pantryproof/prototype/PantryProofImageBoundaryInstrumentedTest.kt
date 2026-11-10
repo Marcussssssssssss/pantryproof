@@ -10,6 +10,8 @@ import android.os.Build
 import android.provider.MediaStore
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.action.ViewActions.closeSoftKeyboard
+import androidx.test.espresso.action.ViewActions.replaceText
 import androidx.test.espresso.action.ViewActions.scrollTo
 import androidx.test.espresso.assertion.ViewAssertions.doesNotExist
 import androidx.test.espresso.assertion.ViewAssertions.matches
@@ -125,10 +127,12 @@ class PantryProofImageBoundaryInstrumentedTest {
             onView(withId(R.id.preview_selected_image)).check(matches(isDisplayed()))
 
             onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
-            onView(withText(R.string.details_local_demo_body)).check(matches(isDisplayed()))
-            onView(withText("Demo Grocery Store (Synthetic)")).check(matches(isDisplayed()))
+            onView(withId(R.id.screen_manual)).check(matches(isDisplayed()))
+            onView(withText(R.string.manual_source_title)).check(matches(isDisplayed()))
+            onView(withText("Demo Grocery Store (Synthetic)")).check(doesNotExist())
 
-            onView(withText(R.string.details_back_action)).perform(scrollTo(), click())
+            onView(withId(R.id.app_bar_back)).perform(click())
+            onView(withText(R.string.review_discard_confirm)).perform(click())
             onView(withId(R.id.preview_remove_image)).perform(scrollTo(), click())
             onView(withText(R.string.preview_synthetic_status)).check(matches(isDisplayed()))
             assertTrue(cameraFixtures().isEmpty())
@@ -240,7 +244,7 @@ class PantryProofImageBoundaryInstrumentedTest {
     }
 
     @Test
-    fun controlledLocalImageRemainsSeparateAcrossRecreationAndDetails() = withIntents {
+    fun galleryManualEntryValidatesRestoresAndConfirmsOnlyReviewedRows() = withIntents {
         val imageFile = createSyntheticImageFixture()
         val imageUri = Uri.fromFile(imageFile)
         try {
@@ -255,20 +259,40 @@ class PantryProofImageBoundaryInstrumentedTest {
             onView(withId(R.id.home_add_receipt)).perform(click())
             onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
             onView(withText(R.string.preview_local_status)).check(matches(isDisplayed()))
-            onView(withText(R.string.preview_local_warning_body)).check(matches(isDisplayed()))
 
             activityRule.scenario.recreate()
             onView(withId(R.id.screen_preview)).check(matches(isDisplayed()))
             onView(withText(R.string.preview_local_status)).check(matches(isDisplayed()))
-            onView(withText(R.string.preview_local_warning_body)).check(matches(isDisplayed()))
 
             onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
-            onView(withText(R.string.details_local_demo_body)).check(matches(isDisplayed()))
-            onView(withText("Demo Grocery Store (Synthetic)")).check(matches(isDisplayed()))
+            onView(withText(R.string.manual_source_title)).check(matches(isDisplayed()))
+            onView(withText("Demo Grocery Store (Synthetic)")).check(doesNotExist())
+            onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
+            onView(withId(R.id.review_error_summary)).check(matches(isDisplayed()))
+            onView(withText(R.string.manual_confirm_action)).check(doesNotExist())
 
-            onView(withText(R.string.details_back_action)).perform(scrollTo(), click())
-            onView(withId(R.id.preview_remove_image)).perform(scrollTo(), click())
-            onView(withText(R.string.preview_synthetic_status)).check(matches(isDisplayed()))
+            enterManualField(R.id.review_store_name, "Fictional Kedai")
+            enterManualField(R.id.review_purchase_date, "2026-11-10")
+            enterManualField(R.id.review_item_0_description, "Synthetic oats")
+            enterManualField(R.id.review_item_0_quantity, "2")
+            enterManualField(R.id.review_item_0_line_total, "8.00")
+            onView(withId(R.id.manual_add_item)).perform(scrollTo(), click())
+            enterManualField(R.id.review_item_1_description, "Discarded row")
+            activityRule.scenario.recreate()
+            onView(withId(R.id.review_item_1_description)).check(matches(withText("Discarded row")))
+            onView(withText(context.getString(R.string.manual_remove_item, 2))).perform(scrollTo(), click())
+            enterManualField(R.id.review_receipt_total, "8.00")
+            onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
+            onView(withText(R.string.manual_review_title)).check(matches(isDisplayed()))
+            onView(withText(R.string.review_keep_editing)).perform(click())
+            onView(withId(R.id.screen_manual)).check(matches(isDisplayed()))
+            onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
+            onView(withText(R.string.manual_confirm_action)).perform(click())
+            onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
+            onView(withText("Synthetic oats")).perform(scrollTo()).check(matches(isDisplayed()))
+            onView(withText("Discarded row")).check(doesNotExist())
+            activityRule.scenario.recreate()
+            onView(withText("Synthetic oats")).perform(scrollTo()).check(matches(isDisplayed()))
             assertTrue(imageFile.isFile)
             assertTrue(context.contentResolver.persistedUriPermissions.none {
                 it.uri == imageUri
@@ -276,6 +300,10 @@ class PantryProofImageBoundaryInstrumentedTest {
         } finally {
             imageFile.delete()
         }
+    }
+
+    private fun enterManualField(id: Int, value: String) {
+        onView(withId(id)).perform(scrollTo(), replaceText(value), closeSoftKeyboard())
     }
 
     private fun expectedPickerAction(): String =

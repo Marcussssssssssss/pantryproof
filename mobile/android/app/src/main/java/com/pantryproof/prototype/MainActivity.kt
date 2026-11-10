@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.text.Editable
+import android.text.InputFilter
 import android.text.InputType
 import android.text.TextWatcher
 import android.view.Gravity
@@ -59,11 +60,12 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.ArrayDeque
 import java.util.Locale
+import java.util.UUID
 
 @SuppressLint("SetTextI18n", "ExifInterface")
 class MainActivity : ComponentActivity() {
     private enum class Screen {
-        HOME, ADD_RECEIPT, PREVIEW, DETAILS, REVIEW, INVENTORY,
+        HOME, ADD_RECEIPT, PREVIEW, DETAILS, REVIEW, MANUAL, INVENTORY,
     }
 
     private enum class LocalImageSource {
@@ -117,6 +119,7 @@ class MainActivity : ComponentActivity() {
     private var pendingCaptureUri: Uri? = null
     private var pendingCaptureFileName: String? = null
     private var imageInputNotice: ImageInputNotice? = null
+    private var manualDraft: EditableReceipt? = null
     private var reviewHasUnsavedChanges = false
     private var reviewDraft: EditableReceipt? = null
     private var reviewSavedTemporarily = false
@@ -160,6 +163,13 @@ class MainActivity : ComponentActivity() {
             ?.let { runCatching { ImageInputNotice.valueOf(it) }.getOrNull() }
         restoreCaptureFiles()
         savedInstanceState?.let(::restoreSessionState)
+        if (currentScreen == Screen.MANUAL) {
+            manualDraft = savedInstanceState?.getBundle("manualDraft")?.let(::readDraft)
+            if (manualDraft == null || selectedImageUri?.let(::canReadSelectedImage) != true) {
+                manualDraft = null
+                currentScreen = backStack.pollLast() ?: Screen.PREVIEW
+            }
+        }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() = handleBackNavigation()
         })
@@ -187,13 +197,18 @@ class MainActivity : ComponentActivity() {
         writeInventory(outState, state.inventory)
         outState.putBoolean("demoConfirmed", state.demoConfirmed)
         reviewDraft?.let { writeDraft(outState, it) }
+        manualDraft?.let { draft ->
+            outState.putBundle("manualDraft", Bundle().apply { writeDraft(this, draft) })
+        }
         outState.putStringArrayList("reviewErrorKeys", ArrayList(reviewValidationErrors.keys))
         outState.putStringArrayList("reviewErrorValues", ArrayList(reviewValidationErrors.values))
         super.onSaveInstanceState(outState)
     }
 
     private fun handleBackNavigation() {
-        if (currentScreen == Screen.REVIEW && reviewHasUnsavedChanges) {
+        if (currentScreen == Screen.MANUAL) {
+            confirmDiscardManualDraft()
+        } else if (currentScreen == Screen.REVIEW && reviewHasUnsavedChanges) {
             confirmDiscardEdits { goBack() }
         } else if (currentScreen == Screen.HOME) {
             finish()
@@ -268,6 +283,7 @@ class MainActivity : ComponentActivity() {
             Screen.PREVIEW -> renderPreview()
             Screen.DETAILS -> renderDetails()
             Screen.REVIEW -> renderReview()
+            Screen.MANUAL -> renderManualReceipt()
             Screen.INVENTORY -> renderInventory()
         }
     }
@@ -415,6 +431,7 @@ class MainActivity : ComponentActivity() {
         captureFileName: String?,
     ) {
         releaseSelectedGalleryPermission(replacementUri = uri)
+        if (selectedImageUri != uri) manualDraft = null
         ownsSelectedGalleryReadGrant = false
         if (selectedCaptureFileName != captureFileName) {
             captureStore.delete(selectedCaptureFileName)
@@ -427,6 +444,7 @@ class MainActivity : ComponentActivity() {
 
     private fun switchToSyntheticDemo() {
         releaseSelectedGalleryPermission(replacementUri = null)
+        manualDraft = null
         ownsSelectedGalleryReadGrant = false
         captureStore.delete(selectedCaptureFileName)
         captureStore.delete(pendingCaptureFileName)
@@ -609,17 +627,15 @@ class MainActivity : ComponentActivity() {
                 add(space(14))
                 add(selectedImagePreview(previewBitmap, imageSource))
                 add(space(14))
-                add(ui.banner(
-                    getString(R.string.preview_local_warning_title),
-                    getString(R.string.preview_local_warning_body),
-                    PantryBannerTone.DEMO,
-                ))
                 add(space(18))
                 add(ui.actionButton(
-                    getString(R.string.preview_continue_demo),
+                    getString(R.string.manual_start_action),
                     PantryActionStyle.PRIMARY,
                     viewId = R.id.preview_continue,
-                ) { navigate(Screen.DETAILS) })
+                ) {
+                    manualDraft = EditableReceipt("", "", mutableListOf(blankManualItem()), "")
+                    navigate(Screen.MANUAL)
+                })
                 add(space(10))
                 add(ui.actionButton(
                     getString(R.string.preview_choose_another),
@@ -1261,12 +1277,207 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun blankManualItem() = EditableReceiptItem(UUID.randomUUID().toString(), "", "", "", "")
+
+    private fun renderManualReceipt() =
+        setScreen(getString(R.string.manual_title), true, formWidth = true) {
+            val draft = checkNotNull(manualDraft)
+            add(ui.banner(
+                getString(R.string.manual_source_title),
+                getString(R.string.manual_source_body),
+                PantryBannerTone.INFO,
+            ))
+            add(space(8))
+            add(ui.actionButton(
+                getString(R.string.manual_view_image),
+                PantryActionStyle.SECONDARY,
+            ) {
+                val bitmap = selectedImageUri?.let(::decodePreviewBitmap)
+                val source = selectedImageSource
+                val dialog = AlertDialog.Builder(this@MainActivity)
+                    .setTitle(R.string.preview_title)
+                    .setPositiveButton(android.R.string.ok, null)
+                if (bitmap != null && source != null) {
+                    dialog.setView(selectedImagePreview(bitmap, source))
+                } else {
+                    bitmap?.recycle()
+                    dialog.setMessage(R.string.preview_image_unavailable_body)
+                }
+                dialog.show()
+            })
+            add(space(12))
+            val errors = bodyText("").apply {
+                id = R.id.review_error_summary
+                setTextColor(ui.color(R.color.pantry_on_error_container))
+                setBackgroundColor(ui.color(R.color.pantry_error_container))
+                accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+                visibility = View.GONE
+            }
+            add(errors)
+            val bindings = mutableListOf<ReviewFieldUi>()
+            val amountType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            fun field(
+                key: String,
+                label: Int,
+                value: String,
+                helper: Int = R.string.review_required_helper,
+                type: Int = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES,
+                prefix: String? = null,
+            ): View {
+                val binding = reviewField(
+                    key, getString(label), value, getString(helper), type, prefix,
+                    manualEntry = true,
+                )
+                bindings += binding
+                binding.field.addTextChangedListener(simpleTextWatcher {
+                    draft.updateField(key, binding.field.text.toString())
+                    applyReviewFieldError(binding, null)
+                    errors.visibility = View.GONE
+                })
+                return binding.container
+            }
+            fun rerenderAtCurrentPosition() {
+                val scrollY = screenScrollView?.scrollY ?: 0
+                render()
+                screenScrollView?.let { scroll -> scroll.post { scroll.scrollTo(0, scrollY) } }
+            }
+            add(field("storeName", R.string.field_store_name, draft.storeName))
+            add(field(
+                "purchaseDate", R.string.field_purchase_date, draft.purchaseDate,
+                R.string.review_date_helper, InputType.TYPE_CLASS_DATETIME,
+            ))
+            add(space(12))
+            draft.items.forEachIndexed { index, item ->
+                val key = "item.$index"
+                add(ui.card {
+                    addView(sectionTitle(getString(R.string.review_item_number, index + 1)))
+                    addView(field("$key.description", R.string.field_description, item.description))
+                    addView(field(
+                        "$key.quantity", R.string.field_quantity, item.quantity,
+                        R.string.manual_quantity_helper, InputType.TYPE_CLASS_NUMBER,
+                    ))
+                    addView(field(
+                        "$key.unitPrice", R.string.field_unit_price, item.unitPrice,
+                        R.string.review_unit_price_helper, amountType, "RM",
+                    ))
+                    addView(field(
+                        "$key.lineTotal", R.string.field_line_total, item.lineTotal,
+                        R.string.review_money_helper, amountType, "RM",
+                    ))
+                    addView(ui.actionButton(
+                        getString(R.string.manual_remove_item, index + 1),
+                        PantryActionStyle.TERTIARY,
+                    ) {
+                        draft.items.removeAt(index)
+                        rerenderAtCurrentPosition()
+                    })
+                })
+                add(space(8))
+            }
+            val addItem = ui.actionButton(
+                getString(R.string.manual_add_item),
+                PantryActionStyle.SECONDARY,
+                enabled = draft.items.size < ReceiptValidator.MAX_MANUAL_ITEMS,
+                viewId = R.id.manual_add_item,
+            ) {
+                draft.items.add(blankManualItem())
+                rerenderAtCurrentPosition()
+            }
+            add(addItem)
+            if (draft.items.size >= ReceiptValidator.MAX_MANUAL_ITEMS) {
+                add(bodyText(getString(R.string.manual_item_limit, ReceiptValidator.MAX_MANUAL_ITEMS)))
+            }
+            add(space(12))
+            add(field(
+                "receiptTotal", R.string.field_receipt_total, draft.receiptTotal,
+                R.string.review_money_helper, amountType, "RM",
+            ))
+            add(space(12))
+            add(ui.actionButton(
+                getString(R.string.manual_review_action),
+                PantryActionStyle.PRIMARY,
+                viewId = R.id.manual_review_action,
+            ) {
+                val validation = ReceiptValidator.validateManual(draft)
+                bindings.forEach { applyReviewFieldError(it, validation.errors[it.key]) }
+                val receipt = validation.receipt
+                if (receipt == null) {
+                    errors.text = validation.errors.values.distinct().joinToString("\n")
+                    errors.visibility = View.VISIBLE
+                    val firstInvalid = bindings.firstOrNull { it.key == validation.firstInvalidFieldKey }
+                    if (firstInvalid != null) focusInvalidField(firstInvalid)
+                    else {
+                        addItem.isFocusableInTouchMode = true
+                        addItem.requestFocus()
+                    }
+                } else {
+                    reviewManualReceipt(draft, receipt)
+                }
+            })
+            add(ui.actionButton(
+                getString(R.string.manual_cancel_action),
+                PantryActionStyle.TERTIARY,
+            ) { confirmDiscardManualDraft() })
+        }
+
+    private fun reviewManualReceipt(draft: EditableReceipt, receipt: Receipt) {
+        val summary = buildString {
+            appendLine(getString(R.string.manual_source_title))
+            appendLine(receipt.storeName)
+            appendLine(receipt.purchaseDate.toString())
+            receipt.items.forEach { item ->
+                appendLine()
+                appendLine(item.description)
+                appendLine(getString(R.string.manual_review_quantity, item.quantity))
+                appendLine(getString(
+                    R.string.manual_review_unit_price,
+                    item.unitPrice?.let(MoneyFormatter::ringgit)
+                        ?: getString(R.string.manual_unit_price_not_entered),
+                ))
+                appendLine(getString(R.string.manual_review_line_total, MoneyFormatter.ringgit(item.lineTotal)))
+            }
+            appendLine()
+            appendLine(getString(R.string.manual_review_total, MoneyFormatter.ringgit(receipt.receiptTotal)))
+            append(getString(R.string.manual_review_session_notice))
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.manual_review_title)
+            .setMessage(summary)
+            .setNegativeButton(R.string.review_keep_editing, null)
+            .setPositiveButton(R.string.manual_confirm_action) { _, _ ->
+                if (manualDraft === draft && state.confirmManualReceipt(draft)) {
+                    switchToSyntheticDemo()
+                    backStack.clear()
+                    backStack.addLast(Screen.HOME)
+                    currentScreen = Screen.INVENTORY
+                    render()
+                }
+            }
+            .show()
+    }
+
+    private fun confirmDiscardManualDraft() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.manual_discard_title)
+            .setMessage(R.string.manual_discard_body)
+            .setNegativeButton(R.string.review_keep_editing, null)
+            .setPositiveButton(R.string.review_discard_confirm) { _, _ ->
+                manualDraft = null
+                goBack()
+            }
+            .show()
+    }
+
     private fun renderInventory() = setScreen(getString(R.string.inventory_title), true) {
         add(ui.banner(
             getString(R.string.inventory_banner_title),
             getString(
-                if (state.demoConfirmed) R.string.inventory_banner_confirmed
-                else R.string.inventory_banner_mock,
+                when {
+                    state.inventory.any { it.id.startsWith(PantryUiState.MANUAL_ROW_PREFIX) } ->
+                        R.string.manual_inventory_banner
+                    state.demoConfirmed -> R.string.inventory_banner_confirmed
+                    else -> R.string.inventory_banner_mock
+                },
             ),
             PantryBannerTone.SUCCESS,
         ))
@@ -1383,10 +1594,13 @@ class MainActivity : ComponentActivity() {
         helper: String,
         type: Int = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES,
         prefix: String? = null,
+        manualEntry: Boolean = false,
     ): ReviewFieldUi {
         val allowWrap = type and InputType.TYPE_MASK_CLASS == InputType.TYPE_CLASS_TEXT
         val input = EditText(this).apply {
             id = reviewFieldId(key)
+            if (manualEntry && id == View.NO_ID) id = View.generateViewId()
+            if (manualEntry) filters = arrayOf(InputFilter.LengthFilter(160))
             hint = label
             setText(value)
             inputType = type
@@ -1540,9 +1754,10 @@ class MainActivity : ComponentActivity() {
             0,
             R.style.TextAppearance_PantryProof_ItemTitle,
         ).apply { text = item.name })
-        val isReceiptPreview = item.id.startsWith("receipt-")
         addView(
-            if (isReceiptPreview) {
+            if (item.id.startsWith(PantryUiState.MANUAL_ROW_PREFIX)) {
+                ui.statusChip(getString(R.string.manual_inventory_source))
+            } else if (item.id.startsWith("receipt-")) {
                 ui.statusChip(getString(R.string.inventory_item_source))
             } else {
                 TextView(
@@ -1636,6 +1851,7 @@ class MainActivity : ComponentActivity() {
                 Screen.PREVIEW -> R.id.screen_preview
                 Screen.DETAILS -> R.id.screen_details
                 Screen.REVIEW -> R.id.screen_review
+                Screen.MANUAL -> R.id.screen_manual
                 Screen.INVENTORY -> R.id.screen_inventory
             }
             orientation = LinearLayout.VERTICAL
@@ -1648,11 +1864,7 @@ class MainActivity : ComponentActivity() {
         }
         ViewCompat.setAccessibilityPaneTitle(root, title)
         root.addView(ui.appBar(title, showBack) {
-            if (currentScreen == Screen.REVIEW && reviewHasUnsavedChanges) {
-                confirmDiscardEdits { goBack() }
-            } else {
-                goBack()
-            }
+            handleBackNavigation()
         })
         val pageGutter = resources.getDimensionPixelSize(
             if (resources.configuration.screenWidthDp >= 600) {
