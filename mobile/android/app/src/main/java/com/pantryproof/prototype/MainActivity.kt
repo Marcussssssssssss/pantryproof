@@ -2,8 +2,13 @@ package com.pantryproof.prototype
 
 import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.content.ActivityNotFoundException
 import android.content.ClipData
+import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -40,6 +45,7 @@ import com.pantryproof.prototype.data.PresentedReceiptItem
 import com.pantryproof.prototype.data.Receipt
 import com.pantryproof.prototype.data.ReceiptItem
 import com.pantryproof.prototype.data.ReceiptPresentationUiResult
+import com.pantryproof.prototype.image.ReceiptCaptureStore
 import com.pantryproof.prototype.ui.EditableReceipt
 import com.pantryproof.prototype.ui.EditableReceiptItem
 import com.pantryproof.prototype.ui.MoneyFormatter
@@ -54,10 +60,33 @@ import java.time.format.DateTimeFormatter
 import java.util.ArrayDeque
 import java.util.Locale
 
-@SuppressLint("SetTextI18n")
+@SuppressLint("SetTextI18n", "ExifInterface")
 class MainActivity : ComponentActivity() {
     private enum class Screen {
         HOME, ADD_RECEIPT, PREVIEW, DETAILS, REVIEW, INVENTORY,
+    }
+
+    private enum class LocalImageSource {
+        GALLERY, CAMERA,
+    }
+
+    private enum class ImageInputNotice {
+        CAMERA_UNAVAILABLE, CAMERA_CANCELLED, CAMERA_INVALID, IMAGE_UNAVAILABLE,
+    }
+
+    private class GrantedTakePicture : ActivityResultContracts.TakePicture() {
+        override fun createIntent(context: Context, input: Uri): Intent =
+            super.createIntent(context, input).apply {
+                clipData = ClipData.newRawUri("PantryProof receipt photo", input)
+                addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }
+    }
+
+    private companion object {
+        const val MAX_PREVIEW_IMAGE_DIMENSION = 1600
     }
 
     private data class ItemEditFields(
@@ -78,10 +107,16 @@ class MainActivity : ComponentActivity() {
 
     private val state = PantryUiState(MockReceiptPresentationSource())
     private val ui by lazy { PantryUiComponents(this) }
+    private val captureStore by lazy { ReceiptCaptureStore(this) }
     private val backStack = ArrayDeque<Screen>()
     private var currentScreen = Screen.HOME
     private var selectedImageUri: Uri? = null
-    private var previewMessage: String? = null
+    private var selectedImageSource: LocalImageSource? = null
+    private var ownsSelectedGalleryReadGrant = false
+    private var selectedCaptureFileName: String? = null
+    private var pendingCaptureUri: Uri? = null
+    private var pendingCaptureFileName: String? = null
+    private var imageInputNotice: ImageInputNotice? = null
     private var reviewHasUnsavedChanges = false
     private var reviewDraft: EditableReceipt? = null
     private var reviewSavedTemporarily = false
@@ -96,18 +131,34 @@ class MainActivity : ComponentActivity() {
         handleImageResult(result.resultCode, result.data)
     }
 
+    private val cameraCapture = registerForActivityResult(
+        GrantedTakePicture(),
+    ) { captured ->
+        handleCameraCaptureResult(captured)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         @Suppress("DEPRECATION")
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         selectedImageUri = savedInstanceState?.getString("selectedImageUri")?.let(Uri::parse)
+        selectedImageSource = savedInstanceState?.getString("selectedImageSource")
+            ?.let { runCatching { LocalImageSource.valueOf(it) }.getOrNull() }
+            ?: selectedImageUri?.let { LocalImageSource.GALLERY }
+        ownsSelectedGalleryReadGrant =
+            savedInstanceState?.getBoolean("ownsSelectedGalleryReadGrant") == true
+        selectedCaptureFileName = savedInstanceState?.getString("selectedCaptureFileName")
+        pendingCaptureUri = savedInstanceState?.getString("pendingCaptureUri")?.let(Uri::parse)
+        pendingCaptureFileName = savedInstanceState?.getString("pendingCaptureFileName")
         currentScreen = savedInstanceState?.getString("currentScreen")
             ?.let { runCatching { Screen.valueOf(it) }.getOrNull() }
             ?: Screen.HOME
         savedInstanceState?.getStringArrayList("backStack")
             ?.mapNotNull { runCatching { Screen.valueOf(it) }.getOrNull() }
             ?.forEach(backStack::addLast)
-        previewMessage = savedInstanceState?.getString("previewMessage")
+        imageInputNotice = savedInstanceState?.getString("imageInputNotice")
+            ?.let { runCatching { ImageInputNotice.valueOf(it) }.getOrNull() }
+        restoreCaptureFiles()
         savedInstanceState?.let(::restoreSessionState)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() = handleBackNavigation()
@@ -117,12 +168,17 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("selectedImageUri", selectedImageUri?.toString())
+        outState.putString("selectedImageSource", selectedImageSource?.name)
+        outState.putBoolean("ownsSelectedGalleryReadGrant", ownsSelectedGalleryReadGrant)
+        outState.putString("selectedCaptureFileName", selectedCaptureFileName)
+        outState.putString("pendingCaptureUri", pendingCaptureUri?.toString())
+        outState.putString("pendingCaptureFileName", pendingCaptureFileName)
         outState.putString("currentScreen", currentScreen.name)
         outState.putStringArrayList(
             "backStack",
             ArrayList(backStack.map(Screen::name)),
         )
-        outState.putString("previewMessage", previewMessage)
+        outState.putString("imageInputNotice", imageInputNotice?.name)
         outState.putBoolean("reviewHasUnsavedChanges", reviewHasUnsavedChanges)
         outState.putBoolean("reviewSavedTemporarily", reviewSavedTemporarily)
         outState.putBoolean("temporaryConfirmationVisible", temporaryConfirmationVisible)
@@ -150,22 +206,51 @@ class MainActivity : ComponentActivity() {
         if (resultCode != RESULT_OK) return
         val uri = data?.data ?: data?.clipData?.firstUri()
         if (uri == null) {
-            previewMessage = "The selected image could not be opened."
-            navigate(Screen.PREVIEW)
+            imageInputNotice = ImageInputNotice.IMAGE_UNAVAILABLE
+            if (selectedImageUri == null) selectedImageSource = LocalImageSource.GALLERY
+            if (currentScreen == Screen.PREVIEW) render() else navigate(Screen.PREVIEW)
             return
         }
 
-        selectedImageUri = uri
-        previewMessage = null
-        val grantFlags = data?.flags ?: 0
-        if (grantFlags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION != 0) {
-            runCatching {
-                contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                )
-            }
+        val preview = decodePreviewBitmap(uri)
+        if (preview == null) {
+            imageInputNotice = ImageInputNotice.IMAGE_UNAVAILABLE
+            if (selectedImageUri == null) selectedImageSource = LocalImageSource.GALLERY
+            if (currentScreen == Screen.PREVIEW) render() else navigate(Screen.PREVIEW)
+            return
         }
+        preview.recycle()
+        val ownsReadGrant = persistGalleryReadPermission(uri, data?.flags ?: 0)
+        replaceSelectedImage(uri, LocalImageSource.GALLERY, captureFileName = null)
+        ownsSelectedGalleryReadGrant = ownsReadGrant
+        if (currentScreen == Screen.PREVIEW) {
+            render()
+        } else {
+            navigate(Screen.PREVIEW)
+        }
+    }
+
+    private fun handleCameraCaptureResult(captured: Boolean) {
+        val uri = pendingCaptureUri
+        val fileName = pendingCaptureFileName
+        pendingCaptureUri = null
+        pendingCaptureFileName = null
+        if (!captured) {
+            captureStore.delete(fileName)
+            imageInputNotice = ImageInputNotice.CAMERA_CANCELLED
+            render()
+            return
+        }
+        val preview = if (uri != null && fileName != null) decodePreviewBitmap(uri) else null
+        if (uri == null || fileName == null || preview == null) {
+            captureStore.delete(fileName)
+            imageInputNotice = ImageInputNotice.CAMERA_INVALID
+            render()
+            return
+        }
+
+        preview.recycle()
+        replaceSelectedImage(uri, LocalImageSource.CAMERA, fileName)
         if (currentScreen == Screen.PREVIEW) {
             render()
         } else {
@@ -221,8 +306,7 @@ class MainActivity : ComponentActivity() {
             badge = getString(R.string.status_synthetic),
             viewId = R.id.home_synthetic_demo,
         ) {
-            selectedImageUri = null
-            previewMessage = null
+            switchToSyntheticDemo()
             navigate(Screen.PREVIEW)
         })
         add(space(24))
@@ -248,10 +332,17 @@ class MainActivity : ComponentActivity() {
         add(space(6))
         add(bodyText(getString(R.string.add_receipt_import_help)))
         add(space(16))
-        add(ui.unavailableAction(
+        add(ui.actionButton(
             getString(R.string.add_receipt_camera),
-            getString(R.string.add_receipt_camera_help),
-        ))
+            PantryActionStyle.SECONDARY,
+            viewId = R.id.add_capture_image,
+        ) { launchCameraCapture() })
+        add(space(6))
+        add(bodyText(getString(R.string.add_receipt_camera_help)))
+        imageInputNotice?.let { notice ->
+            add(space(10))
+            add(imageInputNoticePanel(notice).apply { id = R.id.image_input_notice })
+        }
         add(space(16))
         add(ui.navigationCard(
             title = getString(R.string.add_receipt_demo),
@@ -260,8 +351,7 @@ class MainActivity : ComponentActivity() {
             badge = getString(R.string.status_synthetic),
             viewId = R.id.add_use_demo,
         ) {
-            selectedImageUri = null
-            previewMessage = null
+            switchToSyntheticDemo()
             navigate(Screen.PREVIEW)
         })
         add(space(20))
@@ -290,6 +380,150 @@ class MainActivity : ComponentActivity() {
         imagePicker.launch(intent)
     }
 
+    private fun launchCameraCapture() {
+        imageInputNotice = null
+        pendingCaptureFileName?.let(captureStore::delete)
+        pendingCaptureUri = null
+        pendingCaptureFileName = null
+        val target = runCatching { captureStore.createTarget() }.getOrElse {
+            imageInputNotice = ImageInputNotice.CAMERA_UNAVAILABLE
+            render()
+            return
+        }
+        pendingCaptureUri = target.uri
+        pendingCaptureFileName = target.fileName
+        try {
+            cameraCapture.launch(target.uri)
+        } catch (_: ActivityNotFoundException) {
+            handleCameraLaunchFailure()
+        } catch (_: SecurityException) {
+            handleCameraLaunchFailure()
+        }
+    }
+
+    private fun handleCameraLaunchFailure() {
+        captureStore.delete(pendingCaptureFileName)
+        pendingCaptureUri = null
+        pendingCaptureFileName = null
+        imageInputNotice = ImageInputNotice.CAMERA_UNAVAILABLE
+        render()
+    }
+
+    private fun replaceSelectedImage(
+        uri: Uri,
+        source: LocalImageSource,
+        captureFileName: String?,
+    ) {
+        releaseSelectedGalleryPermission(replacementUri = uri)
+        ownsSelectedGalleryReadGrant = false
+        if (selectedCaptureFileName != captureFileName) {
+            captureStore.delete(selectedCaptureFileName)
+        }
+        selectedImageUri = uri
+        selectedImageSource = source
+        selectedCaptureFileName = captureFileName
+        imageInputNotice = null
+    }
+
+    private fun switchToSyntheticDemo() {
+        releaseSelectedGalleryPermission(replacementUri = null)
+        ownsSelectedGalleryReadGrant = false
+        captureStore.delete(selectedCaptureFileName)
+        captureStore.delete(pendingCaptureFileName)
+        selectedImageUri = null
+        selectedImageSource = null
+        selectedCaptureFileName = null
+        pendingCaptureUri = null
+        pendingCaptureFileName = null
+        imageInputNotice = null
+    }
+
+    private fun persistGalleryReadPermission(uri: Uri, resultFlags: Int): Boolean {
+        val alreadyOwnsGrant = uri == selectedImageUri && ownsSelectedGalleryReadGrant
+        val canPersistRead =
+            resultFlags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION != 0 &&
+                resultFlags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0
+        if (!canPersistRead) return alreadyOwnsGrant
+        return runCatching {
+            if (contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }) {
+                return@runCatching alreadyOwnsGrant
+            }
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+            true
+        }.getOrDefault(alreadyOwnsGrant)
+    }
+
+    private fun releaseSelectedGalleryPermission(replacementUri: Uri?) {
+        val activeUri = selectedImageUri ?: return
+        if (!ownsSelectedGalleryReadGrant || selectedImageSource != LocalImageSource.GALLERY ||
+            activeUri == replacementUri
+        ) return
+        runCatching {
+            contentResolver.releasePersistableUriPermission(
+                activeUri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+    }
+
+    private fun restoreCaptureFiles() {
+        captureStore.cleanupOrphans(
+            setOfNotNull(selectedCaptureFileName, pendingCaptureFileName),
+        )
+        if (selectedImageSource == LocalImageSource.CAMERA) {
+            val expectedUri = captureStore.uriFor(selectedCaptureFileName)
+            if (expectedUri == null || expectedUri != selectedImageUri ||
+                !canReadSelectedImage(expectedUri)
+            ) {
+                captureStore.delete(selectedCaptureFileName)
+                selectedImageUri = null
+                selectedCaptureFileName = null
+                imageInputNotice = ImageInputNotice.CAMERA_INVALID
+            }
+        } else if (selectedCaptureFileName != null) {
+            captureStore.delete(selectedCaptureFileName)
+            selectedCaptureFileName = null
+        }
+
+        if (pendingCaptureFileName != null) {
+            val expectedPendingUri = captureStore.uriFor(pendingCaptureFileName)
+            if (expectedPendingUri == null || expectedPendingUri != pendingCaptureUri) {
+                captureStore.delete(pendingCaptureFileName)
+                pendingCaptureUri = null
+                pendingCaptureFileName = null
+            }
+        } else {
+            pendingCaptureUri = null
+        }
+    }
+
+    private fun imageInputNoticePanel(notice: ImageInputNotice): View =
+        when (notice) {
+            ImageInputNotice.CAMERA_UNAVAILABLE -> ui.statePanel(
+                getString(R.string.camera_capture_unavailable_title),
+                getString(R.string.camera_capture_unavailable_body),
+                PantryBannerTone.ERROR,
+            )
+            ImageInputNotice.CAMERA_CANCELLED -> ui.statePanel(
+                getString(R.string.camera_capture_cancelled_title),
+                getString(R.string.camera_capture_cancelled_body),
+                PantryBannerTone.INFO,
+            )
+            ImageInputNotice.CAMERA_INVALID -> ui.statePanel(
+                getString(R.string.camera_capture_invalid_title),
+                getString(R.string.camera_capture_invalid_body),
+                PantryBannerTone.ERROR,
+            )
+            ImageInputNotice.IMAGE_UNAVAILABLE -> ui.statePanel(
+                getString(R.string.preview_image_unavailable_title),
+                getString(R.string.preview_image_unavailable_body),
+                PantryBannerTone.ERROR,
+            )
+        }
+
     private fun renderPreview() = setScreen(getString(R.string.preview_title), true) {
         add(ui.progressHeader(
             step = 2,
@@ -299,9 +533,11 @@ class MainActivity : ComponentActivity() {
         add(space(16))
 
         val uri = selectedImageUri
-        val localImageAvailable = uri?.let(::canReadSelectedImage) == true
+        val imageSource = selectedImageSource
+        val previewBitmap = uri?.let(::decodePreviewBitmap)
+        val localImageAvailable = previewBitmap != null
         when {
-            uri == null -> {
+            imageSource == null -> {
                 val presentation = state.presentationResult
                 if (presentation is ReceiptPresentationUiResult.Available) {
                     add(ui.banner(
@@ -311,14 +547,6 @@ class MainActivity : ComponentActivity() {
                     ))
                     add(space(14))
                     add(syntheticReceiptPreview(presentation.receipt))
-                    previewMessage?.let {
-                        add(space(10))
-                        add(ui.statePanel(
-                            getString(R.string.selection_unavailable_title),
-                            it,
-                            PantryBannerTone.ERROR,
-                        ))
-                    }
                     add(space(18))
                     add(ui.actionButton(
                         getString(R.string.preview_view_sample_fields),
@@ -334,12 +562,12 @@ class MainActivity : ComponentActivity() {
                     PantryActionStyle.SECONDARY,
                 ) { launchImagePicker() })
             }
-            !localImageAvailable -> {
-                add(ui.statePanel(
+            uri == null || !localImageAvailable -> {
+                add((imageInputNotice?.let(::imageInputNoticePanel) ?: ui.statePanel(
                     getString(R.string.preview_image_unavailable_title),
                     getString(R.string.preview_image_unavailable_body),
                     PantryBannerTone.ERROR,
-                ))
+                )).apply { id = R.id.preview_image_error })
                 add(space(18))
                 add(ui.actionButton(
                     getString(R.string.preview_choose_another),
@@ -352,19 +580,34 @@ class MainActivity : ComponentActivity() {
                     PantryActionStyle.SECONDARY,
                     viewId = R.id.preview_use_demo,
                 ) {
-                    selectedImageUri = null
-                    previewMessage = null
+                    switchToSyntheticDemo()
                     render()
                 })
             }
             else -> {
+                imageInputNotice?.let { notice ->
+                    add(imageInputNoticePanel(notice).apply { id = R.id.image_input_notice })
+                    add(space(10))
+                }
                 add(ui.banner(
-                    getString(R.string.preview_local_status),
-                    getString(R.string.preview_local_status_body),
+                    getString(
+                        if (imageSource == LocalImageSource.CAMERA) {
+                            R.string.preview_camera_status
+                        } else {
+                            R.string.preview_local_status
+                        },
+                    ),
+                    getString(
+                        if (imageSource == LocalImageSource.CAMERA) {
+                            R.string.preview_camera_status_body
+                        } else {
+                            R.string.preview_local_status_body
+                        },
+                    ),
                     PantryBannerTone.INFO,
-                ))
+                ).apply { id = R.id.preview_source_status })
                 add(space(14))
-                add(selectedImagePreview(uri))
+                add(selectedImagePreview(previewBitmap, imageSource))
                 add(space(14))
                 add(ui.banner(
                     getString(R.string.preview_local_warning_title),
@@ -387,9 +630,9 @@ class MainActivity : ComponentActivity() {
                 add(ui.actionButton(
                     getString(R.string.preview_remove_image),
                     PantryActionStyle.TERTIARY,
+                    viewId = R.id.preview_remove_image,
                 ) {
-                    selectedImageUri = null
-                    previewMessage = null
+                    switchToSyntheticDemo()
                     render()
                 })
             }
@@ -435,9 +678,10 @@ class MainActivity : ComponentActivity() {
         contentDescription = getString(R.string.preview_synthetic_image_description)
     }
 
-    private fun selectedImagePreview(uri: Uri): View {
+    private fun selectedImagePreview(bitmap: Bitmap, source: LocalImageSource): View {
         val container = ui.card { }
         val image = ImageView(this).apply {
+            id = R.id.preview_selected_image
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             minimumHeight = dp(200)
@@ -446,27 +690,88 @@ class MainActivity : ComponentActivity() {
                     .toInt()
                     .coerceIn(240, 460),
             )
-            contentDescription = getString(R.string.preview_selected_image_description)
-        }
-        val result = runCatching { image.setImageURI(uri) }
-        if (result.isFailure || image.drawable == null) {
-            container.addView(ui.statePanel(
-                getString(R.string.preview_image_unavailable_title),
-                getString(R.string.preview_image_unavailable_body),
-                PantryBannerTone.ERROR,
-            ))
-        } else {
-            container.addView(
-                image,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+            contentDescription = getString(
+                if (source == LocalImageSource.CAMERA) {
+                    R.string.preview_captured_image_description
+                } else {
+                    R.string.preview_selected_image_description
+                },
             )
         }
+        image.setImageBitmap(bitmap)
+        container.addView(
+            image,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
         return container
     }
 
     private fun canReadSelectedImage(uri: Uri): Boolean = runCatching {
-        contentResolver.openInputStream(uri)?.use { true } ?: false
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contentResolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input, null, options)
+        }
+        options.outWidth > 0 && options.outHeight > 0
     }.getOrDefault(false)
+
+    private fun decodePreviewBitmap(uri: Uri): Bitmap? = runCatching {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contentResolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input, null, bounds)
+        }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+        var sampleSize = 1
+        while (bounds.outWidth / sampleSize > MAX_PREVIEW_IMAGE_DIMENSION ||
+            bounds.outHeight / sampleSize > MAX_PREVIEW_IMAGE_DIMENSION
+        ) {
+            sampleSize *= 2
+        }
+        val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        val decoded = contentResolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input, null, options)
+        }
+        decoded?.let { applyExifOrientation(uri, it) }
+    }.getOrNull()
+
+    private fun applyExifOrientation(uri: Uri, bitmap: Bitmap): Bitmap {
+        val orientation = runCatching {
+            contentResolver.openInputStream(uri)?.use { input ->
+                android.media.ExifInterface(input).getAttributeInt(
+                    android.media.ExifInterface.TAG_ORIENTATION,
+                    android.media.ExifInterface.ORIENTATION_NORMAL,
+                )
+            }
+        }.getOrNull() ?: android.media.ExifInterface.ORIENTATION_NORMAL
+        val matrix = Matrix().apply {
+            when (orientation) {
+                android.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> setScale(-1f, 1f)
+                android.media.ExifInterface.ORIENTATION_ROTATE_180 -> setRotate(180f)
+                android.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> setScale(1f, -1f)
+                android.media.ExifInterface.ORIENTATION_TRANSPOSE -> {
+                    setRotate(90f)
+                    postScale(-1f, 1f)
+                }
+                android.media.ExifInterface.ORIENTATION_ROTATE_90 -> setRotate(90f)
+                android.media.ExifInterface.ORIENTATION_TRANSVERSE -> {
+                    setRotate(-90f)
+                    postScale(-1f, 1f)
+                }
+                android.media.ExifInterface.ORIENTATION_ROTATE_270 -> setRotate(-90f)
+            }
+        }
+        if (matrix.isIdentity) return bitmap
+        return Bitmap.createBitmap(
+            bitmap,
+            0,
+            0,
+            bitmap.width,
+            bitmap.height,
+            matrix,
+            true,
+        ).also { oriented ->
+            if (oriented !== bitmap) bitmap.recycle()
+        }
+    }
 
     private fun renderDetails() = setScreen(getString(R.string.details_title), true) {
         add(ui.progressHeader(
@@ -478,7 +783,7 @@ class MainActivity : ComponentActivity() {
         add(ui.banner(
             getString(R.string.details_demo_title),
             getString(
-                if (selectedImageUri == null) R.string.details_demo_body
+                if (selectedImageSource == null) R.string.details_demo_body
                 else R.string.details_local_demo_body,
             ),
             PantryBannerTone.DEMO,
@@ -1536,6 +1841,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun navigateHome() {
+        switchToSyntheticDemo()
         backStack.clear()
         currentScreen = Screen.HOME
         render()
@@ -1543,6 +1849,7 @@ class MainActivity : ComponentActivity() {
 
     private fun goBack() {
         currentScreen = if (backStack.isEmpty()) Screen.HOME else backStack.removeLast()
+        if (currentScreen == Screen.HOME) switchToSyntheticDemo()
         render()
     }
 

@@ -17,6 +17,8 @@ import androidx.test.espresso.intent.Intents
 import androidx.test.espresso.intent.Intents.intended
 import androidx.test.espresso.intent.Intents.intending
 import androidx.test.espresso.intent.matcher.IntentMatchers.hasAction
+import androidx.test.espresso.intent.matcher.IntentMatchers.hasExtraWithKey
+import androidx.test.espresso.intent.matcher.IntentMatchers.hasFlag
 import androidx.test.espresso.intent.matcher.IntentMatchers.anyIntent
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.withId
@@ -28,6 +30,10 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.atomic.AtomicReference
+import org.hamcrest.Matchers.allOf
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 
 @RunWith(AndroidJUnit4::class)
 class PantryProofImageBoundaryInstrumentedTest {
@@ -52,11 +58,126 @@ class PantryProofImageBoundaryInstrumentedTest {
     }
 
     @Test
+    fun cameraCancellationStaysOnAddReceiptAndCleansTemporaryOutput() = withIntents {
+        clearCameraFixtures()
+        intending(hasAction(MediaStore.ACTION_IMAGE_CAPTURE)).respondWith(
+            ActivityResult(Activity.RESULT_CANCELED, null),
+        )
+
+        onView(withId(R.id.home_add_receipt)).perform(click())
+        onView(withId(R.id.add_capture_image)).perform(scrollTo(), click())
+
+        intended(allOf(
+            hasAction(MediaStore.ACTION_IMAGE_CAPTURE),
+            hasExtraWithKey(MediaStore.EXTRA_OUTPUT),
+            hasFlag(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+            hasFlag(Intent.FLAG_GRANT_WRITE_URI_PERMISSION),
+        ))
+        onView(withId(R.id.screen_add_receipt)).check(matches(isDisplayed()))
+        onView(withText(R.string.camera_capture_cancelled_title)).check(matches(isDisplayed()))
+        onView(withId(R.id.screen_preview)).check(doesNotExist())
+        assertTrue(cameraFixtures().isEmpty())
+    }
+
+    @Test
+    fun emptyCameraResultIsRejectedAndTemporaryOutputIsRemoved() = withIntents {
+        clearCameraFixtures()
+        intending(hasAction(MediaStore.ACTION_IMAGE_CAPTURE)).respondWith(
+            ActivityResult(Activity.RESULT_OK, null),
+        )
+
+        onView(withId(R.id.home_add_receipt)).perform(click())
+        onView(withId(R.id.add_capture_image)).perform(scrollTo(), click())
+
+        onView(withId(R.id.screen_add_receipt)).check(matches(isDisplayed()))
+        onView(withText(R.string.camera_capture_invalid_title)).check(matches(isDisplayed()))
+        onView(withId(R.id.screen_preview)).check(doesNotExist())
+        onView(withText("Demo Grocery Store (Synthetic)")).check(doesNotExist())
+        assertTrue(cameraFixtures().isEmpty())
+    }
+
+    @Test
+    fun controlledCameraCaptureRemainsUnprocessedAcrossRecreationAndCleansOnRemoval() =
+        withIntents {
+            clearCameraFixtures()
+            val capturedOutput = AtomicReference<Uri>()
+            stubSuccessfulCameraCapture(capturedOutput)
+
+            onView(withId(R.id.home_add_receipt)).perform(click())
+            onView(withId(R.id.add_capture_image)).perform(scrollTo(), click())
+
+            intended(allOf(
+                hasAction(MediaStore.ACTION_IMAGE_CAPTURE),
+                hasExtraWithKey(MediaStore.EXTRA_OUTPUT),
+                hasFlag(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                hasFlag(Intent.FLAG_GRANT_WRITE_URI_PERMISSION),
+            ))
+            assertEquals("content", capturedOutput.get().scheme)
+            assertEquals("${context.packageName}.fileprovider", capturedOutput.get().authority)
+            onView(withId(R.id.screen_preview)).check(matches(isDisplayed()))
+            onView(withText(R.string.preview_camera_status)).check(matches(isDisplayed()))
+            onView(withText(R.string.preview_camera_status_body)).check(matches(isDisplayed()))
+            onView(withId(R.id.preview_selected_image)).check(matches(isDisplayed()))
+            onView(withText("Demo Grocery Store (Synthetic)")).check(doesNotExist())
+
+            activityRule.scenario.recreate()
+            onView(withText(R.string.preview_camera_status)).check(matches(isDisplayed()))
+            onView(withId(R.id.preview_selected_image)).check(matches(isDisplayed()))
+
+            onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
+            onView(withText(R.string.details_local_demo_body)).check(matches(isDisplayed()))
+            onView(withText("Demo Grocery Store (Synthetic)")).check(matches(isDisplayed()))
+
+            onView(withText(R.string.details_back_action)).perform(scrollTo(), click())
+            onView(withId(R.id.preview_remove_image)).perform(scrollTo(), click())
+            onView(withText(R.string.preview_synthetic_status)).check(matches(isDisplayed()))
+            assertTrue(cameraFixtures().isEmpty())
+        }
+
+    @Test
+    fun unreadableGalleryReplacementPreservesExistingCameraPhoto() = withIntents {
+        clearCameraFixtures()
+        val capturedOutput = AtomicReference<Uri>()
+        stubSuccessfulCameraCapture(capturedOutput)
+
+        onView(withId(R.id.home_add_receipt)).perform(click())
+        onView(withId(R.id.add_capture_image)).perform(scrollTo(), click())
+        onView(withText(R.string.preview_camera_status)).check(matches(isDisplayed()))
+        assertEquals(1, cameraFixtures().size)
+
+        onView(withId(R.id.app_bar_back)).perform(click())
+        val unavailableUri = Uri.parse("content://com.pantryproof.prototype.test/revoked-image.png")
+        intending(hasAction(expectedPickerAction())).respondWith(ActivityResult(
+            Activity.RESULT_OK,
+            Intent().setData(unavailableUri).addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+            ),
+        ))
+        onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
+
+        onView(withId(R.id.screen_preview)).check(matches(isDisplayed()))
+        onView(withText(R.string.preview_image_unavailable_title)).check(matches(isDisplayed()))
+        onView(withText(R.string.preview_camera_status)).check(matches(isDisplayed()))
+        onView(withId(R.id.preview_selected_image)).check(matches(isDisplayed()))
+        assertEquals(1, cameraFixtures().size)
+        assertTrue(context.contentResolver.persistedUriPermissions.none {
+            it.uri == unavailableUri
+        })
+
+        onView(withId(R.id.preview_remove_image)).perform(scrollTo(), click())
+        assertTrue(cameraFixtures().isEmpty())
+    }
+
+    @Test
     fun unavailableSelectedUriShowsRecoveryWithoutAttributingFields() = withIntents {
         val unavailableUri = Uri.parse("content://com.pantryproof.prototype.test/missing-image.png")
         intending(anyIntent()).respondWith(ActivityResult(
             Activity.RESULT_OK,
-            Intent().setData(unavailableUri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+            Intent().setData(unavailableUri).addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+            ),
         ))
 
         onView(withId(R.id.home_add_receipt)).perform(click())
@@ -64,11 +185,58 @@ class PantryProofImageBoundaryInstrumentedTest {
 
         onView(withId(R.id.screen_preview)).check(matches(isDisplayed()))
         onView(withText(R.string.preview_image_unavailable_title)).check(matches(isDisplayed()))
+        onView(withId(R.id.preview_image_error)).check(matches(isDisplayed()))
         onView(withId(R.id.preview_use_demo)).check(matches(isDisplayed()))
         onView(withText("Demo Grocery Store (Synthetic)")).check(doesNotExist())
+        assertTrue(context.contentResolver.persistedUriPermissions.none {
+            it.uri == unavailableUri
+        })
 
         onView(withId(R.id.preview_use_demo)).perform(scrollTo(), click())
         onView(withText(R.string.preview_synthetic_status)).check(matches(isDisplayed()))
+    }
+
+    @Test
+    fun invalidGalleryReplacementKeepsSelectedGalleryImageUntilHome() = withIntents {
+        val imageFile = createSyntheticImageFixture()
+        val invalidFile = File.createTempFile("pantryproof-invalid-", ".png", context.cacheDir)
+        val selectedUri = Uri.fromFile(imageFile)
+        val invalidUri = Uri.fromFile(invalidFile)
+        val pickerUri = AtomicReference(selectedUri)
+        try {
+            invalidFile.writeText("This fixture is not an image.")
+            intending(hasAction(expectedPickerAction())).respondWithFunction {
+                ActivityResult(
+                    Activity.RESULT_OK,
+                    Intent().setData(pickerUri.get()).addFlags(
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+                    ),
+                )
+            }
+
+            onView(withId(R.id.home_add_receipt)).perform(click())
+            onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
+            onView(withId(R.id.preview_selected_image)).check(matches(isDisplayed()))
+
+            pickerUri.set(invalidUri)
+            onView(withId(R.id.preview_choose_another)).perform(scrollTo(), click())
+            onView(withText(R.string.preview_image_unavailable_title)).check(matches(isDisplayed()))
+            onView(withText(R.string.preview_local_status)).check(matches(isDisplayed()))
+            onView(withId(R.id.preview_selected_image)).check(matches(isDisplayed()))
+            assertTrue(context.contentResolver.persistedUriPermissions.none { it.uri == invalidUri })
+
+            onView(withText(R.string.preview_cancel)).perform(scrollTo(), click())
+            onView(withId(R.id.home_add_receipt)).check(matches(isDisplayed()))
+            onView(withId(R.id.home_add_receipt)).perform(click())
+            onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
+            onView(withId(R.id.preview_image_error)).check(matches(isDisplayed()))
+            onView(withId(R.id.preview_selected_image)).check(doesNotExist())
+            assertTrue(imageFile.isFile)
+        } finally {
+            invalidFile.delete()
+            imageFile.delete()
+        }
     }
 
     @Test
@@ -78,7 +246,10 @@ class PantryProofImageBoundaryInstrumentedTest {
         try {
             intending(anyIntent()).respondWith(ActivityResult(
                 Activity.RESULT_OK,
-                Intent().setData(imageUri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                Intent().setData(imageUri).addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+                ),
             ))
 
             onView(withId(R.id.home_add_receipt)).perform(click())
@@ -94,6 +265,14 @@ class PantryProofImageBoundaryInstrumentedTest {
             onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
             onView(withText(R.string.details_local_demo_body)).check(matches(isDisplayed()))
             onView(withText("Demo Grocery Store (Synthetic)")).check(matches(isDisplayed()))
+
+            onView(withText(R.string.details_back_action)).perform(scrollTo(), click())
+            onView(withId(R.id.preview_remove_image)).perform(scrollTo(), click())
+            onView(withText(R.string.preview_synthetic_status)).check(matches(isDisplayed()))
+            assertTrue(imageFile.isFile)
+            assertTrue(context.contentResolver.persistedUriPermissions.none {
+                it.uri == imageUri
+            })
         } finally {
             imageFile.delete()
         }
@@ -116,6 +295,32 @@ class PantryProofImageBoundaryInstrumentedTest {
             }
         }
         return fixture
+    }
+
+    private fun cameraFixtures(): List<File> =
+        File(context.cacheDir, "receipt_camera").listFiles().orEmpty().toList()
+
+    private fun clearCameraFixtures() {
+        cameraFixtures().forEach(File::delete)
+    }
+
+    private fun stubSuccessfulCameraCapture(capturedOutput: AtomicReference<Uri>) {
+        intending(hasAction(MediaStore.ACTION_IMAGE_CAPTURE)).respondWithFunction { intent ->
+            @Suppress("DEPRECATION")
+            val output = requireNotNull(intent.getParcelableExtra<Uri>(MediaStore.EXTRA_OUTPUT))
+            capturedOutput.set(output)
+            assertEquals(output, intent.clipData?.getItemAt(0)?.uri)
+            assertTrue(intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+            assertTrue(intent.flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0)
+            context.contentResolver.openOutputStream(output, "w")!!.use { stream ->
+                Bitmap.createBitmap(12, 16, Bitmap.Config.ARGB_8888).apply {
+                    eraseColor(Color.rgb(23, 107, 82))
+                    compress(Bitmap.CompressFormat.JPEG, 90, stream)
+                    recycle()
+                }
+            }
+            ActivityResult(Activity.RESULT_OK, null)
+        }
     }
 
     private inline fun withIntents(block: () -> Unit) {
