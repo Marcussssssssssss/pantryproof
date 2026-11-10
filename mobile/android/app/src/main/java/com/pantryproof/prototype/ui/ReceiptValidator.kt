@@ -107,6 +107,42 @@ data class ReceiptValidationResult(
 }
 
 object ReceiptValidator {
+    const val MAX_MANUAL_ITEMS = 30
+
+    private val manualAmount = Regex("[0-9]+(?:\\.[0-9]{1,2})?")
+    private val manualDate = Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+    fun validateManual(draft: EditableReceipt): ReceiptValidationResult {
+        if (draft.items.size > MAX_MANUAL_ITEMS) {
+            return ReceiptValidationResult(
+                null,
+                mapOf("items" to "This receipt can have up to $MAX_MANUAL_ITEMS items."),
+            )
+        }
+        val validated = validate(draft)
+        val errors = validated.errors.toMutableMap()
+        if (!manualDate.matches(draft.purchaseDate.trim())) {
+            errors.putIfAbsent("purchaseDate", "Use a valid date in YYYY-MM-DD format.")
+        }
+        if (draft.items.isEmpty()) errors["items"] = "Add at least one item."
+
+        fun checkAmount(key: String, raw: String) {
+            if (!manualAmount.matches(raw.trim())) {
+                errors.putIfAbsent(key, "Enter a plain amount in RM, for example 6.50.")
+            }
+        }
+        draft.items.forEachIndexed { index, item ->
+            val prefix = "item.$index"
+            if ((item.quantity.trim().toIntOrNull() ?: 0) > PantryUiState.MAX_INVENTORY_QUANTITY) {
+                errors["$prefix.quantity"] = "Quantity must be 99 or less."
+            }
+            if (item.unitPrice.isNotBlank()) checkAmount("$prefix.unitPrice", item.unitPrice)
+            checkAmount("$prefix.lineTotal", item.lineTotal)
+        }
+        checkAmount("receiptTotal", draft.receiptTotal)
+        return if (errors.isEmpty()) validated else ReceiptValidationResult(null, errors)
+    }
+
     fun validate(draft: EditableReceipt): ReceiptValidationResult {
         val errors = linkedMapOf<String, String>()
         val store = draft.storeName.trim()

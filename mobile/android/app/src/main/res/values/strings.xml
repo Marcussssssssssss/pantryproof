@@ -14,15 +14,15 @@
     <string name="home_local_note_body">A chosen or captured image stays on this device in the current prototype. No OCR or upload runs.</string>
     <string name="home_inventory_title">Household inventory</string>
     <plurals name="home_inventory_count">
-        <item quantity="one">%1$d temporary mock item</item>
-        <item quantity="other">%1$d temporary mock items</item>
+        <item quantity="one">%1$d session item</item>
+        <item quantity="other">%1$d session items</item>
     </plurals>
     <string name="home_inventory_action">View inventory</string>
     <string name="home_demo_title">Try the synthetic demo</string>
     <string name="home_demo_body">Preview a fictional receipt and sample fields without selecting an image.</string>
     <string name="home_demo_action">Open synthetic demo</string>
     <string name="home_boundary_title">Prototype mode</string>
-    <string name="home_boundary_body">Synthetic data only. OCR, automatic correction, scoring and durable inventory are not connected.</string>
+    <string name="home_boundary_body">Synthetic demo data is fictional. Confirmed items from manually entered receipts stay in inventory for this session only. OCR, automatic correction, scoring and permanent storage are unavailable.</string>
 
     <string name="add_receipt_title">Add receipt</string>
     <string name="add_receipt_step_title">Choose a receipt source</string>
@@ -52,10 +52,7 @@
     <string name="preview_local_status_body">No OCR or field extraction has run on this image.</string>
     <string name="preview_camera_status">Camera photo · Not processed</string>
     <string name="preview_camera_status_body">This temporary photo remains local. No OCR or field extraction has run.</string>
-    <string name="preview_local_warning_title">Sample data follows</string>
-    <string name="preview_local_warning_body">The next values are synthetic sample data and are not extracted from or associated with this image.</string>
     <string name="preview_view_sample_fields">View sample receipt fields</string>
-    <string name="preview_continue_demo">Continue to synthetic demo</string>
     <string name="preview_choose_image">Choose receipt image</string>
     <string name="preview_choose_another">Choose another image</string>
     <string name="preview_remove_image">Remove selected image</string>
@@ -142,6 +139,30 @@
     <string name="review_success_body">The local demo state is ready to preview. Nothing was uploaded or saved permanently.</string>
     <string name="review_view_inventory">View temporary inventory</string>
     <string name="review_return_home">Return home</string>
+
+    <string name="manual_start_action">Enter receipt manually</string>
+    <string name="manual_title">Manual receipt entry</string>
+    <string name="manual_source_title">Manually entered values</string>
+    <string name="manual_source_body">Copy the values from your receipt. The image is a local reference and no fields are extracted automatically.</string>
+    <string name="manual_view_image">View receipt image</string>
+    <string name="manual_quantity_helper">Required · Whole number from 1 to 99</string>
+    <string name="manual_add_item">Add item</string>
+    <string name="manual_remove_item">Remove item %1$d</string>
+    <string name="manual_item_limit">This receipt can have up to %1$d items.</string>
+    <string name="manual_review_action">Review entered values</string>
+    <string name="manual_review_title">Review your manual receipt</string>
+    <string name="manual_review_quantity">Quantity: %1$d</string>
+    <string name="manual_review_unit_price">Unit price: %1$s</string>
+    <string name="manual_review_line_total">Line total: %1$s</string>
+    <string name="manual_review_total">Receipt total: %1$s</string>
+    <string name="manual_unit_price_not_entered">Not entered</string>
+    <string name="manual_review_session_notice">Confirm to add these items to this session’s inventory. The image will be removed from the current flow.</string>
+    <string name="manual_confirm_action">Confirm and add items</string>
+    <string name="manual_cancel_action">Cancel manual entry</string>
+    <string name="manual_discard_title">Discard manual entry?</string>
+    <string name="manual_discard_body">Your unconfirmed entries will be discarded. You can still view the image or remove it from the preview.</string>
+    <string name="manual_inventory_source">From a manually entered receipt</string>
+    <string name="manual_inventory_banner">Manually confirmed items are labelled. Any demo stock is fictional.</string>
 
     <string name="inventory_title">Household inventory</string>
     <string name="inventory_banner_title">Temporary preview · Not saved permanently</string>
