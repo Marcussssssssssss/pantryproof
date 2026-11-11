@@ -55,6 +55,7 @@ import com.pantryproof.prototype.ui.PantryBannerTone
 import com.pantryproof.prototype.ui.PantryUiState
 import com.pantryproof.prototype.ui.PantryUiComponents
 import com.pantryproof.prototype.ui.ReceiptValidator
+import com.pantryproof.prototype.ui.ReceiptValidationResult
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -120,6 +121,7 @@ class MainActivity : ComponentActivity() {
     private var pendingCaptureFileName: String? = null
     private var imageInputNotice: ImageInputNotice? = null
     private var manualDraft: EditableReceipt? = null
+    private var manualValidationAttempted = false
     private var reviewHasUnsavedChanges = false
     private var reviewDraft: EditableReceipt? = null
     private var reviewSavedTemporarily = false
@@ -168,6 +170,8 @@ class MainActivity : ComponentActivity() {
             if (manualDraft == null || selectedImageUri?.let(::canReadSelectedImage) != true) {
                 manualDraft = null
                 currentScreen = backStack.pollLast() ?: Screen.PREVIEW
+            } else {
+                manualValidationAttempted = savedInstanceState?.getBoolean("manualValidationAttempted") == true
             }
         }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -199,6 +203,7 @@ class MainActivity : ComponentActivity() {
         reviewDraft?.let { writeDraft(outState, it) }
         manualDraft?.let { draft ->
             outState.putBundle("manualDraft", Bundle().apply { writeDraft(this, draft) })
+            outState.putBoolean("manualValidationAttempted", manualValidationAttempted)
         }
         outState.putStringArrayList("reviewErrorKeys", ArrayList(reviewValidationErrors.keys))
         outState.putStringArrayList("reviewErrorValues", ArrayList(reviewValidationErrors.values))
@@ -634,6 +639,7 @@ class MainActivity : ComponentActivity() {
                     viewId = R.id.preview_continue,
                 ) {
                     manualDraft = EditableReceipt("", "", mutableListOf(blankManualItem()), "")
+                    manualValidationAttempted = false
                     navigate(Screen.MANUAL)
                 })
                 add(space(10))
@@ -1315,6 +1321,13 @@ class MainActivity : ComponentActivity() {
             }
             add(errors)
             val bindings = mutableListOf<ReviewFieldUi>()
+            val removeItems = mutableListOf<View>()
+            fun showValidation(validation: ReceiptValidationResult) {
+                bindings.forEach { applyReviewFieldError(it, validation.errors[it.key]) }
+                val message = validation.errors.values.distinct().joinToString("\n")
+                if (errors.text.toString() != message) errors.text = message
+                errors.visibility = if (message.isEmpty()) View.GONE else View.VISIBLE
+            }
             val amountType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             fun field(
                 key: String,
@@ -1330,9 +1343,9 @@ class MainActivity : ComponentActivity() {
                 )
                 bindings += binding
                 binding.field.addTextChangedListener(simpleTextWatcher {
-                    draft.updateField(key, binding.field.text.toString())
-                    applyReviewFieldError(binding, null)
-                    errors.visibility = View.GONE
+                    if (draft.updateField(key, binding.field.text.toString()) && manualValidationAttempted) {
+                        showValidation(ReceiptValidator.validateManual(draft))
+                    }
                 })
                 return binding.container
             }
@@ -1364,13 +1377,15 @@ class MainActivity : ComponentActivity() {
                         "$key.lineTotal", R.string.field_line_total, item.lineTotal,
                         R.string.review_money_helper, amountType, "RM",
                     ))
-                    addView(ui.actionButton(
+                    val removeItem = ui.actionButton(
                         getString(R.string.manual_remove_item, index + 1),
                         PantryActionStyle.TERTIARY,
                     ) {
                         draft.items.removeAt(index)
                         rerenderAtCurrentPosition()
-                    })
+                    }
+                    removeItems += removeItem
+                    addView(removeItem)
                 })
                 add(space(8))
             }
@@ -1393,25 +1408,47 @@ class MainActivity : ComponentActivity() {
                 R.string.review_money_helper, amountType, "RM",
             ))
             add(space(12))
+            val confirmationFeedback = bodyText("").apply {
+                accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+                visibility = View.GONE
+            }
+            add(confirmationFeedback)
+            if (manualValidationAttempted) showValidation(ReceiptValidator.validateManual(draft))
             add(ui.actionButton(
                 getString(R.string.manual_review_action),
                 PantryActionStyle.PRIMARY,
                 viewId = R.id.manual_review_action,
             ) {
-                val validation = ReceiptValidator.validateManual(draft)
-                bindings.forEach { applyReviewFieldError(it, validation.errors[it.key]) }
+                confirmationFeedback.visibility = View.GONE
+                manualValidationAttempted = true
+                val snapshot = draft.deepCopy()
+                val validation = ReceiptValidator.validateManual(snapshot)
+                showValidation(validation)
                 val receipt = validation.receipt
                 if (receipt == null) {
-                    errors.text = validation.errors.values.distinct().joinToString("\n")
-                    errors.visibility = View.VISIBLE
-                    val firstInvalid = bindings.firstOrNull { it.key == validation.firstInvalidFieldKey }
-                    if (firstInvalid != null) focusInvalidField(firstInvalid)
-                    else {
-                        addItem.isFocusableInTouchMode = true
-                        addItem.requestFocus()
+                    val firstInvalid = bindings.firstOrNull { it.key in validation.errors }
+                    if (firstInvalid != null) {
+                        focusInvalidField(firstInvalid)
+                    } else {
+                        val rowAction = removeItems.lastOrNull() ?: addItem
+                        rowAction.isFocusableInTouchMode = true
+                        rowAction.requestFocus()
+                        rowAction.post {
+                            rowAction.requestRectangleOnScreen(
+                                Rect(0, 0, rowAction.width, rowAction.height), true,
+                            )
+                        }
                     }
                 } else {
-                    reviewManualReceipt(draft, receipt)
+                    reviewManualReceipt(draft, snapshot, receipt) { message ->
+                        confirmationFeedback.text = getString(message)
+                        confirmationFeedback.visibility = View.VISIBLE
+                        confirmationFeedback.post {
+                            confirmationFeedback.requestRectangleOnScreen(
+                                Rect(0, 0, confirmationFeedback.width, confirmationFeedback.height), true,
+                            )
+                        }
+                    }
                 }
             })
             add(ui.actionButton(
@@ -1420,8 +1457,24 @@ class MainActivity : ComponentActivity() {
             ) { confirmDiscardManualDraft() })
         }
 
-    private fun reviewManualReceipt(draft: EditableReceipt, receipt: Receipt) {
+    private fun reviewManualReceipt(
+        draft: EditableReceipt,
+        snapshot: EditableReceipt,
+        receipt: Receipt,
+        showFailure: (Int) -> Unit,
+    ) {
+        val warnings = ReceiptValidator.manualArithmeticWarnings(receipt)
         val summary = buildString {
+            if (warnings.mismatchedLineNumbers.isNotEmpty() || warnings.receiptTotalMismatch) {
+                appendLine(getString(R.string.manual_arithmetic_warning))
+                warnings.mismatchedLineNumbers.forEach { line ->
+                    appendLine(getString(R.string.manual_line_difference, line))
+                }
+                if (warnings.receiptTotalMismatch) {
+                    appendLine(getString(R.string.manual_total_difference))
+                }
+                appendLine()
+            }
             appendLine(getString(R.string.manual_source_title))
             appendLine(receipt.storeName)
             appendLine(receipt.purchaseDate.toString())
@@ -1445,12 +1498,18 @@ class MainActivity : ComponentActivity() {
             .setMessage(summary)
             .setNegativeButton(R.string.review_keep_editing, null)
             .setPositiveButton(R.string.manual_confirm_action) { _, _ ->
-                if (manualDraft === draft && state.confirmManualReceipt(draft)) {
-                    switchToSyntheticDemo()
-                    backStack.clear()
-                    backStack.addLast(Screen.HOME)
-                    currentScreen = Screen.INVENTORY
-                    render()
+                when {
+                    manualDraft !== draft || draft != snapshot ->
+                        showFailure(R.string.manual_review_changed)
+                    !state.confirmManualReceipt(snapshot) ->
+                        showFailure(R.string.manual_confirmation_failed)
+                    else -> {
+                        switchToSyntheticDemo()
+                        backStack.clear()
+                        backStack.addLast(Screen.HOME)
+                        currentScreen = Screen.INVENTORY
+                        render()
+                    }
                 }
             }
             .show()

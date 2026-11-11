@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.widget.EditText
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.action.ViewActions.closeSoftKeyboard
@@ -28,12 +29,18 @@ import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.pantryproof.prototype.data.InventoryItem
+import com.pantryproof.prototype.ui.EditableReceipt
+import com.pantryproof.prototype.ui.PantryUiState
+import com.pantryproof.prototype.ui.ReceiptValidator
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 import org.hamcrest.Matchers.allOf
+import org.hamcrest.Matchers.containsString
+import org.hamcrest.Matchers.not
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 
@@ -245,6 +252,11 @@ class PantryProofImageBoundaryInstrumentedTest {
 
     @Test
     fun galleryManualEntryValidatesRestoresAndConfirmsOnlyReviewedRows() = withIntents {
+        fun enterGalleryField(id: Int, value: String) {
+            onView(withId(id)).perform(scrollTo(), replaceText(value))
+            onView(withId(id)).check(matches(withText(value)))
+        }
+
         val imageFile = createSyntheticImageFixture()
         val imageUri = Uri.fromFile(imageFile)
         try {
@@ -271,22 +283,46 @@ class PantryProofImageBoundaryInstrumentedTest {
             onView(withId(R.id.review_error_summary)).check(matches(isDisplayed()))
             onView(withText(R.string.manual_confirm_action)).check(doesNotExist())
 
-            enterManualField(R.id.review_store_name, "Fictional Kedai")
-            enterManualField(R.id.review_purchase_date, "2026-11-10")
-            enterManualField(R.id.review_item_0_description, "Synthetic oats")
-            enterManualField(R.id.review_item_0_quantity, "2")
-            enterManualField(R.id.review_item_0_line_total, "8.00")
+            enterGalleryField(R.id.review_store_name, "Fictional Kedai")
+            onView(withId(R.id.review_error_summary)).check(matches(withText(containsString("Use a valid date"))))
+            enterGalleryField(R.id.review_purchase_date, "2026-11-10")
+            enterGalleryField(R.id.review_item_0_description, "Synthetic oats")
+            enterGalleryField(R.id.review_item_0_quantity, "2")
+            enterGalleryField(R.id.review_item_0_line_total, "8.00")
             onView(withId(R.id.manual_add_item)).perform(scrollTo(), click())
-            enterManualField(R.id.review_item_1_description, "Discarded row")
+            onView(withId(R.id.review_item_1_description))
+                .perform(scrollTo(), replaceText("Discarded row"))
+            onView(withId(R.id.review_item_1_description))
+                .check(matches(withText("Discarded row")))
             activityRule.scenario.recreate()
             onView(withId(R.id.review_item_1_description)).check(matches(withText("Discarded row")))
             onView(withText(context.getString(R.string.manual_remove_item, 2))).perform(scrollTo(), click())
-            enterManualField(R.id.review_receipt_total, "8.00")
+            enterGalleryField(R.id.review_receipt_total, "8.00")
+            enterGalleryField(R.id.review_item_0_unit_price, "4.01")
             onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
             onView(withText(R.string.manual_review_title)).check(matches(isDisplayed()))
+            onView(withId(android.R.id.message)).check(matches(withText(
+                containsString(context.getString(R.string.manual_line_difference, 1)),
+            )))
             onView(withText(R.string.review_keep_editing)).perform(click())
             onView(withId(R.id.screen_manual)).check(matches(isDisplayed()))
+            enterGalleryField(R.id.review_item_0_unit_price, "4.00")
             onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
+            onView(withId(android.R.id.message)).check(matches(withText(not(
+                containsString(context.getString(R.string.manual_arithmetic_warning)),
+            ))))
+            // Exercise the defensive guard by changing the live draft behind the modal.
+            activityRule.scenario.onActivity { activity ->
+                activity.findViewById<EditText>(R.id.review_receipt_total).setText("8.01")
+            }
+            onView(withText(R.string.manual_confirm_action)).perform(click())
+            onView(withText(R.string.manual_review_changed)).check(matches(isDisplayed()))
+            onView(withId(R.id.screen_inventory)).check(doesNotExist())
+            onView(withId(R.id.review_receipt_total)).check(matches(withText("8.01")))
+            onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
+            onView(withId(android.R.id.message)).check(matches(withText(
+                containsString(context.getString(R.string.manual_total_difference)),
+            )))
             onView(withText(R.string.manual_confirm_action)).perform(click())
             onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
             onView(withText("Synthetic oats")).perform(scrollTo()).check(matches(isDisplayed()))
@@ -299,6 +335,90 @@ class PantryProofImageBoundaryInstrumentedTest {
             })
         } finally {
             imageFile.delete()
+        }
+    }
+
+    @Test
+    fun confirmingCameraReceiptWithWarningAddsOnlyTheEnteredItemAndCleansCapture() = withIntents {
+        clearCameraFixtures()
+        stubSuccessfulCameraCapture(AtomicReference<Uri>())
+        onView(withId(R.id.home_add_receipt)).perform(click())
+        onView(withId(R.id.add_capture_image)).perform(scrollTo(), click())
+        assertEquals(1, cameraFixtures().size)
+        onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
+        enterManualField(R.id.review_store_name, "Fictional Mart")
+        enterManualField(R.id.review_purchase_date, "2026-11-10")
+        enterManualField(R.id.review_item_0_description, "Synthetic tea")
+        enterManualField(R.id.review_item_0_quantity, "2")
+        enterManualField(R.id.review_item_0_unit_price, "4.00")
+        enterManualField(R.id.review_item_0_line_total, "7.50")
+        enterManualField(R.id.review_receipt_total, "7.50")
+        onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
+        onView(withId(android.R.id.message)).check(matches(withText(
+            containsString(context.getString(R.string.manual_arithmetic_warning)),
+        )))
+        onView(withText(R.string.manual_confirm_action)).perform(click())
+        onView(withText("Synthetic tea")).perform(scrollTo()).check(matches(isDisplayed()))
+        assertTrue(cameraFixtures().isEmpty())
+    }
+
+    @Test
+    fun duplicateManualRowsShowRecoveryWithoutChangingDraftOrInventory() = withIntents {
+        val image = createSyntheticImageFixture()
+        try {
+            intending(hasAction(expectedPickerAction())).respondWith(
+                ActivityResult(Activity.RESULT_OK, Intent().setData(Uri.fromFile(image))),
+            )
+            onView(withId(R.id.home_add_receipt)).perform(click())
+            onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
+            onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
+            onView(withId(R.id.manual_add_item)).perform(scrollTo(), click())
+
+            // Inject an impossible-by-normal-entry ID collision before review. Production still
+            // validates, snapshots and confirms the draft through its normal button handlers.
+            val draftField = MainActivity::class.java.getDeclaredField("manualDraft").apply { isAccessible = true }
+            val stateField = MainActivity::class.java.getDeclaredField("state").apply { isAccessible = true }
+            val values = mapOf(
+                R.id.review_store_name to "Fictional Kedai",
+                R.id.review_purchase_date to "2026-11-10",
+                R.id.review_item_0_description to "Synthetic oats",
+                R.id.review_item_0_quantity to "2",
+                R.id.review_item_0_unit_price to "4.00",
+                R.id.review_item_0_line_total to "8.00",
+                R.id.review_item_1_description to "Synthetic tea",
+                R.id.review_item_1_quantity to "1",
+                R.id.review_item_1_unit_price to "3.00",
+                R.id.review_item_1_line_total to "3.00",
+                R.id.review_receipt_total to "11.00",
+            )
+            lateinit var reviewedDraft: EditableReceipt
+            lateinit var inventoryBefore: List<InventoryItem>
+            activityRule.scenario.onActivity { activity ->
+                values.forEach { (id, value) -> activity.findViewById<EditText>(id).setText(value) }
+                val draft = draftField.get(activity) as EditableReceipt
+                draft.items[1] = draft.items[1].copy(id = draft.items[0].id)
+                assertTrue(ReceiptValidator.validateManual(draft).isValid)
+                reviewedDraft = draft.deepCopy()
+                inventoryBefore = (stateField.get(activity) as PantryUiState).inventory.toList()
+            }
+
+            onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
+            onView(withText(R.string.manual_review_title)).check(matches(isDisplayed()))
+            activityRule.scenario.onActivity { activity ->
+                assertEquals(reviewedDraft, draftField.get(activity))
+            }
+            onView(withText(R.string.manual_confirm_action)).perform(click())
+            onView(withText(R.string.manual_confirmation_failed)).check(matches(isDisplayed()))
+            onView(withText(R.string.manual_review_changed)).check(doesNotExist())
+            onView(withId(R.id.screen_manual)).check(matches(isDisplayed()))
+            onView(withId(R.id.screen_inventory)).check(doesNotExist())
+            activityRule.scenario.onActivity { activity ->
+                assertEquals(reviewedDraft, draftField.get(activity))
+                assertEquals(inventoryBefore, (stateField.get(activity) as PantryUiState).inventory.toList())
+            }
+            values.forEach { (id, value) -> onView(withId(id)).check(matches(withText(value))) }
+        } finally {
+            image.delete()
         }
     }
 

@@ -148,7 +148,7 @@
     <string name="manual_quantity_helper">Required · Whole number from 1 to 99</string>
     <string name="manual_add_item">Add item</string>
     <string name="manual_remove_item">Remove item %1$d</string>
-    <string name="manual_item_limit">This receipt can have up to %1$d items.</string>
+    <string name="manual_item_limit">Item limit per receipt: %1$d</string>
     <string name="manual_review_action">Review entered values</string>
     <string name="manual_review_title">Review your manual receipt</string>
     <string name="manual_review_quantity">Quantity: %1$d</string>
@@ -157,7 +157,12 @@
     <string name="manual_review_total">Receipt total: %1$s</string>
     <string name="manual_unit_price_not_entered">Not entered</string>
     <string name="manual_review_session_notice">Confirm to add these items to this session’s inventory. The image will be removed from the current flow.</string>
-    <string name="manual_confirm_action">Confirm and add items</string>
+    <string name="manual_confirm_action">Confirm as entered</string>
+    <string name="manual_arithmetic_warning">Check the differences below. Discounts, fees, promotions or rounding may account for them.</string>
+    <string name="manual_line_difference">Item %1$d: Quantity × unit price differs from the entered line total.</string>
+    <string name="manual_total_difference">The sum of line totals differs from the entered receipt total.</string>
+    <string name="manual_review_changed">The draft changed during review. Review the current values again before confirming.</string>
+    <string name="manual_confirmation_failed">Could not add these items to inventory. Your entries are still here. You can continue editing, remove and re-add an item, or cancel this entry.</string>
     <string name="manual_cancel_action">Cancel manual entry</string>
     <string name="manual_discard_title">Discard manual entry?</string>
     <string name="manual_discard_body">Your unconfirmed entries will be discarded. You can still view the image or remove it from the preview.</string>
