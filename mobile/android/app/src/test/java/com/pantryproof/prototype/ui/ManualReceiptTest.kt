@@ -27,7 +27,90 @@ class ManualReceiptTest {
         assertNull(receipt.items.single().unitPrice)
         assertEquals("8.20", receipt.items.single().lineTotal.toPlainString())
         assertEquals("8.20", receipt.receiptTotal.toPlainString())
+        assertEquals(ManualArithmeticWarnings(emptyList(), false), ReceiptValidator.manualArithmeticWarnings(receipt))
     }
+
+    @Test
+    fun exactComparisonsIgnoreScaleAndFlagACentInEitherDirection() {
+        val draft = draft()
+        val item = draft.items.single()
+        item.unitPrice = "4"
+        item.lineTotal = "8.00"
+        draft.receiptTotal = "8.0"
+        assertEquals(ManualArithmeticWarnings(emptyList(), false), warningsFor(draft))
+
+        item.unitPrice = ""
+        for (total in listOf("7.99", "8.01")) {
+            draft.receiptTotal = total
+            assertEquals(ManualArithmeticWarnings(emptyList(), true), warningsFor(draft))
+        }
+    }
+
+    @Test
+    fun oneCentRowDifferenceWarnsWithoutBlockingConfirmation() {
+        val draft = draft().apply {
+            items.single().unitPrice = "4.00"
+            items.single().lineTotal = "8.01"
+            receiptTotal = "8.01"
+        }
+        val original = draft.deepCopy()
+        val validation = ReceiptValidator.validateManual(draft)
+        assertTrue(validation.isValid)
+        val receipt = requireNotNull(validation.receipt)
+
+        assertEquals(ManualArithmeticWarnings(listOf(1), false), ReceiptValidator.manualArithmeticWarnings(receipt))
+        assertEquals(2, receipt.items.single().quantity)
+        assertEquals("4.00", receipt.items.single().unitPrice?.toPlainString())
+        assertEquals("8.01", receipt.items.single().lineTotal.toPlainString())
+        assertEquals("8.01", receipt.receiptTotal.toPlainString())
+        assertTrue(PantryUiState(MockReceiptPresentationSource()).confirmManualReceipt(draft))
+        assertEquals(original, draft)
+    }
+
+    @Test
+    fun promotionAndReceiptAdjustmentWarnWithoutChangingEnteredValuesOrAddingRows() {
+        val draft = draftWithRows(3)
+        draft.items[0].unitPrice = "4.11" // 2 × 4.11 differs from the entered 8.20.
+        draft.items[1].unitPrice = "4.10"
+        draft.items[2].unitPrice = "4.25"
+        draft.receiptTotal = "24.50"
+        val original = draft.deepCopy()
+        assertEquals(ManualArithmeticWarnings(listOf(1, 3), true), warningsFor(draft))
+        assertEquals(original, draft)
+        val state = PantryUiState(MockReceiptPresentationSource())
+        val originalInventory = state.inventory.toList()
+        assertTrue(state.confirmManualReceipt(draft))
+        assertEquals(listOf("Oats", "Oats", "Oats"), state.inventory.drop(originalInventory.size).map { it.name })
+        val confirmedInventory = state.inventory.toList()
+        assertFalse(state.confirmManualReceipt(draft))
+        assertEquals(confirmedInventory, state.inventory)
+        assertEquals(original, draft)
+    }
+
+    @Test
+    fun editedDraftDoesNotChangeTheReviewedSnapshot() {
+        val draft = draft().apply { items.single().unitPrice = "4.20" }
+        val reviewed = draft.deepCopy()
+        assertEquals(ManualArithmeticWarnings(listOf(1), false), warningsFor(reviewed))
+        draft.items.single().unitPrice = "4.10"
+        assertFalse(draft == reviewed)
+        assertEquals(ManualArithmeticWarnings(listOf(1), false), warningsFor(reviewed))
+        assertEquals(ManualArithmeticWarnings(emptyList(), false), warningsFor(draft))
+    }
+
+    @Test
+    fun duplicateCandidateRowIdsDoNotPartiallyInsertInventory() {
+        val state = PantryUiState(MockReceiptPresentationSource())
+        val draft = draftWithRows(3)
+        draft.items[2] = draft.items[2].copy(id = draft.items[1].id)
+        val before = state.inventory.toList()
+        assertTrue(ReceiptValidator.validateManual(draft).isValid)
+        assertFalse(state.confirmManualReceipt(draft))
+        assertEquals(before, state.inventory)
+    }
+
+    private fun warningsFor(draft: EditableReceipt): ManualArithmeticWarnings =
+        ReceiptValidator.manualArithmeticWarnings(requireNotNull(ReceiptValidator.validateManual(draft).receipt))
 
     @Test
     fun rejectsEmptyRowsFractionalOrOutOfBoundsQuantityAndInvalidFields() {

@@ -106,11 +106,36 @@ data class ReceiptValidationResult(
     val firstInvalidFieldKey: String? get() = errors.keys.firstOrNull()
 }
 
+data class ManualArithmeticWarnings(
+    val mismatchedLineNumbers: List<Int>,
+    val receiptTotalMismatch: Boolean,
+)
+
 object ReceiptValidator {
     const val MAX_MANUAL_ITEMS = 30
 
     private val manualAmount = Regex("[0-9]+(?:\\.[0-9]{1,2})?")
     private val manualDate = Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+    fun manualArithmeticWarnings(validatedReceipt: Receipt): ManualArithmeticWarnings {
+        var lineSum = BigDecimal.ZERO
+        val mismatchedLines = buildList {
+            validatedReceipt.items.forEachIndexed { index, item ->
+                lineSum = lineSum.add(item.lineTotal)
+                val unitPrice = item.unitPrice
+                if (unitPrice != null &&
+                    unitPrice.multiply(BigDecimal.valueOf(item.quantity.toLong()))
+                        .compareTo(item.lineTotal) != 0
+                ) {
+                    add(index + 1)
+                }
+            }
+        }
+        return ManualArithmeticWarnings(
+            mismatchedLines,
+            lineSum.compareTo(validatedReceipt.receiptTotal) != 0,
+        )
+    }
 
     fun validateManual(draft: EditableReceipt): ReceiptValidationResult {
         if (draft.items.size > MAX_MANUAL_ITEMS) {
