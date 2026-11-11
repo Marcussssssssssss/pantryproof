@@ -21,6 +21,20 @@
     <item name="preview_use_demo" type="id" />
     <item name="preview_source_status" type="id" />
     <item name="preview_selected_image" type="id" />
+    <item name="preview_zoom_in" type="id" />
+    <item name="preview_zoom_out" type="id" />
+    <item name="preview_zoom_reset" type="id" />
+    <item name="preview_crop_receipt" type="id" />
+    <item name="preview_crop_status" type="id" />
+    <item name="crop_editor_image" type="id" />
+    <item name="crop_move_left" type="id" />
+    <item name="crop_move_right" type="id" />
+    <item name="crop_move_up" type="id" />
+    <item name="crop_move_down" type="id" />
+    <item name="crop_edge_left" type="id" />
+    <item name="crop_edge_top" type="id" />
+    <item name="crop_edge_right" type="id" />
+    <item name="crop_edge_bottom" type="id" />
     <item name="preview_image_error" type="id" />
     <item name="preview_remove_image" type="id" />
     <item name="details_review" type="id" />

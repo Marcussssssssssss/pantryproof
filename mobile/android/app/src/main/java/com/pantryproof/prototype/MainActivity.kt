@@ -2,6 +2,7 @@ package com.pantryproof.prototype
 
 import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.app.DatePickerDialog
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Context
@@ -20,7 +21,10 @@ import android.text.Editable
 import android.text.InputFilter
 import android.text.InputType
 import android.text.TextWatcher
+import android.view.GestureDetector
 import android.view.Gravity
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -28,15 +32,17 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.AccessibilityDelegateCompat
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import com.pantryproof.prototype.data.MockReceiptPresentationSource
 import com.pantryproof.prototype.data.InventoryItem
 import com.pantryproof.prototype.data.PresentedField
@@ -47,6 +53,11 @@ import com.pantryproof.prototype.data.Receipt
 import com.pantryproof.prototype.data.ReceiptItem
 import com.pantryproof.prototype.data.ReceiptPresentationUiResult
 import com.pantryproof.prototype.image.ReceiptCaptureStore
+import com.pantryproof.prototype.image.CropEdge
+import com.pantryproof.prototype.image.ReceiptCrop
+import com.pantryproof.prototype.image.ReceiptCropView
+import com.pantryproof.prototype.image.ReceiptZoom
+import com.pantryproof.prototype.image.ZoomReceiptView
 import com.pantryproof.prototype.ui.EditableReceipt
 import com.pantryproof.prototype.ui.EditableReceiptItem
 import com.pantryproof.prototype.ui.MoneyFormatter
@@ -60,8 +71,10 @@ import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.ArrayDeque
+import java.util.GregorianCalendar
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.roundToInt
 
 @SuppressLint("SetTextI18n", "ExifInterface")
 class MainActivity : ComponentActivity() {
@@ -114,6 +127,7 @@ class MainActivity : ComponentActivity() {
     private val backStack = ArrayDeque<Screen>()
     private var currentScreen = Screen.HOME
     private var selectedImageUri: Uri? = null
+    private var selectedImageCrop: ReceiptCrop? = null
     private var selectedImageSource: LocalImageSource? = null
     private var ownsSelectedGalleryReadGrant = false
     private var selectedCaptureFileName: String? = null
@@ -147,6 +161,9 @@ class MainActivity : ComponentActivity() {
         @Suppress("DEPRECATION")
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         selectedImageUri = savedInstanceState?.getString("selectedImageUri")?.let(Uri::parse)
+        selectedImageCrop = selectedImageUri?.let {
+            ReceiptCrop.from(savedInstanceState?.getFloatArray("selectedImageCrop"))
+        }
         selectedImageSource = savedInstanceState?.getString("selectedImageSource")
             ?.let { runCatching { LocalImageSource.valueOf(it) }.getOrNull() }
             ?: selectedImageUri?.let { LocalImageSource.GALLERY }
@@ -182,6 +199,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("selectedImageUri", selectedImageUri?.toString())
+        outState.putFloatArray("selectedImageCrop", selectedImageCrop?.values())
         outState.putString("selectedImageSource", selectedImageSource?.name)
         outState.putBoolean("ownsSelectedGalleryReadGrant", ownsSelectedGalleryReadGrant)
         outState.putString("selectedCaptureFileName", selectedCaptureFileName)
@@ -436,7 +454,10 @@ class MainActivity : ComponentActivity() {
         captureFileName: String?,
     ) {
         releaseSelectedGalleryPermission(replacementUri = uri)
-        if (selectedImageUri != uri) manualDraft = null
+        if (selectedImageUri != uri || selectedImageSource != source) {
+            manualDraft = null
+            selectedImageCrop = null
+        }
         ownsSelectedGalleryReadGrant = false
         if (selectedCaptureFileName != captureFileName) {
             captureStore.delete(selectedCaptureFileName)
@@ -454,6 +475,7 @@ class MainActivity : ComponentActivity() {
         captureStore.delete(selectedCaptureFileName)
         captureStore.delete(pendingCaptureFileName)
         selectedImageUri = null
+        selectedImageCrop = null
         selectedImageSource = null
         selectedCaptureFileName = null
         pendingCaptureUri = null
@@ -503,6 +525,7 @@ class MainActivity : ComponentActivity() {
             ) {
                 captureStore.delete(selectedCaptureFileName)
                 selectedImageUri = null
+                selectedImageCrop = null
                 selectedCaptureFileName = null
                 imageInputNotice = ImageInputNotice.CAMERA_INVALID
             }
@@ -631,8 +654,16 @@ class MainActivity : ComponentActivity() {
                 ).apply { id = R.id.preview_source_status })
                 add(space(14))
                 add(selectedImagePreview(previewBitmap, imageSource))
+                if (selectedImageCrop != null) {
+                    add(bodyText(getString(R.string.crop_applied)).apply { id = R.id.preview_crop_status })
+                }
+                add(space(8))
+                add(ui.actionButton(
+                    getString(R.string.crop_receipt),
+                    PantryActionStyle.SECONDARY,
+                    viewId = R.id.preview_crop_receipt,
+                ) { showCropEditor(uri, previewBitmap) })
                 add(space(14))
-                add(space(18))
                 add(ui.actionButton(
                     getString(R.string.manual_start_action),
                     PantryActionStyle.PRIMARY,
@@ -700,18 +731,14 @@ class MainActivity : ComponentActivity() {
         contentDescription = getString(R.string.preview_synthetic_image_description)
     }
 
-    private fun selectedImagePreview(bitmap: Bitmap, source: LocalImageSource): View {
+    private fun selectedImagePreview(
+        bitmap: Bitmap,
+        source: LocalImageSource,
+        inDialog: Boolean = false,
+    ): View {
         val container = ui.card { }
-        val image = ImageView(this).apply {
+        val image = ZoomReceiptView(this, bitmap, selectedImageCrop ?: ReceiptCrop.FULL).apply {
             id = R.id.preview_selected_image
-            adjustViewBounds = true
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            minimumHeight = dp(200)
-            maxHeight = dp(
-                (resources.configuration.screenHeightDp * 0.52f)
-                    .toInt()
-                    .coerceIn(240, 460),
-            )
             contentDescription = getString(
                 if (source == LocalImageSource.CAMERA) {
                     R.string.preview_captured_image_description
@@ -720,12 +747,124 @@ class MainActivity : ComponentActivity() {
                 },
             )
         }
-        image.setImageBitmap(bitmap)
+        val height = (resources.configuration.screenHeightDp * if (inDialog) 0.38f else 0.46f)
+            .roundToInt().coerceIn(140, 400)
         container.addView(
             image,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(height)),
         )
+        val zoomIn = ui.actionButton("+", PantryActionStyle.SECONDARY, viewId = R.id.preview_zoom_in) {
+            image.changeZoom(1.5f)
+        }.apply { contentDescription = getString(R.string.preview_zoom_in) }
+        val zoomOut = ui.actionButton("−", PantryActionStyle.SECONDARY, viewId = R.id.preview_zoom_out) {
+            image.changeZoom(1f / 1.5f)
+        }.apply { contentDescription = getString(R.string.preview_zoom_out) }
+        val reset = ui.actionButton(
+            getString(R.string.preview_zoom_reset), PantryActionStyle.SECONDARY,
+            viewId = R.id.preview_zoom_reset,
+        ) { image.resetZoom() }
+        image.onZoomChanged = { scale ->
+            zoomIn.isEnabled = scale < ReceiptZoom.MAX_SCALE
+            zoomOut.isEnabled = scale > 1f
+            reset.isEnabled = scale > 1f
+            val label = getString(R.string.preview_zoom_level, (scale * 100).roundToInt())
+            if (ViewCompat.getStateDescription(image) != label) ViewCompat.setStateDescription(image, label)
+        }
+        image.onZoomChanged(1f)
+        container.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            listOf(zoomOut, zoomIn, reset).forEachIndexed { index, button ->
+                addView(button, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    if (index > 0) marginStart = dp(6)
+                })
+            }
+        })
         return container
+    }
+
+    private fun showCropEditor(uri: Uri, bitmap: Bitmap) {
+        val editor = ReceiptCropView(this, bitmap, selectedImageCrop ?: ReceiptCrop.FULL).apply {
+            id = R.id.crop_editor_image
+            contentDescription = getString(R.string.crop_editor_description)
+        }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), 0, dp(16), 0)
+            addView(bodyText(getString(R.string.crop_editor_help)))
+            val editorHeight = (resources.configuration.screenHeightDp * 0.36f).roundToInt()
+                .coerceIn(140, 320)
+            addView(editor, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(editorHeight)))
+            // Each press translates by 5% of the image along that axis.
+            val step = 0.05f
+            val directions = listOf(
+                Triple(R.id.crop_move_left, R.string.crop_move_left, -step to 0f),
+                Triple(R.id.crop_move_right, R.string.crop_move_right, step to 0f),
+                Triple(R.id.crop_move_up, R.string.crop_move_up, 0f to -step),
+                Triple(R.id.crop_move_down, R.string.crop_move_down, 0f to step),
+            )
+            for ((buttonId, label, delta) in directions) {
+                addView(ui.actionButton(
+                    getString(label), PantryActionStyle.SECONDARY, viewId = buttonId,
+                ) { editor.setCrop(editor.crop.move(delta.first, delta.second)) }, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(4) })
+            }
+        }
+        val edgeControls = listOf(
+            Triple(CropEdge.LEFT, R.string.crop_edge_left, R.id.crop_edge_left),
+            Triple(CropEdge.TOP, R.string.crop_edge_top, R.id.crop_edge_top),
+            Triple(CropEdge.RIGHT, R.string.crop_edge_right, R.id.crop_edge_right),
+            Triple(CropEdge.BOTTOM, R.string.crop_edge_bottom, R.id.crop_edge_bottom),
+        ).map { (edge, labelId, sliderId) ->
+            val slider = SeekBar(this).apply {
+                id = sliderId
+                max = 100
+                minimumHeight = dp(48)
+            }
+            panel.addView(bodyText(getString(labelId)).apply { labelFor = slider.id })
+            panel.addView(slider)
+            slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
+                override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    if (fromUser) {
+                        editor.setCrop(editor.crop.adjust(edge, progress / 100f))
+                        editor.onCropChanged(editor.crop)
+                    }
+                }
+            })
+            slider
+        }
+        editor.onCropChanged = { bounds ->
+            bounds.values().forEachIndexed { index, position ->
+                edgeControls[index].progress = (position * 100f).roundToInt()
+            }
+        }
+        editor.onCropChanged(editor.crop)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.crop_receipt)
+            .setView(ScrollView(this).apply { addView(panel) })
+            .create()
+        // Keep the actions in the scroll area so large text cannot clip a stacked dialog footer.
+        panel.addView(ui.actionButton(
+            getString(R.string.crop_apply), PantryActionStyle.PRIMARY,
+        ) {
+            dialog.dismiss()
+            if (selectedImageUri == uri) {
+                val bounds = ReceiptCrop.from(editor.crop.values())
+                if (bounds != null && canReadSelectedImage(uri)) {
+                    selectedImageCrop = bounds.takeUnless { it == ReceiptCrop.FULL }
+                }
+                render()
+            }
+        })
+        panel.addView(ui.actionButton(
+            getString(R.string.crop_reset), PantryActionStyle.SECONDARY,
+        ) { editor.setCrop(ReceiptCrop.FULL) })
+        panel.addView(ui.actionButton(
+            getString(android.R.string.cancel), PantryActionStyle.SECONDARY,
+        ) { dialog.dismiss() })
+        dialog.show()
     }
 
     private fun canReadSelectedImage(uri: Uri): Boolean = runCatching {
@@ -1304,7 +1443,9 @@ class MainActivity : ComponentActivity() {
                     .setTitle(R.string.preview_title)
                     .setPositiveButton(android.R.string.ok, null)
                 if (bitmap != null && source != null) {
-                    dialog.setView(selectedImagePreview(bitmap, source))
+                    dialog.setView(ScrollView(this@MainActivity).apply {
+                        addView(selectedImagePreview(bitmap, source, inDialog = true))
+                    })
                 } else {
                     bitmap?.recycle()
                     dialog.setMessage(R.string.preview_image_unavailable_body)
@@ -1312,35 +1453,42 @@ class MainActivity : ComponentActivity() {
                 dialog.show()
             })
             add(space(12))
-            val errors = bodyText("").apply {
-                id = R.id.review_error_summary
-                setTextColor(ui.color(R.color.pantry_on_error_container))
-                setBackgroundColor(ui.color(R.color.pantry_error_container))
-                accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-                visibility = View.GONE
+            val itemLimitHint = if (draft.items.size >= ReceiptValidator.MAX_MANUAL_ITEMS) {
+                getString(R.string.manual_item_limit, ReceiptValidator.MAX_MANUAL_ITEMS)
+            } else {
+                ""
             }
-            add(errors)
+            val itemCountFeedback = bodyText(itemLimitHint).apply {
+                accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+                visibility = if (itemLimitHint.isEmpty()) View.GONE else View.VISIBLE
+            }
             val bindings = mutableListOf<ReviewFieldUi>()
             val removeItems = mutableListOf<View>()
             fun showValidation(validation: ReceiptValidationResult) {
                 bindings.forEach { applyReviewFieldError(it, validation.errors[it.key]) }
-                val message = validation.errors.values.distinct().joinToString("\n")
-                if (errors.text.toString() != message) errors.text = message
-                errors.visibility = if (message.isEmpty()) View.GONE else View.VISIBLE
+                val itemError = validation.errors["items"]
+                val message = itemError ?: itemLimitHint
+                if (itemCountFeedback.text.toString() != message) itemCountFeedback.text = message
+                itemCountFeedback.setTextColor(ui.color(
+                    if (itemError == null) R.color.pantry_on_surface_variant else R.color.pantry_error,
+                ))
+                itemCountFeedback.visibility = if (message.isEmpty()) View.GONE else View.VISIBLE
             }
             val amountType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             fun field(
                 key: String,
                 label: Int,
                 value: String,
-                helper: Int = R.string.review_required_helper,
+                helper: Int? = null,
                 type: Int = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES,
                 prefix: String? = null,
+                datePicker: Boolean = false,
             ): View {
                 val binding = reviewField(
-                    key, getString(label), value, getString(helper), type, prefix,
+                    key, getString(label), value, helper?.let(::getString).orEmpty(), type, prefix,
                     manualEntry = true,
                 )
+                if (datePicker) configureManualDatePicker(binding.field)
                 bindings += binding
                 binding.field.addTextChangedListener(simpleTextWatcher {
                     if (draft.updateField(key, binding.field.text.toString()) && manualValidationAttempted) {
@@ -1357,9 +1505,9 @@ class MainActivity : ComponentActivity() {
             add(field("storeName", R.string.field_store_name, draft.storeName))
             add(field(
                 "purchaseDate", R.string.field_purchase_date, draft.purchaseDate,
-                R.string.review_date_helper, InputType.TYPE_CLASS_DATETIME,
+                datePicker = true,
             ))
-            add(space(12))
+            add(space(4))
             draft.items.forEachIndexed { index, item ->
                 val key = "item.$index"
                 add(ui.card {
@@ -1371,18 +1519,17 @@ class MainActivity : ComponentActivity() {
                     ))
                     addView(field(
                         "$key.unitPrice", R.string.field_unit_price, item.unitPrice,
-                        R.string.review_unit_price_helper, amountType, "RM",
+                        type = amountType, prefix = "RM",
                     ))
                     addView(field(
                         "$key.lineTotal", R.string.field_line_total, item.lineTotal,
-                        R.string.review_money_helper, amountType, "RM",
+                        type = amountType, prefix = "RM",
                     ))
                     val removeItem = ui.actionButton(
                         getString(R.string.manual_remove_item, index + 1),
-                        PantryActionStyle.TERTIARY,
+                        PantryActionStyle.SECONDARY,
                     ) {
-                        draft.items.removeAt(index)
-                        rerenderAtCurrentPosition()
+                        confirmRemoveManualItem(draft, item, index + 1, ::rerenderAtCurrentPosition)
                     }
                     removeItems += removeItem
                     addView(removeItem)
@@ -1399,13 +1546,11 @@ class MainActivity : ComponentActivity() {
                 rerenderAtCurrentPosition()
             }
             add(addItem)
-            if (draft.items.size >= ReceiptValidator.MAX_MANUAL_ITEMS) {
-                add(bodyText(getString(R.string.manual_item_limit, ReceiptValidator.MAX_MANUAL_ITEMS)))
-            }
-            add(space(12))
+            add(itemCountFeedback)
+            add(space(8))
             add(field(
                 "receiptTotal", R.string.field_receipt_total, draft.receiptTotal,
-                R.string.review_money_helper, amountType, "RM",
+                type = amountType, prefix = "RM",
             ))
             add(space(12))
             val confirmationFeedback = bodyText("").apply {
@@ -1456,6 +1601,124 @@ class MainActivity : ComponentActivity() {
                 PantryActionStyle.TERTIARY,
             ) { confirmDiscardManualDraft() })
         }
+
+    @SuppressLint("ClickableViewAccessibility") // Touch, keyboard and accessibility use performClick.
+    private fun configureManualDatePicker(field: EditText) {
+        field.keyListener = null
+        field.showSoftInputOnFocus = false
+        field.isCursorVisible = false
+        field.isFocusableInTouchMode = true
+        field.hint = getString(R.string.manual_choose_date)
+        field.compoundDrawablePadding = dp(8)
+        field.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, R.drawable.ic_receipt_calendar, 0)
+        field.setPadding(dp(12), dp(11), dp(12), dp(11))
+        ViewCompat.setAccessibilityDelegate(field, object : AccessibilityDelegateCompat() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfoCompat) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = android.widget.Button::class.java.name
+                info.isEditable = false
+            }
+        })
+        field.setOnClickListener {
+            val savedDate = runCatching { LocalDate.parse(field.text.toString().trim()) }.getOrNull()
+            // The native picker uses a historical Gregorian cutover. Keep ISO dates
+            // before it, including year zero, available through the existing validator.
+            val firstPickerDate = LocalDate.of(1582, 10, 15)
+            val lastPickerDate = LocalDate.of(9999, 12, 31)
+            if (savedDate != null && savedDate !in firstPickerDate..lastPickerDate) {
+                showManualDateEntry(field)
+                return@setOnClickListener
+            }
+            val today = LocalDate.now().coerceIn(firstPickerDate, lastPickerDate)
+            val initial = savedDate ?: today
+            val dialog = DatePickerDialog(
+                this,
+                { _, year, month, day -> field.setText(LocalDate.of(year, month + 1, day).toString()) },
+                today.year, today.monthValue - 1, today.dayOfMonth,
+            )
+            dialog.datePicker.apply {
+                minDate = GregorianCalendar(
+                    firstPickerDate.year, firstPickerDate.monthValue - 1, firstPickerDate.dayOfMonth,
+                ).timeInMillis
+                maxDate = GregorianCalendar(
+                    lastPickerDate.year, lastPickerDate.monthValue - 1, lastPickerDate.dayOfMonth,
+                ).timeInMillis
+                updateDate(initial.year, initial.monthValue - 1, initial.dayOfMonth)
+            }
+            dialog.setButton(AlertDialog.BUTTON_NEUTRAL, "Enter date manually") { _, _ ->
+                showManualDateEntry(field)
+            }
+            dialog.show()
+        }
+        val dateTap = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+
+            override fun onSingleTapUp(e: MotionEvent): Boolean = field.performClick()
+        })
+        // EditText consumes the first tap when it takes focus in touch mode.
+        field.setOnTouchListener { _, event -> dateTap.onTouchEvent(event) }
+        field.setOnKeyListener { _, keyCode, event ->
+            val activate = keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                keyCode == KeyEvent.KEYCODE_SPACE
+            if (activate && event.action == KeyEvent.ACTION_UP) field.performClick()
+            activate
+        }
+    }
+
+    private fun showManualDateEntry(field: EditText) {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            isSingleLine = true
+            hint = getString(R.string.field_purchase_date)
+            setText(field.text.toString())
+            setSelection(length())
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.field_purchase_date)
+            .setMessage(R.string.review_date_helper)
+            .setView(LinearLayout(this).apply {
+                setPadding(dp(24), 0, dp(24), 0)
+                addView(input, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ))
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(android.R.string.ok) { _, _ -> field.setText(input.text.toString()) }
+            .show()
+    }
+
+    private fun confirmRemoveManualItem(
+        draft: EditableReceipt,
+        item: EditableReceiptItem,
+        number: Int,
+        onRemoved: () -> Unit,
+    ) {
+        if (draft.items.size <= 1) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.manual_keep_one_title)
+                .setMessage(R.string.manual_keep_one_body)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+            return
+        }
+        val description = item.description.trim()
+        val itemLabel = if (description.isEmpty()) getString(R.string.review_item_number, number)
+        else getString(R.string.manual_remove_item_description, number, description)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.manual_remove_confirm_title)
+            .setMessage(getString(R.string.manual_remove_confirm_body, itemLabel))
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.manual_remove_confirm_action) { _, _ ->
+                if (manualDraft === draft && draft.items.size > 1) {
+                    val selectedIndex = draft.items.indexOfFirst { it === item }
+                    if (selectedIndex >= 0) {
+                        draft.items.removeAt(selectedIndex)
+                        onRemoved()
+                    }
+                }
+            }
+            .show()
+    }
 
     private fun reviewManualReceipt(
         draft: EditableReceipt,
@@ -1709,10 +1972,12 @@ class MainActivity : ComponentActivity() {
             text = helper
             setTextColor(ui.color(R.color.pantry_on_surface_variant))
             setPadding(dp(3), dp(4), dp(3), 0)
-            minHeight = dp(22)
+            minHeight = if (manualEntry) 0 else dp(22)
+            if (helper.isEmpty()) visibility = View.GONE
         }
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            if (manualEntry) setPadding(0, 0, 0, dp(8))
             addView(TextView(
                 this@MainActivity,
                 null,
@@ -1757,6 +2022,7 @@ class MainActivity : ComponentActivity() {
 
     private fun applyReviewFieldError(binding: ReviewFieldUi, error: String?) {
         binding.helper.text = error ?: binding.defaultHelper
+        binding.helper.visibility = if (error == null && binding.defaultHelper.isEmpty()) View.GONE else View.VISIBLE
         binding.helper.setTextColor(ui.color(
             if (error == null) R.color.pantry_on_surface_variant else R.color.pantry_error,
         ))
