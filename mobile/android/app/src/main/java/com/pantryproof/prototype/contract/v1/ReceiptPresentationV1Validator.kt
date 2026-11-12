@@ -448,6 +448,13 @@ object ReceiptPresentationV1Validator {
                 "invalid canonical ISO date",
             )
         }
+        if (presentation.startsWith("0000")) {
+            rejectPresentation(
+                ReceiptPresentationIssueCodes.INVALID_DATE,
+                "$path.presentationValue",
+                "date year must be between 0001 and 9999",
+            )
+        }
         try {
             LocalDate.parse(presentation)
         } catch (error: DateTimeParseException) {

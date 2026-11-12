@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import unittest
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, fields
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Any
+from pipeline.presentation_v1 import conformance as v1
 
 from pipeline.presentation_v1.conformance import (
     ConformanceViolation,
@@ -62,6 +64,9 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 class PresentationV1SharedFixtureConformanceTest(unittest.TestCase):
     def test_canonical_manifest_bytes_and_expected_results(self) -> None:
+        _check_dto_inventory()
+        actual_rows = []
+        expected_rows = []
         raw_manifest = _strict_object(_MANIFEST_PATH.read_bytes(), label="manifest")
         manifest = _require_exact_object(
             raw_manifest,
@@ -140,8 +145,13 @@ class PresentationV1SharedFixtureConformanceTest(unittest.TestCase):
                     "raw-byte SHA-256 mismatch",
                 )
 
-                actual = _run_fixture(raw_fixture, expected_from_manifest=expected)
+                expected_row, actual_row = _structured_fixture(relative_path, raw_fixture, expected)
+                expected_rows.append(expected_row)
+                actual_rows.append(actual_row)
+                actual = actual_row.get("diagnostic", {}).get("code", "ACCEPT")
                 self.assertEqual(expected, actual)
+                if expected == "ACCEPT":
+                    self.assertEqual([], _record_differences(expected_row, actual_row))
                 expected_distribution[
                     "ACCEPT" if expected == "ACCEPT" else "REJECT"
                 ] += 1
@@ -158,7 +168,389 @@ class PresentationV1SharedFixtureConformanceTest(unittest.TestCase):
         self.assertEqual(Counter({"ACCEPT": 17, "REJECT": 15}), expected_distribution)
         self.assertEqual(expected_distribution, executed_distribution)
         self.assertEqual(32, sum(executed_distribution.values()))
+        if output := _evidence_dir():
+            _write_rows(output / "expected.jsonl", expected_rows)
+            _write_rows(output / "python.jsonl", actual_rows)
 
+    def test_date_domain_and_raw_precedence(self) -> None:
+        _run_structured_probes(self)
+
+    def test_native_confidence_record_is_exact(self) -> None:
+        for token, coefficient, exponent in (
+            ("0.750", "75", "-2"), ("75e-2", "75", "-2"),
+            ("-0.00", "0", "0"), ("0E+4", "0", "0"),
+            ("0.75000000000000000001", "75000000000000000001", "-20"),
+        ):
+            with self.subTest(token=token):
+                expected = {"coefficient": coefficient, "exponent": exponent}
+                self.assertEqual(expected, _decimal_dto(Decimal(token)))
+                self.assertEqual(expected, _wire_expected(_strict_wire(token.encode("ascii")), "nativeConfidence"))
+        self.assertIsNone(_dto_record(None))
+
+
+
+# Explicit DTO schema, independent of the generic fixture-input reader.
+_DTO_MEMBERS = {
+    v1.ReceiptPresentationV1: "schemaName schemaVersion sourceContractVersion requestId imageId source outcome sourceEvidence sourceGate automaticExtraction receipt".split(),
+    v1.PresentationSource: "type provenance".split(),
+    v1.PresentationProvenance: "sourceSystem sourceReference contentSha256".split(),
+    v1.PresentationOutcome: "status failure".split(),
+    v1.PresentationFailure: "stage code retryable".split(),
+    v1.PresentationSourceEvidence: "sourceProcessingStatus tokenIds".split(),
+    v1.PresentationSourceGate: "gateResultId decision reasons".split(),
+    v1.PresentationAutomaticExtraction: "stage extractionStatus producer".split(),
+    v1.PresentationProducer: "producerId producerVersion".split(),
+    v1.PresentationReceipt: "receiptId currencyCode receiptFields itemRows".split(),
+    v1.PresentationItemRow: "rowId fields".split(),
+    v1.PresentationField: "fieldId role status originalAutomaticValue presentationValue absenceReason sourceTokenIds nativeConfidence".split(),
+}
+_DTO_ENUMS = {
+    (v1.PresentationSource, "type"): set("LOCAL_IMAGE SYNTHETIC_FIXTURE".split()),
+    (v1.PresentationOutcome, "status"): set("RESULT_AVAILABLE PROCESSING_UNAVAILABLE PROCESSING_FAILED SOURCE_EVIDENCE_INSUFFICIENT".split()),
+    (v1.PresentationFailure, "stage"): set("AVAILABILITY OCR SOURCE_GATE EXTRACTION PRESENTATION_ADAPTER".split()),
+    (v1.PresentationSourceEvidence, "sourceProcessingStatus"): set("RECEIVED OCR_COMPLETED OCR_PARTIAL OCR_FAILED".split()),
+    (v1.PresentationSourceGate, "decision"): set("SUFFICIENT INSUFFICIENT".split()),
+    (v1.PresentationAutomaticExtraction, "stage"): set("PRE_REVIEW_AUTOMATIC".split()),
+    (v1.PresentationAutomaticExtraction, "extractionStatus"): set("EXTRACTED PARTIAL FAILED".split()),
+    (v1.PresentationField, "role"): set("STORE_NAME PURCHASE_DATE ITEM_DESCRIPTION QUANTITY UNIT_PRICE LINE_TOTAL RECEIPT_TOTAL".split()),
+    (v1.PresentationField, "status"): set("EXTRACTED MISSING UNRESOLVED".split()),
+}
+_ENVELOPE_38_SHA = "afbfa334ff2b9ec1b5a00bc6e9fed85b5074cc7413af966ef249189768a0614a"
+_STRING_TOKEN = re.compile(rb'"(?:[^"\\\x00-\x1f]|\\[^\r\n])*"')
+_PATH_REQUIREMENTS = {
+    "08": "$.schemaVersion",
+    "33": "$.receipt.receiptFields[1].presentationValue",
+    "38": "$",
+    "44": "$.requestId",
+    "45": "$.imageId",
+    "57": "$.receipt.itemRows[0].fields[0].sourceTokenIds[0]",
+}
+
+
+def _attribute(key: str) -> str:
+    return re.sub(r"(?<!^)[A-Z]", lambda match: "_" + match[0].lower(), key)
+
+
+def _check_dto_inventory() -> None:
+    for dto, members in _DTO_MEMBERS.items():
+        mapped = {_attribute(key) for key in members}
+        if len(mapped) != len(members) or mapped != {field.name for field in fields(dto)}:
+            raise AssertionError(f"DTO field inventory mismatch: {dto.__name__}")
+
+
+def _strict_wire(raw: bytes) -> Any:
+    def object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate member {key!r}")
+            result[key] = value
+        return result
+
+    def invalid_constant(token: str) -> Any:
+        raise ValueError(f"invalid JSON constant {token}")
+
+    return json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=object_pairs,
+                      parse_float=Decimal, parse_int=Decimal, parse_constant=invalid_constant)
+
+
+def _envelope_span(raw: bytes) -> tuple[int, int]:
+    if len(raw) > 1_048_576 or not raw.lstrip().startswith(b"{"):
+        raise ValueError("fixture wrapper size or root")
+    raw.decode("utf-8", errors="strict")
+    stack: list[int] = []
+    start = end = None
+    index = 0
+    while index < len(raw):
+        token = raw[index]
+        if token == ord('"'):
+            match = _STRING_TOKEN.match(raw, index)
+            if match is None:
+                raise ValueError("unterminated string")
+            if stack == [ord("{")] and json.loads(match[0]) == "envelope":
+                tail = re.match(rb"\s*:\s*", raw[match.end():])
+                if tail is not None:
+                    candidate = match.end() + tail.end()
+                    if start is not None or raw[candidate:candidate + 1] != b"{":
+                        raise ValueError("duplicate or non-object envelope")
+                    start = candidate
+            index = match.end()
+            continue
+        if token in b"{[":
+            stack.append(token)
+            if len(stack) > 64:
+                raise ValueError("fixture depth exceeds 64")
+        elif token in b"}]":
+            opening = ord("{") if token == ord("}") else ord("[")
+            if not stack or stack.pop() != opening:
+                raise ValueError("unbalanced fixture")
+            if start is not None and end is None and len(stack) == 1 and token == ord("}"):
+                end = index + 1
+        index += 1
+    if stack or start is None or end is None:
+        raise ValueError("missing or incomplete envelope")
+    return start, end
+
+
+def _decimal_dto(value: Decimal) -> dict[str, str]:
+    sign, digits, exponent = value.as_tuple()
+    coefficient = "".join(map(str, digits)).lstrip("0")
+    if not coefficient:
+        return {"coefficient": "0", "exponent": "0"}
+    trimmed = coefficient.rstrip("0")
+    return {"coefficient": ("-" if sign else "") + trimmed,
+            "exponent": str(exponent + len(coefficient) - len(trimmed))}
+
+
+def _wire_expected(value: Any, member: str | None = None) -> Any:
+    if isinstance(value, dict):
+        return {key: _wire_expected(item, key) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_wire_expected(item) for item in value]
+    if isinstance(value, Decimal):
+        if member != "nativeConfidence":
+            raise ValueError(f"unexpected numeric fixture member: {member}")
+        # Independent conversion of the exact JSON number, without DTO inspection.
+        if value.is_zero():
+            return {"coefficient": "0", "exponent": "0"}
+        whole, _, exponent = format(value, "e").partition("e")
+        sign = "-" if whole.startswith("-") else ""
+        integer, _, fraction = whole.lstrip("-").partition(".")
+        digits = (integer + fraction).rstrip("0")
+        removed = len(integer) + len(fraction) - len(digits)
+        return {"coefficient": sign + digits, "exponent": str(int(exponent) - len(fraction) + removed)}
+    return value
+
+
+def _dto_record(value: Any) -> Any:
+    if type(value) in (str, bool, type(None)):
+        return value
+    if isinstance(value, Decimal):
+        return _decimal_dto(value)
+    if isinstance(value, tuple):
+        return [_dto_record(item) for item in value]
+    dto = type(value)
+    record = {}
+    for key in _DTO_MEMBERS[dto]:
+        member = getattr(value, _attribute(key))
+        allowed = _DTO_ENUMS.get((dto, key))
+        if allowed is not None and member not in allowed:
+            raise ValueError(f"unexpected enum token: {dto.__name__}.{key}={member!r}")
+        record[key] = _dto_record(member)
+    return record
+
+
+def _evidence_dir() -> Path | None:
+    return Path(path) if (path := os.environ.get("PANTRYPROOF_M3E_PARITY_EVIDENCE_DIR")) else None
+
+
+def _write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
+    with path.open("x", encoding="utf-8", newline="\n") as output:
+        for row in rows:
+            output.write(json.dumps(row, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n")
+
+
+def _fixture_input(path: str, raw: bytes, expected: str) -> tuple[bytes, dict[str, Any], dict[str, Any]]:
+    start, end = _envelope_span(raw)
+    envelope = raw[start:end]
+    wrapper = _require_exact_object(
+        _strict_wire(raw[:start] + b"{}" + raw[end:]),
+        allowed=_WRAPPER_ALLOWED_MEMBERS, required=_WRAPPER_REQUIRED_MEMBERS, label="fixture wrapper",
+    )
+    if (wrapper["expectedResult"] != expected or wrapper["fixtureStatus"] != "DRAFT_NOT_APPROVED — SYNTHETIC_ONLY"
+            or type(wrapper["scenario"]) is not str or not wrapper["scenario"].strip()):
+        raise AssertionError("fixture wrapper identity mismatch")
+    digest = hashlib.sha256(envelope).hexdigest()
+    if path.startswith("fixtures/38-"):
+        if (start, end, digest) != (188, 947, _ENVELOPE_38_SHA):
+            raise AssertionError("fixture 38 envelope span or hash changed")
+        wire = {"requestId": "request-duplicate-json-key-001", "imageId": "image-duplicate-json-key-001"}
+    else:
+        wire = _strict_wire(envelope)
+    request, image, mode = _consumer_context(wrapper.get("consumerContext"), wire)
+    meta = {"fixtureId": path, "fixtureGitBlob": hashlib.sha1(
+                f"blob {len(raw)}\0".encode("ascii") + raw).hexdigest(),
+            "fixtureSha256": hashlib.sha256(raw).hexdigest(), "envelopeSha256": digest,
+            "context": {"expectedRequestId": request, "expectedImageId": image, "mode": mode}}
+    return envelope, wire, meta
+
+
+def _decode_record(raw: bytes, context: Mapping[str, str]) -> dict[str, Any]:
+    try:
+        dto = decode_and_validate_presentation_v1(
+            raw, expected_request_id=context["expectedRequestId"],
+            expected_image_id=context["expectedImageId"], consumer_mode=context["mode"],
+        )
+    except ConformanceViolation as issue:
+        return {"verdict": "REJECT", "diagnostic": {
+            "code": issue.code, "path": issue.path, "detail": issue.detail}}
+    return {"verdict": "ACCEPT", "record": _dto_record(dto)}
+
+
+def _structured_fixture(path: str, raw: bytes, expected: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    envelope, wire, meta = _fixture_input(path, raw, expected)
+    actual = meta | _decode_record(envelope, meta["context"])
+    if expected == "ACCEPT":
+        return meta | {"verdict": "ACCEPT", "record": _wire_expected(wire)}, actual
+    required_path = _PATH_REQUIREMENTS.get(Path(path).name.split("-")[0])
+    if required_path is not None and actual.get("diagnostic", {}).get("path") != required_path:
+        raise AssertionError(f"{path}: unexpected diagnostic path: {actual}")
+    if path.startswith("fixtures/38-") and (output := _evidence_dir()):
+        with (output / "fixture-38-python.bin").open("xb") as stream:
+            stream.write(envelope)
+    return meta | {"verdict": "REJECT", "diagnostic": {"code": expected, "path": required_path}}, actual
+
+
+def _record_differences(expected: Any, actual: Any, path: str = "") -> list[dict[str, Any]]:
+    if type(expected) is type(actual):
+        if isinstance(expected, dict):
+            differences = []
+            for key in sorted(expected.keys() | actual.keys()):
+                pointer = path + "/" + key.replace("~", "~0").replace("/", "~1")
+                if key not in expected or key not in actual:
+                    difference = {"pointer": pointer, "kind": "unexpected" if key in actual else "missing"}
+                    if key in expected:
+                        difference["expected"] = expected[key]
+                    if key in actual:
+                        difference["actual"] = actual[key]
+                    differences.append(difference)
+                else:
+                    differences.extend(_record_differences(expected[key], actual[key], pointer))
+            return differences
+        if isinstance(expected, list):
+            differences = [] if len(expected) == len(actual) else [
+                {"pointer": path, "kind": "length", "expected": len(expected), "actual": len(actual)}]
+            for index, (left, right) in enumerate(zip(expected, actual)):
+                differences.extend(_record_differences(left, right, f"{path}/{index}"))
+            return differences
+        if expected == actual:
+            return []
+    return [{"pointer": path, "kind": "value" if type(expected) is type(actual) else "type",
+             "expected": expected, "actual": actual}]
+
+
+def compare_structured_evidence(run_directory: str) -> int:
+    directory = Path(run_directory)
+    report: dict[str, Any] = {"acceptCompared": 0, "rejectCompared": 0, "differences": [],
+                              "diagnostics": [], "cases": []}
+    try:
+        manifest_bytes = _MANIFEST_PATH.read_bytes()
+        if hashlib.sha256(manifest_bytes).hexdigest() != "4b1bcd3445d82852c7f4c3beb5f0e07f39853497e92713b81a063dcdf5350ee9":
+            raise ValueError("comparator manifest hash mismatch")
+        manifest = _strict_wire(manifest_bytes)["fixtures"]
+        expected, python, kotlin = (
+            [_strict_wire(line) for line in (directory / filename).read_bytes().splitlines()]
+            for filename in ("expected.jsonl", "python.jsonl", "kotlin.jsonl")
+        )
+        paths = [entry["path"] for entry in manifest]
+        for rows in (expected, python, kotlin):
+            if [row["fixtureId"] for row in rows] != paths or len(paths) != 32 or len(set(paths)) != 32:
+                raise ValueError("missing, duplicate, or out-of-order evidence rows")
+        for entry, oracle, py, kt in zip(manifest, expected, python, kotlin):
+            path, verdict = entry["path"], entry["expectedResult"]
+            raw = (_FIXTURE_ROOT / path).read_bytes()
+            envelope, wire, meta = _fixture_input(path, raw, verdict)
+            if meta["fixtureSha256"] != entry["sha256"] or len(raw) != entry["byteLength"]:
+                raise ValueError(f"comparator fixture identity mismatch: {path}")
+            required_path = _PATH_REQUIREMENTS.get(Path(path).name.split("-")[0])
+            if verdict == "ACCEPT":
+                rebuilt = meta | {"verdict": "ACCEPT", "record": _wire_expected(wire)}
+                comparisons = (("oracle integrity", rebuilt, oracle), ("expected/python", oracle, py),
+                               ("expected/kotlin", oracle, kt), ("python/kotlin", py, kt))
+                report["acceptCompared"] += 1
+            else:
+                rebuilt = meta | {"verdict": "REJECT", "diagnostic": {"code": verdict, "path": required_path}}
+                comparisons = [("oracle integrity", rebuilt, oracle)]
+                for label, actual in (("python", py), ("kotlin", kt)):
+                    diagnostic = actual["diagnostic"]
+                    if set(diagnostic) != {"code", "path", "detail"} or any(type(x) is not str for x in diagnostic.values()):
+                        raise ValueError(f"invalid {label} diagnostic: {path}")
+                    comparable = actual | {"diagnostic": {"code": diagnostic["code"],
+                                                          "path": diagnostic["path"] if required_path else None}}
+                    comparisons.append((label, rebuilt, comparable))
+                report["diagnostics"].append({"fixtureId": path, "expectedCode": verdict,
+                                              "requiredPath": required_path, "python": py["diagnostic"],
+                                              "kotlin": kt["diagnostic"], "pathsMatch":
+                                              py["diagnostic"]["path"] == kt["diagnostic"]["path"]})
+                report["rejectCompared"] += 1
+            checks = {}
+            for label, left, right in comparisons:
+                differences = [
+                    {"fixtureId": path, "comparison": label} | diff
+                    for diff in _record_differences(left, right)
+                ]
+                checks[label] = not differences
+                report["differences"].extend(differences)
+            report["cases"].append({"fixtureId": path, "expectedResult": verdict, "checks": checks})
+            if path.startswith("fixtures/38-"):
+                for language in ("python", "kotlin"):
+                    if (directory / f"fixture-38-{language}.bin").read_bytes() != envelope:
+                        raise ValueError(f"{language} fixture 38 input bytes differ")
+                report["fixture38"] = {"offset": 188, "endExclusive": 947, "length": len(envelope),
+                                       "sha256": _ENVELOPE_38_SHA, "byteIdentical": True}
+        if (report["acceptCompared"], report["rejectCompared"]) != (17, 15):
+            raise ValueError("comparison distribution mismatch")
+    except (OSError, ValueError, KeyError, TypeError, AssertionError) as error:
+        report["error"] = str(error)
+    report["passed"] = not report["differences"] and "error" not in report
+    with (directory / "comparison.json").open("x", encoding="utf-8") as output:
+        json.dump(report, output, ensure_ascii=False, indent=2, default=str)
+        output.write("\n")
+    return 0 if report["passed"] else 1
+
+
+def _run_structured_probes(case: unittest.TestCase) -> None:
+    def encode(value: Any) -> str:
+        if isinstance(value, Decimal):
+            return str(value)
+        if isinstance(value, dict):
+            return "{" + ",".join(json.dumps(key) + ":" + encode(item) for key, item in value.items()) + "}"
+        if isinstance(value, list):
+            return "[" + ",".join(map(encode, value)) + "]"
+        return json.dumps(value, allow_nan=False)
+
+    def probe(label: str, envelope: dict[str, Any], code: str | None, path: str | None,
+              raw: bytes | None = None) -> None:
+        context = {"expectedRequestId": envelope["requestId"], "expectedImageId": envelope["imageId"], "mode": "FIXTURE"}
+        with case.subTest(label=label):
+            actual = _decode_record(raw if raw is not None else encode(envelope).encode("utf-8"), context)
+            if code is None:
+                case.assertEqual("ACCEPT", actual["verdict"])
+                date = actual["record"]["receipt"]["receiptFields"][1]
+                case.assertEqual(label, date["originalAutomaticValue"])
+                case.assertEqual(label, date["presentationValue"])
+            else:
+                case.assertEqual(code, actual["diagnostic"]["code"])
+                case.assertEqual(path, actual["diagnostic"]["path"])
+
+    date_path = "$.receipt.receiptFields[1]"
+    valid_dates = ("0001-01-01", "9999-12-31", "0004-02-29", "1582-10-10", "2000-02-29")
+    invalid_dates = ("0000-01-01", "0000-02-29", "0001-02-29", "1900-02-29", "2100-02-29",
+                     "2026-02-30", "10000-01-01", "2026-2-03")
+    for date in valid_dates + invalid_dates:
+        env = _mutable_envelope("01-complete-extracted-receipt.json")
+        env["receipt"]["receiptFields"][1].update(originalAutomaticValue=date, presentationValue=date)
+        probe(date, env, None if date in valid_dates else "REJECT_INVALID_DATE", date_path + ".presentationValue")
+    env["receipt"]["receiptFields"][1].update(originalAutomaticValue="0001-01-01", presentationValue="0000-02-29")
+    probe("date relationship first", env, "REJECT_VALUE_RELATIONSHIP", date_path)
+    env = _mutable_envelope("01-complete-extracted-receipt.json")
+    env["schemaVersion"] = "999"
+    probe("duplicate before version", env, "REJECT_DUPLICATE_JSON_KEY", "$",
+          b'{"schemaVersion":"1",' + encode(env).encode("utf-8")[1:])
+    reason = "Reference evidence A12"
+    env = _mutable_envelope("16-source-evidence-insufficient.json")
+    env["sourceGate"]["reasons"] = [reason, reason]
+    probe("duplicate gate reason", env, "REJECT_GATE_STATE", "$.sourceGate.reasons[1]")
+    env["sourceGate"]["reasons"] = [reason]
+    probe("unsafe gate reason", env, "REJECT_UNSAFE_PROVENANCE", "$.sourceGate.reasons[0]")
+    for name, index in (("03-missing-required-store-name.json", 0), ("04-unresolved-purchase-date.json", 1)):
+        env = _mutable_envelope(name)
+        field = env["receipt"]["receiptFields"][index]
+        field["absenceReason"] = reason
+        path = f"$.receipt.receiptFields[{index}]"
+        probe("unsafe absence reason " + name, env, "REJECT_UNSAFE_PROVENANCE", path + ".absenceReason")
+        field["originalAutomaticValue"] = "unexpected"
+        probe("contradiction before privacy " + name, env, "REJECT_CONTRADICTORY_FIELD_STATE", path)
 
 class PresentationV1LocalBoundaryTest(unittest.TestCase):
     """Language-local boundaries intentionally outside the canonical 32 cases."""
@@ -1075,104 +1467,6 @@ class PresentationV1LocalBoundaryTest(unittest.TestCase):
                         expected_image_id=image_id,
                         consumer_mode="FIXTURE",
                     )
-
-
-def _run_fixture(raw_fixture: bytes, *, expected_from_manifest: str) -> str:
-    """Run one wrapper while passing only its nested envelope to production."""
-
-    try:
-        wrapper = decode_strict_json_object(raw_fixture)
-    except ConformanceViolation as violation:
-        # The canonical duplicate-key case cannot become an ordinary wrapper.
-        # A test-only pair tree preserves every key without overwriting or
-        # reserializing, so wrapper metadata can still be checked independently.
-        if violation.code == "REJECT_DUPLICATE_JSON_KEY":
-            _verify_duplicate_fixture_wrapper(raw_fixture, expected_from_manifest)
-        return violation.code
-
-    wrapper = _require_exact_object(
-        wrapper,
-        allowed=_WRAPPER_ALLOWED_MEMBERS,
-        required=_WRAPPER_REQUIRED_MEMBERS,
-        label="fixture wrapper",
-    )
-    fixture_status = _require_string(wrapper["fixtureStatus"], "fixtureStatus")
-    if fixture_status != "DRAFT_NOT_APPROVED — SYNTHETIC_ONLY":
-        raise AssertionError(f"unexpected fixtureStatus: {fixture_status!r}")
-    _require_string(wrapper["scenario"], "scenario")
-    wrapper_expected = _require_string(wrapper["expectedResult"], "expectedResult")
-    if wrapper_expected != expected_from_manifest:
-        raise AssertionError(
-            "fixture expectedResult disagrees with manifest: "
-            f"{wrapper_expected!r} != {expected_from_manifest!r}"
-        )
-
-    envelope = wrapper["envelope"]
-    if not isinstance(envelope, Mapping):
-        raise AssertionError("fixture envelope must be an object")
-    expected_request_id, expected_image_id, mode = _consumer_context(
-        wrapper.get("consumerContext"), envelope
-    )
-
-    try:
-        # Only the nested runtime object crosses the production API boundary.
-        validate_presentation_v1_object(
-            envelope,
-            expected_request_id=expected_request_id,
-            expected_image_id=expected_image_id,
-            consumer_mode=mode,
-        )
-    except ConformanceViolation as violation:
-        return violation.code
-    return "ACCEPT"
-
-
-class _ObjectPairs(tuple[tuple[str, object], ...]):
-    """Duplicate-preserving JSON object used only by the fixture harness."""
-
-
-def _verify_duplicate_fixture_wrapper(raw_fixture: bytes, expected: str) -> None:
-    def reject_constant(token: str) -> None:
-        raise AssertionError(f"duplicate fixture contains nonstandard number {token}")
-
-    decoded = json.loads(
-        raw_fixture.decode("utf-8", errors="strict"),
-        object_pairs_hook=lambda pairs: _ObjectPairs(pairs),
-        parse_constant=reject_constant,
-    )
-    if not isinstance(decoded, _ObjectPairs):
-        raise AssertionError("duplicate fixture wrapper must be an object")
-    keys = [key for key, _ in decoded]
-    if len(keys) != len(set(keys)):
-        raise AssertionError("duplicate fixture must not duplicate wrapper members")
-    if set(keys) - _WRAPPER_ALLOWED_MEMBERS:
-        raise AssertionError("duplicate fixture wrapper has unknown members")
-    if _WRAPPER_REQUIRED_MEMBERS - set(keys):
-        raise AssertionError("duplicate fixture wrapper is missing required members")
-    values = dict(decoded)
-    wrapper_expected = _require_string(values["expectedResult"], "expectedResult")
-    if wrapper_expected != expected:
-        raise AssertionError("duplicate fixture expectedResult disagrees with manifest")
-    fixture_status = _require_string(values["fixtureStatus"], "fixtureStatus")
-    if fixture_status != "DRAFT_NOT_APPROVED — SYNTHETIC_ONLY":
-        raise AssertionError(f"unexpected fixtureStatus: {fixture_status!r}")
-    _require_string(values["scenario"], "scenario")
-    envelope = values["envelope"]
-    if not isinstance(envelope, _ObjectPairs):
-        raise AssertionError("duplicate fixture envelope must be an object")
-    if not _contains_duplicate_object_member(envelope):
-        raise AssertionError("duplicate fixture contains no preserved duplicate member")
-
-
-def _contains_duplicate_object_member(value: object) -> bool:
-    if isinstance(value, _ObjectPairs):
-        keys = [key for key, _ in value]
-        return len(keys) != len(set(keys)) or any(
-            _contains_duplicate_object_member(member) for _, member in value
-        )
-    if isinstance(value, list):
-        return any(_contains_duplicate_object_member(member) for member in value)
-    return False
 
 
 def _mutable_envelope(filename: str) -> dict[str, Any]:
