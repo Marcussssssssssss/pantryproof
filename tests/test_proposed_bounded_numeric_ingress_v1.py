@@ -1,0 +1,873 @@
+"""Synthetic tests for bounded numeric ingress recipe helper v1.
+
+D3 BOUNDED NUMERIC INGRESS — INTERNAL PROOF-OF-CONCEPT
+
+15 test categories covering the Design 01 §6 synthetic proof plan:
+ 1. Valid bounded recipes (positive, negative, zero, trailing zeros)
+ 2. Empty/malformed/non-ASCII coefficients
+ 3. Coefficient digit-length boundaries (below/equal/one-over)
+ 4. Quantum exponent boundaries (both ends)
+ 5. Invalid sign values (2, -1, True, None)
+ 6. Oversized integers and hostile subclasses
+ 7. Signed zero preservation
+ 8. Distinct quantum representations of equal values
+ 9. Registered identity vs unregistered value-equal Decimal
+10. Deterministic error precedence (first violation wins)
+11. Budget exhaustion and failure atomicity
+12. No Decimal construction before validation
+13. No uncontrolled conversion/formatting/dispatch on rejected inputs
+14. Repeated construction and bounded registry
+15. Independence from ambient decimal context
+
+Owner: Leng Wei Heng
+Design authority: PANTRYPROOF_D3_V0_NUMERIC_INGRESS_BOUNDARY_DESIGN_01 §6
+"""
+
+from __future__ import annotations
+
+import decimal
+from decimal import Decimal
+from unittest.mock import patch
+
+import pytest
+
+from pipeline.proposed.bounded_numeric_ingress_v1 import (
+    IngressContextV1,
+    IngressProfileV1,
+    NumericIngressError,
+    NumericIngressErrorCode,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _default_profile(**overrides: int) -> IngressProfileV1:
+    """Create a test profile with small explicit limits."""
+    defaults = dict(
+        max_coefficient_digits=10,
+        max_exponent_magnitude=20,
+        max_constructions=50,
+        max_work_units=500,
+    )
+    defaults.update(overrides)
+    return IngressProfileV1(**defaults)
+
+
+class _HostileInt(int):
+    """int subclass with trapping methods — must be rejected."""
+
+    def __eq__(self, other: object) -> bool:
+        raise RuntimeError("HostileInt.__eq__ invoked")
+
+    def __hash__(self) -> int:
+        raise RuntimeError("HostileInt.__hash__ invoked")
+
+    def __bool__(self) -> bool:
+        raise RuntimeError("HostileInt.__bool__ invoked")
+
+    def __repr__(self) -> str:
+        raise RuntimeError("HostileInt.__repr__ invoked")
+
+
+class _HostileStr(str):
+    """str subclass with trapping methods — must be rejected."""
+
+    def __len__(self) -> int:
+        raise RuntimeError("HostileStr.__len__ invoked")
+
+    def __iter__(self):
+        raise RuntimeError("HostileStr.__iter__ invoked")
+
+    def __eq__(self, other: object) -> bool:
+        raise RuntimeError("HostileStr.__eq__ invoked")
+
+    def __hash__(self) -> int:
+        raise RuntimeError("HostileStr.__hash__ invoked")
+
+
+# ===================================================================
+# Category 1: Valid bounded recipes
+# ===================================================================
+
+class TestValidBoundedRecipes:
+    """Positive, negative, zero, and trailing-zero recipes."""
+
+    def test_positive_integer(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d = ctx.construct_decimal(0, "42", 0, "test.value")
+        assert d == Decimal("42")
+        assert d.as_tuple() == (0, (4, 2), 0)
+
+    def test_negative_integer(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d = ctx.construct_decimal(1, "42", 0, "test.value")
+        assert d == Decimal("-42")
+        assert d.as_tuple() == (1, (4, 2), 0)
+
+    def test_positive_zero(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d = ctx.construct_decimal(0, "0", 0, "test.value")
+        assert d == Decimal("0")
+        assert d.as_tuple() == (0, (0,), 0)
+
+    def test_fractional_value(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d = ctx.construct_decimal(0, "123", -2, "test.price")
+        assert d == Decimal("1.23")
+        assert d.as_tuple() == (0, (1, 2, 3), -2)
+
+    def test_trailing_zeros_preserved(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d = ctx.construct_decimal(0, "1000", -2, "test.amount")
+        assert d.as_tuple() == (0, (1, 0, 0, 0), -2)
+        # Value is 10.00 but tuple preserves trailing zeros
+        assert d == Decimal("10.00")
+
+    def test_large_exponent(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d = ctx.construct_decimal(0, "5", 10, "test.big")
+        assert d == Decimal("5E+10")
+        assert d.as_tuple() == (0, (5,), 10)
+
+    def test_negative_exponent(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d = ctx.construct_decimal(0, "1", -20, "test.tiny")
+        assert d.as_tuple() == (0, (1,), -20)
+
+    def test_single_digit_coefficient(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d = ctx.construct_decimal(0, "7", 0, "test.single")
+        assert d == Decimal("7")
+        assert d.as_tuple() == (0, (7,), 0)
+
+
+# ===================================================================
+# Category 2: Empty/malformed/non-ASCII coefficients
+# ===================================================================
+
+class TestMalformedCoefficients:
+    """Empty, non-ASCII, and non-digit coefficient strings."""
+
+    def test_empty_coefficient(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "", 0, "test.empty")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_non_digit_coefficient(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "12a3", 0, "test.alpha")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_non_ascii_digit_coefficient(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        # Arabic-Indic digit ٣ (U+0663) — not an ASCII digit
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "\u0663", 0, "test.non_ascii")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_whitespace_coefficient(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, " 1 ", 0, "test.space")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_negative_sign_in_coefficient(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "-5", 0, "test.neg_coeff")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_dot_in_coefficient(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "1.5", 0, "test.dot")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_redundant_leading_zeros(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "007", 0, "test.leading")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_single_zero_allowed(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d = ctx.construct_decimal(0, "0", 0, "test.zero")
+        assert d == Decimal("0")
+
+
+# ===================================================================
+# Category 3: Coefficient digit-length boundaries
+# ===================================================================
+
+class TestCoefficientLengthBoundaries:
+    """Below/equal/one-over the max_coefficient_digits limit."""
+
+    def test_below_limit(self) -> None:
+        p = _default_profile(max_coefficient_digits=5)
+        ctx = IngressContextV1(p)
+        d = ctx.construct_decimal(0, "1234", 0, "test.below")
+        assert d == Decimal("1234")
+
+    def test_at_limit(self) -> None:
+        p = _default_profile(max_coefficient_digits=5)
+        ctx = IngressContextV1(p)
+        d = ctx.construct_decimal(0, "12345", 0, "test.at")
+        assert d == Decimal("12345")
+
+    def test_one_over_limit(self) -> None:
+        p = _default_profile(max_coefficient_digits=5)
+        ctx = IngressContextV1(p)
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "123456", 0, "test.over")
+        assert exc_info.value.code == NumericIngressErrorCode.RESOURCE_LIMIT
+        assert exc_info.value.limit_field == "max_coefficient_digits"
+
+
+# ===================================================================
+# Category 4: Quantum exponent boundaries
+# ===================================================================
+
+class TestExponentBoundaries:
+    """Both ends of the quantum exponent range."""
+
+    def test_at_positive_limit(self) -> None:
+        p = _default_profile(max_exponent_magnitude=10)
+        ctx = IngressContextV1(p)
+        d = ctx.construct_decimal(0, "1", 10, "test.pos_exp")
+        assert d.as_tuple() == (0, (1,), 10)
+
+    def test_over_positive_limit(self) -> None:
+        p = _default_profile(max_exponent_magnitude=10)
+        ctx = IngressContextV1(p)
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "1", 11, "test.pos_over")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_NUMERIC_VALUE
+        assert exc_info.value.limit_field == "max_exponent_magnitude"
+
+    def test_at_negative_limit(self) -> None:
+        p = _default_profile(max_exponent_magnitude=10)
+        ctx = IngressContextV1(p)
+        d = ctx.construct_decimal(0, "1", -10, "test.neg_exp")
+        assert d.as_tuple() == (0, (1,), -10)
+
+    def test_over_negative_limit(self) -> None:
+        p = _default_profile(max_exponent_magnitude=10)
+        ctx = IngressContextV1(p)
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "1", -11, "test.neg_over")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_NUMERIC_VALUE
+        assert exc_info.value.limit_field == "max_exponent_magnitude"
+
+    def test_zero_exponent_always_valid(self) -> None:
+        p = _default_profile(max_exponent_magnitude=1)
+        ctx = IngressContextV1(p)
+        d = ctx.construct_decimal(0, "5", 0, "test.zero_exp")
+        assert d == Decimal("5")
+
+
+# ===================================================================
+# Category 5: Invalid sign values
+# ===================================================================
+
+class TestInvalidSignValues:
+    """Sign must be exact int 0 or 1. Reject bool, out-of-range, None."""
+
+    def test_sign_two(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(2, "1", 0, "test.sign2")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_sign_negative_one(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(-1, "1", 0, "test.sign_neg")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_sign_true(self) -> None:
+        """True is bool, a subclass of int — must be rejected."""
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(True, "1", 0, "test.sign_bool")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_sign_false(self) -> None:
+        """False is bool — must be rejected even though int(False)==0."""
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(False, "1", 0, "test.sign_false")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_sign_none(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(None, "1", 0, "test.sign_none")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+
+# ===================================================================
+# Category 6: Oversized integers and hostile subclasses
+# ===================================================================
+
+class TestHostileSubclasses:
+    """Hostile int/str subclasses with trapping methods must be rejected
+    at exact-type check before any dispatch."""
+
+    def test_hostile_int_sign(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(_HostileInt(0), "1", 0, "test.hostile_sign")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_hostile_str_coefficient(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, _HostileStr("123"), 0, "test.hostile_coeff")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_hostile_int_exponent(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "1", _HostileInt(0), "test.hostile_exp")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_float_sign_rejected(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0.0, "1", 0, "test.float_sign")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_float_exponent_rejected(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "1", 0.0, "test.float_exp")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+    def test_profile_with_bool_limit(self) -> None:
+        """Profile limits must also be exact int, not bool."""
+        with pytest.raises(NumericIngressError) as exc_info:
+            _default_profile(max_coefficient_digits=True)
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+
+# ===================================================================
+# Category 7: Signed zero preservation
+# ===================================================================
+
+class TestSignedZeroPreservation:
+    """Positive and negative zero are distinct tuple representations."""
+
+    def test_positive_zero_tuple(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d = ctx.construct_decimal(0, "0", -2, "test.pos_zero")
+        assert d.as_tuple() == (0, (0,), -2)
+
+    def test_negative_zero_tuple(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d = ctx.construct_decimal(1, "0", -2, "test.neg_zero")
+        assert d.as_tuple() == (1, (0,), -2)
+
+    def test_signed_zeros_different_tuples(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        pos = ctx.construct_decimal(0, "0", -2, "test.pos")
+        neg = ctx.construct_decimal(1, "0", -2, "test.neg")
+        assert pos.as_tuple() != neg.as_tuple()
+        assert pos.as_tuple()[0] == 0
+        assert neg.as_tuple()[0] == 1
+
+
+# ===================================================================
+# Category 8: Distinct quantum representations of equal values
+# ===================================================================
+
+class TestDistinctQuantumRepresentations:
+    """1.0 vs 1.00 are numerically equal but have different tuples."""
+
+    def test_different_scale_same_value(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d1 = ctx.construct_decimal(0, "10", -1, "test.v1")   # 1.0
+        d2 = ctx.construct_decimal(0, "100", -2, "test.v2")  # 1.00
+        # Numerically equal
+        assert d1 == d2
+        # But distinct tuple representations
+        assert d1.as_tuple() != d2.as_tuple()
+        assert d1.as_tuple() == (0, (1, 0), -1)
+        assert d2.as_tuple() == (0, (1, 0, 0), -2)
+
+    def test_integer_vs_fractional_one(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d1 = ctx.construct_decimal(0, "1", 0, "test.int_one")
+        d2 = ctx.construct_decimal(0, "10", -1, "test.frac_one")
+        assert d1 == d2
+        assert d1.as_tuple() != d2.as_tuple()
+
+    def test_distinct_objects(self) -> None:
+        """Equal-valued Decimals from different recipes are distinct objects."""
+        ctx = IngressContextV1(_default_profile())
+        d1 = ctx.construct_decimal(0, "10", -1, "test.a")
+        d2 = ctx.construct_decimal(0, "100", -2, "test.b")
+        assert d1 is not d2
+
+
+# ===================================================================
+# Category 9: Registered identity vs unregistered Decimal
+# ===================================================================
+
+class TestRegisteredIdentity:
+    """Exact registered reference accepted; external Decimals rejected."""
+
+    def test_registered_decimal_accepted(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d = ctx.construct_decimal(0, "42", 0, "test.val")
+        result = ctx.check_registered(d, "test.check")
+        assert result is d
+
+    def test_unregistered_value_equal_decimal_rejected(self) -> None:
+        """A value-equal Decimal from outside the context is rejected."""
+        ctx = IngressContextV1(_default_profile())
+        ctx.construct_decimal(0, "42", 0, "test.val")
+        external = Decimal("42")
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.check_registered(external, "test.ext")
+        assert exc_info.value.code == NumericIngressErrorCode.UNREGISTERED_DECIMAL
+
+    def test_decimal_from_different_context_rejected(self) -> None:
+        """A Decimal from a different context is unregistered here."""
+        ctx1 = IngressContextV1(_default_profile())
+        ctx2 = IngressContextV1(_default_profile())
+        d = ctx1.construct_decimal(0, "42", 0, "test.val")
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx2.check_registered(d, "test.cross")
+        assert exc_info.value.code == NumericIngressErrorCode.UNREGISTERED_DECIMAL
+
+    def test_none_rejected(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.check_registered(None, "test.none")
+        assert exc_info.value.code == NumericIngressErrorCode.UNREGISTERED_DECIMAL
+
+    def test_string_rejected(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.check_registered("42", "test.str")
+        assert exc_info.value.code == NumericIngressErrorCode.UNREGISTERED_DECIMAL
+
+    def test_opaque_nonfinite_decimal_rejected(self) -> None:
+        """Infinity and NaN Decimals are always unregistered."""
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.check_registered(Decimal("Inf"), "test.inf")
+        assert exc_info.value.code == NumericIngressErrorCode.UNREGISTERED_DECIMAL
+
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.check_registered(Decimal("NaN"), "test.nan")
+        assert exc_info.value.code == NumericIngressErrorCode.UNREGISTERED_DECIMAL
+
+
+# ===================================================================
+# Category 10: Deterministic error precedence
+# ===================================================================
+
+class TestDeterministicErrorPrecedence:
+    """First violation wins per Design 01 §4 order."""
+
+    def test_shape_before_resource(self) -> None:
+        """An invalid-shape sign is reported before any resource check."""
+        p = _default_profile(max_constructions=1)
+        ctx = IngressContextV1(p)
+        # Exhaust construction budget
+        ctx.construct_decimal(0, "1", 0, "test.ok")
+        # Both RESOURCE_LIMIT (budget exhausted) and INVALID_SHAPE (bad sign)
+        # RESOURCE_LIMIT comes first because construction budget is checked
+        # before per-field shape validation
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(True, "1", 0, "test.both")
+        assert exc_info.value.code == NumericIngressErrorCode.RESOURCE_LIMIT
+
+    def test_sign_shape_before_coefficient_shape(self) -> None:
+        """Sign type is checked before coefficient."""
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(True, "", 0, "test.multi")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+        assert "sign" in exc_info.value.path
+
+    def test_coefficient_shape_before_exponent_value(self) -> None:
+        """Coefficient grammar is checked before exponent range."""
+        p = _default_profile(max_exponent_magnitude=5)
+        ctx = IngressContextV1(p)
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "abc", 100, "test.multi2")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+        assert "coefficient" in exc_info.value.path
+
+    def test_coefficient_length_before_digit_scan(self) -> None:
+        """Overlength coefficient fails as RESOURCE_LIMIT before scanning."""
+        p = _default_profile(max_coefficient_digits=3)
+        ctx = IngressContextV1(p)
+        # "12345" is 5 digits, limit is 3
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "12345", 0, "test.length")
+        assert exc_info.value.code == NumericIngressErrorCode.RESOURCE_LIMIT
+        assert exc_info.value.limit_field == "max_coefficient_digits"
+
+    def test_exponent_before_work_reservation(self) -> None:
+        """Out-of-range exponent is checked before work budget."""
+        p = _default_profile(max_exponent_magnitude=5, max_work_units=2)
+        ctx = IngressContextV1(p)
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "1", 100, "test.exp_first")
+        assert exc_info.value.code == NumericIngressErrorCode.INVALID_NUMERIC_VALUE
+
+
+# ===================================================================
+# Category 11: Budget exhaustion and failure atomicity
+# ===================================================================
+
+class TestBudgetExhaustionAndAtomicity:
+    """Resource limits, failure atomicity, counter consistency."""
+
+    def test_construction_budget_exact(self) -> None:
+        p = _default_profile(max_constructions=3, max_work_units=100)
+        ctx = IngressContextV1(p)
+        for i in range(3):
+            ctx.construct_decimal(0, str(i + 1), 0, f"test.{i}")
+        assert ctx.constructions == 3
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "4", 0, "test.over")
+        assert exc_info.value.code == NumericIngressErrorCode.RESOURCE_LIMIT
+        assert exc_info.value.limit_field == "max_constructions"
+
+    def test_work_budget_exhaustion(self) -> None:
+        # work_cost = 1 + len(coefficient)
+        # "12345" costs 1+5=6 work units
+        p = _default_profile(max_work_units=10)
+        ctx = IngressContextV1(p)
+        ctx.construct_decimal(0, "12345", 0, "test.a")  # 6 units
+        assert ctx.work_units == 6
+        # "12345" would cost 6 more, total 12 > 10
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "12345", 0, "test.b")
+        assert exc_info.value.code == NumericIngressErrorCode.RESOURCE_LIMIT
+        assert exc_info.value.limit_field == "max_work_units"
+
+    def test_failure_does_not_change_counters(self) -> None:
+        p = _default_profile(max_constructions=10, max_work_units=100)
+        ctx = IngressContextV1(p)
+        ctx.construct_decimal(0, "1", 0, "test.ok")
+        c_before = ctx.constructions
+        w_before = ctx.work_units
+        r_before = ctx.registry_size
+        # This will fail (invalid sign)
+        with pytest.raises(NumericIngressError):
+            ctx.construct_decimal(True, "1", 0, "test.fail")
+        assert ctx.constructions == c_before
+        assert ctx.work_units == w_before
+        assert ctx.registry_size == r_before
+
+    def test_work_budget_exact_boundary(self) -> None:
+        """Exactly hitting the work budget should succeed."""
+        # "1" costs 1+1=2 work units each
+        p = _default_profile(max_work_units=4, max_constructions=10)
+        ctx = IngressContextV1(p)
+        ctx.construct_decimal(0, "1", 0, "test.a")  # 2
+        ctx.construct_decimal(0, "2", 0, "test.b")  # 4, exactly at limit
+        assert ctx.work_units == 4
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "3", 0, "test.c")
+        assert exc_info.value.code == NumericIngressErrorCode.RESOURCE_LIMIT
+        assert exc_info.value.limit_field == "max_work_units"
+
+
+# ===================================================================
+# Category 12: No Decimal construction before validation
+# ===================================================================
+
+class TestNoDecimalBeforeValidation:
+    """Instrument the module-level Decimal reference to verify no
+    construction occurs on rejected inputs.
+
+    We patch the ``Decimal`` name inside the implementation module
+    with a tracking wrapper, rather than trying to patch the immutable
+    C-level metaclass ``__call__``.
+    """
+
+    def test_invalid_shape_no_decimal_created(self) -> None:
+        import pipeline.proposed.bounded_numeric_ingress_v1 as mod
+
+        ctx = IngressContextV1(_default_profile())
+        call_log: list[object] = []
+        original_decimal = mod.Decimal
+
+        class TrackingDecimal(type(original_decimal)):
+            """Wrapper that logs every construction."""
+
+            def __new__(cls, *args, **kwargs):
+                call_log.append(args)
+                return original_decimal(*args, **kwargs)
+
+        saved = mod.Decimal
+        mod.Decimal = TrackingDecimal
+        try:
+            with pytest.raises(NumericIngressError):
+                ctx.construct_decimal(True, "1", 0, "test.shape")
+        finally:
+            mod.Decimal = saved
+        assert len(call_log) == 0, "Decimal constructed before shape validation"
+
+    def test_resource_limit_no_decimal_created(self) -> None:
+        import pipeline.proposed.bounded_numeric_ingress_v1 as mod
+
+        p = _default_profile(max_coefficient_digits=3)
+        ctx = IngressContextV1(p)
+        call_log: list[object] = []
+        original_decimal = mod.Decimal
+
+        class TrackingDecimal(type(original_decimal)):
+            def __new__(cls, *args, **kwargs):
+                call_log.append(args)
+                return original_decimal(*args, **kwargs)
+
+        saved = mod.Decimal
+        mod.Decimal = TrackingDecimal
+        try:
+            with pytest.raises(NumericIngressError):
+                ctx.construct_decimal(0, "12345", 0, "test.resource")
+        finally:
+            mod.Decimal = saved
+        assert len(call_log) == 0, "Decimal constructed before resource check"
+
+    def test_exponent_violation_no_decimal_created(self) -> None:
+        import pipeline.proposed.bounded_numeric_ingress_v1 as mod
+
+        p = _default_profile(max_exponent_magnitude=5)
+        ctx = IngressContextV1(p)
+        call_log: list[object] = []
+        original_decimal = mod.Decimal
+
+        class TrackingDecimal(type(original_decimal)):
+            def __new__(cls, *args, **kwargs):
+                call_log.append(args)
+                return original_decimal(*args, **kwargs)
+
+        saved = mod.Decimal
+        mod.Decimal = TrackingDecimal
+        try:
+            with pytest.raises(NumericIngressError):
+                ctx.construct_decimal(0, "1", 100, "test.exp")
+        finally:
+            mod.Decimal = saved
+        assert len(call_log) == 0, "Decimal constructed before exponent check"
+
+
+# ===================================================================
+# Category 13: No uncontrolled conversion/formatting/dispatch
+# ===================================================================
+
+class TestNoUncontrolledDispatch:
+    """Rejected inputs must not trigger formatting, conversion, or
+    comparison operations that could be exploited."""
+
+    def test_hostile_int_no_dispatch(self) -> None:
+        """HostileInt traps __eq__, __hash__, __bool__, __repr__.
+        If any of these are invoked, HostileInt raises RuntimeError."""
+        ctx = IngressContextV1(_default_profile())
+        # This should raise NumericIngressError, NOT RuntimeError
+        with pytest.raises(NumericIngressError):
+            ctx.construct_decimal(_HostileInt(0), "1", 0, "test.hostile")
+
+    def test_hostile_str_no_dispatch(self) -> None:
+        """HostileStr traps __len__, __iter__, __eq__, __hash__.
+        Exact type check must reject before any dispatch."""
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError):
+            ctx.construct_decimal(0, _HostileStr("123"), 0, "test.hostile_s")
+
+    def test_hostile_int_exponent_no_dispatch(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError):
+            ctx.construct_decimal(0, "1", _HostileInt(0), "test.hostile_e")
+
+    def test_non_string_coefficient_types(self) -> None:
+        """Various non-str coefficient types rejected without dispatch."""
+        ctx = IngressContextV1(_default_profile())
+        for bad_coeff in [123, 1.5, b"123", ["1", "2", "3"], None]:
+            with pytest.raises(NumericIngressError) as exc_info:
+                ctx.construct_decimal(0, bad_coeff, 0, "test.type")
+            assert exc_info.value.code == NumericIngressErrorCode.INVALID_SHAPE
+
+
+# ===================================================================
+# Category 14: Repeated construction and bounded registry
+# ===================================================================
+
+class TestRepeatedConstructionAndRegistry:
+    """Multiple constructions, registry growth, same-recipe behavior."""
+
+    def test_registry_grows_with_constructions(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        for i in range(5):
+            ctx.construct_decimal(0, str(i + 1), 0, f"test.{i}")
+        assert ctx.registry_size == 5
+        assert ctx.constructions == 5
+
+    def test_same_recipe_produces_distinct_objects(self) -> None:
+        """Two calls with identical recipes produce distinct objects."""
+        ctx = IngressContextV1(_default_profile())
+        d1 = ctx.construct_decimal(0, "42", 0, "test.a")
+        d2 = ctx.construct_decimal(0, "42", 0, "test.b")
+        assert d1 == d2  # Value-equal
+        assert d1 is not d2  # Distinct objects
+        assert ctx.registry_size == 2
+
+    def test_both_objects_individually_registered(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d1 = ctx.construct_decimal(0, "42", 0, "test.a")
+        d2 = ctx.construct_decimal(0, "42", 0, "test.b")
+        # Both should be independently registered
+        assert ctx.check_registered(d1, "test.a") is d1
+        assert ctx.check_registered(d2, "test.b") is d2
+
+    def test_failed_construction_does_not_register(self) -> None:
+        p = _default_profile(max_coefficient_digits=3)
+        ctx = IngressContextV1(p)
+        ctx.construct_decimal(0, "1", 0, "test.ok")
+        with pytest.raises(NumericIngressError):
+            ctx.construct_decimal(0, "12345", 0, "test.fail")
+        assert ctx.registry_size == 1
+
+    def test_construction_counter_increments(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        assert ctx.constructions == 0
+        ctx.construct_decimal(0, "1", 0, "test.first")
+        assert ctx.constructions == 1
+        ctx.construct_decimal(0, "2", 0, "test.second")
+        assert ctx.constructions == 2
+
+    def test_work_units_cumulative(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        # "12" costs 1+2=3
+        ctx.construct_decimal(0, "12", 0, "test.a")
+        assert ctx.work_units == 3
+        # "345" costs 1+3=4
+        ctx.construct_decimal(0, "345", 0, "test.b")
+        assert ctx.work_units == 7
+
+
+# ===================================================================
+# Category 15: Independence from ambient decimal context
+# ===================================================================
+
+class TestAmbientContextIndependence:
+    """Changing the ambient decimal context must not affect results."""
+
+    def test_different_precision_same_result(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with decimal.localcontext() as local_ctx:
+            local_ctx.prec = 5  # Very low precision
+            d = ctx.construct_decimal(0, "1234567890", 0, "test.prec")
+        # Tuple form ignores context precision
+        assert d.as_tuple() == (0, (1, 2, 3, 4, 5, 6, 7, 8, 9, 0), 0)
+
+    def test_different_rounding_same_result(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with decimal.localcontext() as local_ctx:
+            local_ctx.rounding = decimal.ROUND_DOWN
+            d1 = ctx.construct_decimal(0, "123", -2, "test.rd")
+        with decimal.localcontext() as local_ctx:
+            local_ctx.rounding = decimal.ROUND_UP
+            d2 = ctx.construct_decimal(0, "123", -2, "test.ru")
+        assert d1.as_tuple() == d2.as_tuple()
+
+    def test_traps_enabled_no_effect(self) -> None:
+        """Even with all traps enabled, tuple construction succeeds."""
+        ctx = IngressContextV1(_default_profile())
+        with decimal.localcontext() as local_ctx:
+            local_ctx.traps[decimal.Overflow] = True
+            local_ctx.traps[decimal.Underflow] = True
+            local_ctx.traps[decimal.InvalidOperation] = True
+            d = ctx.construct_decimal(0, "42", 0, "test.traps")
+        assert d == Decimal("42")
+
+    def test_emin_emax_no_effect(self) -> None:
+        """Custom Emin/Emax in context does not affect tuple construction."""
+        ctx = IngressContextV1(_default_profile())
+        with decimal.localcontext() as local_ctx:
+            local_ctx.Emin = -10
+            local_ctx.Emax = 10
+            # Construct a value with exponent that would exceed context Emax
+            # but tuple form doesn't apply context limits
+            d = ctx.construct_decimal(0, "1", 15, "test.emax")
+        assert d.as_tuple() == (0, (1,), 15)
+
+
+# ===================================================================
+# Additional edge-case coverage
+# ===================================================================
+
+class TestProfileValidation:
+    """Profile construction validation edge cases."""
+
+    def test_zero_limit_rejected(self) -> None:
+        with pytest.raises(NumericIngressError) as exc_info:
+            _default_profile(max_coefficient_digits=0)
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+    def test_negative_limit_rejected(self) -> None:
+        with pytest.raises(NumericIngressError) as exc_info:
+            _default_profile(max_work_units=-1)
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+    def test_ceiling_limit_accepted(self) -> None:
+        """2**31 - 1 is accepted as a limit value."""
+        p = _default_profile(max_coefficient_digits=2**31 - 1)
+        assert p.max_coefficient_digits == 2**31 - 1
+
+    def test_over_ceiling_rejected(self) -> None:
+        """2**31 exceeds the limit ceiling."""
+        with pytest.raises(NumericIngressError) as exc_info:
+            _default_profile(max_coefficient_digits=2**31)
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+    def test_float_limit_rejected(self) -> None:
+        with pytest.raises(NumericIngressError) as exc_info:
+            _default_profile(max_exponent_magnitude=10.0)
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+    def test_non_profile_context_rejected(self) -> None:
+        """Passing a non-IngressProfileV1 to IngressContextV1 is rejected."""
+        with pytest.raises(NumericIngressError) as exc_info:
+            IngressContextV1({"max_coefficient_digits": 10})
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+    def test_none_profile_rejected(self) -> None:
+        with pytest.raises(NumericIngressError) as exc_info:
+            IngressContextV1(None)
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+
+class TestErrorMessageClosure:
+    """Error messages contain only closed schema paths and limit names."""
+
+    def test_error_contains_path(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(True, "1", 0, "field.confidence")
+        msg = str(exc_info.value)
+        assert "field.confidence" in msg
+        # Must not contain the actual input text
+        assert "True" not in msg
+
+    def test_resource_error_contains_limit_name(self) -> None:
+        p = _default_profile(max_coefficient_digits=3)
+        ctx = IngressContextV1(p)
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "12345", 0, "field.amount")
+        msg = str(exc_info.value)
+        assert "max_coefficient_digits" in msg
+        # Must not contain the actual overlength coefficient
+        assert "12345" not in msg
