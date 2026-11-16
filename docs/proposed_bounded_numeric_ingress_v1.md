@@ -1,9 +1,9 @@
 # Bounded Numeric Ingress Recipe Helper V1
 
-**Classification:** D3 BOUNDED NUMERIC INGRESS — INTERNAL PROOF-OF-CONCEPT  
-**Owner:** Leng Wei Heng  
-**Design authority:** PANTRYPROOF_D3_V0_NUMERIC_INGRESS_BOUNDARY_DESIGN_01 §4–§6  
-**Status:** Standalone proof-of-concept, not operationally wired  
+- **Classification:** D3 BOUNDED NUMERIC INGRESS — INTERNAL PROOF-OF-CONCEPT
+- **Owner:** Leng Wei Heng
+- **Design authority:** PANTRYPROOF_D3_V0_NUMERIC_INGRESS_BOUNDARY_DESIGN_01 §4–§6
+- **Status:** Standalone proof-of-concept, not operationally wired
 
 ## 1. Scope
 
