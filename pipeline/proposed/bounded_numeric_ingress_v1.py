@@ -23,7 +23,6 @@ Design authority: PANTRYPROOF_D3_V0_NUMERIC_INGRESS_BOUNDARY_DESIGN_01 §4
 from __future__ import annotations
 
 import enum
-import re
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
@@ -49,6 +48,42 @@ class NumericIngressErrorCode(enum.Enum):
     CONSTRUCTION_ERROR = "CONSTRUCTION_ERROR"
 
 
+# ---------------------------------------------------------------------------
+# Closed diagnostics for this standalone synthetic proof.
+# Membership establishes a local diagnostic role, not source authority.
+# ---------------------------------------------------------------------------
+
+DIAGNOSTIC_ROLES = ("field", "field.amount", "field.confidence")
+_LIMIT_FIELDS = (
+    "max_coefficient_digits",
+    "max_exponent_magnitude",
+    "max_constructions",
+    "max_work_units",
+)
+_DIAGNOSTIC_PATHS = frozenset(
+    ("path", "profile")
+    + tuple("profile." + name for name in _LIMIT_FIELDS)
+    + DIAGNOSTIC_ROLES
+    + tuple(
+        role + "." + child
+        for role in DIAGNOSTIC_ROLES
+        for child in ("sign", "coefficient", "quantum_exponent")
+    )
+)
+_DIAGNOSTIC_MAX_LENGTH = max(map(len, _DIAGNOSTIC_PATHS))
+
+
+def _safe_message_token(value: object) -> str:
+    """Select a declared path or the fixed fallback without user dispatch."""
+    if (
+        type(value) is str
+        and len(value) <= _DIAGNOSTIC_MAX_LENGTH
+        and value in _DIAGNOSTIC_PATHS
+    ):
+        return value
+    return "path"
+
+
 class NumericIngressError(ValueError):
     """Rejection from the bounded numeric ingress context.
 
@@ -57,11 +92,11 @@ class NumericIngressError(ValueError):
     code : NumericIngressErrorCode
         Typed category for the rejection.
     path : str
-        Closed schema path identifying the rejected operand role.
+        Declared local diagnostic path, or the fixed fallback ``path``.
     limit_field : str or None
-        The name of the limit that was exceeded, if applicable.
+        Declared limit-field name, or None for absent or unknown names.
 
-    No input text is reproduced in the error message.
+    Only members of the declared diagnostic vocabulary enter the message.
     """
 
     def __init__(
@@ -70,12 +105,15 @@ class NumericIngressError(ValueError):
         path: str,
         limit_field: Optional[str] = None,
     ) -> None:
+        if type(code) is not NumericIngressErrorCode:
+            raise TypeError("code must be a NumericIngressErrorCode")
         self.code = code
-        self.path = path
-        self.limit_field = limit_field
-        parts = [code.value, path]
-        if limit_field is not None:
-            parts.append(limit_field)
+        self.path = _safe_message_token(path)
+        parts = [code.value, self.path]
+        self.limit_field = None
+        if type(limit_field) is str and limit_field in _LIMIT_FIELDS:
+            self.limit_field = limit_field
+            parts.append(self.limit_field)
         super().__init__(": ".join(parts))
 
 
@@ -86,29 +124,13 @@ class NumericIngressError(ValueError):
 _LIMIT_CEILING = (2**31) - 1
 
 # ---------------------------------------------------------------------------
-# Path closure — Design 01 §4: "closed schema paths … without reproducing
-# input text".  A valid schema path is a nonempty dot-separated sequence of
-# identifiers drawn from [A-Za-z0-9._-], bounded in length, free of control
-# characters, newlines, and any character that could carry receipt text.
+# Context admission accepts only the declared operand roots. Children and
+# profile paths are generated internally and are error diagnostics only.
 # ---------------------------------------------------------------------------
 
-_PATH_MAX_LEN: int = 256
-_PATH_PATTERN: re.Pattern[str] = re.compile(r"^[A-Za-z0-9._\-]{1,256}\Z")
-
-
 def _validate_path(path: object) -> str:
-    """Return *path* if it is a safe closed schema path, else raise.
-
-    Accepts only an exact ``str`` matching ``_PATH_PATTERN``.  Raises
-    ``NumericIngressError(PROFILE_INVALID, "path")`` for any violation
-    without reproducing the supplied value in the message.
-    """
-    if type(path) is not str:
-        raise NumericIngressError(
-            NumericIngressErrorCode.PROFILE_INVALID,
-            "path",
-        )
-    if not _PATH_PATTERN.match(path):
+    """Require an exact string naming one declared synthetic operand role."""
+    if type(path) is not str or path not in DIAGNOSTIC_ROLES:
         raise NumericIngressError(
             NumericIngressErrorCode.PROFILE_INVALID,
             "path",
@@ -192,7 +214,31 @@ class IngressContextV1:
                 NumericIngressErrorCode.PROFILE_INVALID,
                 "profile",
             )
-        self._profile = profile
+        # Re-validate and snapshot each limit field independently.
+        # Reading the values now — before returning — means post-creation
+        # mutations of the caller's profile object cannot affect this context.
+        # This also catches any field that was forced to an invalid value
+        # through object.__setattr__ after the profile's own __post_init__.
+        _limit_fields = (
+            "max_coefficient_digits",
+            "max_exponent_magnitude",
+            "max_constructions",
+            "max_work_units",
+        )
+        _snapped: dict[str, int] = {}
+        for field_name in _limit_fields:
+            value = getattr(profile, field_name)
+            if type(value) is not int or value < 1 or value > _LIMIT_CEILING:
+                raise NumericIngressError(
+                    NumericIngressErrorCode.PROFILE_INVALID,
+                    f"profile.{field_name}",
+                )
+            _snapped[field_name] = value
+        # Store snapshots as independent ints; no reference to the profile.
+        self._max_coefficient_digits: int = _snapped["max_coefficient_digits"]
+        self._max_exponent_magnitude: int = _snapped["max_exponent_magnitude"]
+        self._max_constructions: int = _snapped["max_constructions"]
+        self._max_work_units: int = _snapped["max_work_units"]
         self._constructions: int = 0
         self._work_units: int = 0
         self._registry: dict[int, Decimal] = {}
@@ -259,7 +305,7 @@ class IngressContextV1:
         path = _validate_path(path)
 
         # -- Step 0b: construction budget ----------------------------------
-        if self._constructions >= self._profile.max_constructions:
+        if self._constructions >= self._max_constructions:
             raise NumericIngressError(
                 NumericIngressErrorCode.RESOURCE_LIMIT,
                 path,
@@ -296,7 +342,7 @@ class IngressContextV1:
                 NumericIngressErrorCode.INVALID_SHAPE,
                 path + ".coefficient",
             )
-        if len(coefficient) > self._profile.max_coefficient_digits:
+        if len(coefficient) > self._max_coefficient_digits:
             raise NumericIngressError(
                 NumericIngressErrorCode.RESOURCE_LIMIT,
                 path + ".coefficient",
@@ -318,7 +364,7 @@ class IngressContextV1:
             )
 
         # -- Step 4: exponent bounds ---------------------------------------
-        exp_mag = self._profile.max_exponent_magnitude
+        exp_mag = self._max_exponent_magnitude
         if quantum_exponent < -exp_mag or quantum_exponent > exp_mag:
             raise NumericIngressError(
                 NumericIngressErrorCode.INVALID_NUMERIC_VALUE,
@@ -329,7 +375,7 @@ class IngressContextV1:
         # -- Step 5: work reservation --------------------------------------
         # Each construction costs 1 + coefficient_digits work units.
         work_cost = 1 + len(coefficient)
-        if self._work_units + work_cost > self._profile.max_work_units:
+        if self._work_units + work_cost > self._max_work_units:
             raise NumericIngressError(
                 NumericIngressErrorCode.RESOURCE_LIMIT,
                 path,

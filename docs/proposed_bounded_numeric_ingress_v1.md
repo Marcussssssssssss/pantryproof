@@ -59,8 +59,30 @@ Attributes:
 - `path: str` — closed schema path
 - `limit_field: str | None` — name of the exceeded limit, if applicable
 
-Error messages contain only the code, path, and limit name.  No input
-text is reproduced.
+Error messages contain only declared code, path, and limit-name tokens.
+The code must be an exact `NumericIngressErrorCode`, otherwise construction
+raises `TypeError` with a fixed message without formatting the supplied value.
+
+The synthetic operand-role vocabulary is exactly `field`, `field.amount`,
+and `field.confidence`. `construct_decimal` and `check_registered` require
+an exact native string naming one of these roles. Undeclared roles fail with
+`PROFILE_INVALID` at `path` before construction, budget checks or identity lookup.
+
+Direct exception construction accepts those role paths and their generated
+`.sign`, `.coefficient`, and `.quantum_exponent` children. It also accepts
+`profile`, `path`, and `profile.` followed by one of the four profile-field
+names below. Every other path selects the fixed fallback `path`. No input
+characters are substituted and no `?` token is emitted.
+
+The exact limit-name vocabulary is `max_coefficient_digits`,
+`max_exponent_magnitude`, `max_constructions`, and `max_work_units`.
+Absent or undeclared limit names become `None` and are omitted from the message.
+Exact-type checks precede membership checks, avoiding hostile conversion,
+formatting, hashing and equality methods on rejected objects.
+
+These roles describe this standalone synthetic proof. Vocabulary membership
+establishes a diagnostic label only. Source authentication, historical
+provenance and production-schema authority require separate evidence.
 
 ### `IngressProfileV1` (frozen dataclass)
 
@@ -78,6 +100,12 @@ Caller-supplied closed limits.  All fields must be explicit positive
 
 Single-invocation construction context.
 
+Context initialization requires the exact `IngressProfileV1` class and
+independently revalidates all four fields as exact positive native integers
+within the existing helper ceiling. It snapshots them into private integers.
+Later mutation of the caller's profile does not change the context's limits.
+This assumes trusted context internals and quiescent initialization.
+
 **Properties:**
 - `constructions: int` — count of successful constructions
 - `work_units: int` — cumulative work units consumed
@@ -87,7 +115,7 @@ Single-invocation construction context.
 
 Construct a bounded Decimal from an exact recipe:
 
-1. Check construction budget.
+1. Require a declared synthetic operand role, then check construction budget.
 2. Exact type checks — `type(x) is int` (rejects `bool` subclass),
    `type(x) is str` (rejects subclasses).
 3. Sign range check (must be 0 or 1).
@@ -128,6 +156,7 @@ construction.
 
 Errors are reported in the following deterministic order:
 
+0. **Declared operand role** → `PROFILE_INVALID` at `path`
 1. **Construction budget** → `RESOURCE_LIMIT`
 2. **Type shape** (sign, coefficient, exponent types) → `INVALID_SHAPE`
 3. **Sign range** → `INVALID_SHAPE`
@@ -201,5 +230,7 @@ check prevents false positives.
 14. Repeated construction and bounded registry
 15. Independence from ambient decimal context
 
-Additional coverage: profile validation edge cases and error message
-closure verification.
+Additional coverage includes profile revalidation and independent snapshots,
+closed role and child-path membership, fixed diagnostic fallback, exact limit
+names, hostile diagnostic objects, corrected permissive path tests, and
+rejection before construction or identity work with unchanged counters.
