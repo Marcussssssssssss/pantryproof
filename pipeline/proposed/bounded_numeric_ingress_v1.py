@@ -23,6 +23,7 @@ Design authority: PANTRYPROOF_D3_V0_NUMERIC_INGRESS_BOUNDARY_DESIGN_01 §4
 from __future__ import annotations
 
 import enum
+import re
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
@@ -83,6 +84,36 @@ class NumericIngressError(ValueError):
 # ---------------------------------------------------------------------------
 
 _LIMIT_CEILING = (2**31) - 1
+
+# ---------------------------------------------------------------------------
+# Path closure — Design 01 §4: "closed schema paths … without reproducing
+# input text".  A valid schema path is a nonempty dot-separated sequence of
+# identifiers drawn from [A-Za-z0-9._-], bounded in length, free of control
+# characters, newlines, and any character that could carry receipt text.
+# ---------------------------------------------------------------------------
+
+_PATH_MAX_LEN: int = 256
+_PATH_PATTERN: re.Pattern[str] = re.compile(r"^[A-Za-z0-9._\-]{1,256}\Z")
+
+
+def _validate_path(path: object) -> str:
+    """Return *path* if it is a safe closed schema path, else raise.
+
+    Accepts only an exact ``str`` matching ``_PATH_PATTERN``.  Raises
+    ``NumericIngressError(PROFILE_INVALID, "path")`` for any violation
+    without reproducing the supplied value in the message.
+    """
+    if type(path) is not str:
+        raise NumericIngressError(
+            NumericIngressErrorCode.PROFILE_INVALID,
+            "path",
+        )
+    if not _PATH_PATTERN.match(path):
+        raise NumericIngressError(
+            NumericIngressErrorCode.PROFILE_INVALID,
+            "path",
+        )
+    return path
 
 
 @dataclass(frozen=True)
@@ -156,7 +187,7 @@ class IngressContextV1:
     """
 
     def __init__(self, profile: IngressProfileV1) -> None:
-        if not isinstance(profile, IngressProfileV1):
+        if type(profile) is not IngressProfileV1:
             raise NumericIngressError(
                 NumericIngressErrorCode.PROFILE_INVALID,
                 "profile",
@@ -193,6 +224,7 @@ class IngressContextV1:
         """Construct a bounded Decimal from an exact recipe.
 
         Validation order (Design 01 §4):
+        0. Path closure check (before path appears in any error message).
         1. Exact type checks (bool rejected before int).
         2. Coefficient string length check before scanning.
         3. ASCII digit validation and canonical form.
@@ -223,7 +255,10 @@ class IngressContextV1:
         NumericIngressError
             On any validation or resource-limit failure.
         """
-        # -- Step 0: construction budget -----------------------------------
+        # -- Step 0a: validate path before it can appear in any error ------
+        path = _validate_path(path)
+
+        # -- Step 0b: construction budget ----------------------------------
         if self._constructions >= self._profile.max_constructions:
             raise NumericIngressError(
                 NumericIngressErrorCode.RESOURCE_LIMIT,
@@ -342,6 +377,7 @@ class IngressContextV1:
         NumericIngressError
             If the object is not registered (UNREGISTERED_DECIMAL).
         """
+        path = _validate_path(path)
         obj_id = id(value)
         registered = self._registry.get(obj_id)
         if registered is None or registered is not value:

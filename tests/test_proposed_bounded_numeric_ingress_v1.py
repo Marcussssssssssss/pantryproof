@@ -19,6 +19,10 @@ D3 BOUNDED NUMERIC INGRESS — INTERNAL PROOF-OF-CONCEPT
 14. Repeated construction and bounded registry
 15. Independence from ambient decimal context
 
+Hardening additions (pre-publication):
+ H1. Path closure — invalid/unsafe paths rejected before appearing in errors
+ H2. Profile subclass bypass — exact type check for IngressContextV1 profile
+
 Owner: Leng Wei Heng
 Design authority: PANTRYPROOF_D3_V0_NUMERIC_INGRESS_BOUNDARY_DESIGN_01 §6
 """
@@ -871,3 +875,231 @@ class TestErrorMessageClosure:
         assert "max_coefficient_digits" in msg
         # Must not contain the actual overlength coefficient
         assert "12345" not in msg
+
+
+# ===================================================================
+# Hardening H1: Path closure
+# ===================================================================
+
+class TestPathClosure:
+    """H1: Invalid or unsafe path strings are rejected before they can
+    appear in any error message.
+
+    Design 01 §4: 'Report closed schema paths … without reproducing
+    input text.'  Valid paths are nonempty, drawn from [A-Za-z0-9._-],
+    at most 256 characters, free of newlines and control characters.
+    """
+
+    # -- construct_decimal path validation ---------------------------------
+
+    def test_path_with_newline_rejected(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "1", 0, "field\ninjected")
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+        # Newline must not appear in the error message
+        assert "\n" not in str(exc_info.value)
+
+    def test_path_with_carriage_return_rejected(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "1", 0, "field\rinjected")
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+        assert "\r" not in str(exc_info.value)
+
+    def test_path_with_space_rejected(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "1", 0, "field value")
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+    def test_path_with_receipt_text_chars_rejected(self) -> None:
+        """Angle brackets, quotes, semicolons, etc. are not in [A-Za-z0-9._-]."""
+        ctx = IngressContextV1(_default_profile())
+        for bad_path in ["field<script>", "field;DROP", "field'quoted", 'field"q']:
+            with pytest.raises(NumericIngressError) as exc_info:
+                ctx.construct_decimal(0, "1", 0, bad_path)
+            assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+            # The bad path must not appear verbatim in the error message
+            assert bad_path not in str(exc_info.value)
+
+    def test_empty_path_rejected(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "1", 0, "")
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+    def test_overlength_path_rejected(self) -> None:
+        """Path longer than 256 characters is rejected."""
+        ctx = IngressContextV1(_default_profile())
+        long_path = "a" * 257
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "1", 0, long_path)
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+        # Must not reproduce the long path in the message
+        assert long_path not in str(exc_info.value)
+
+    def test_path_exactly_256_chars_accepted(self) -> None:
+        """Path of exactly 256 characters is accepted."""
+        ctx = IngressContextV1(_default_profile())
+        max_path = "a" * 256
+        d = ctx.construct_decimal(0, "1", 0, max_path)
+        assert d == 1
+
+    def test_non_str_path_rejected(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "1", 0, 42)
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+    def test_none_path_rejected(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "1", 0, None)
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+    def test_valid_paths_accepted(self) -> None:
+        """Representative valid schema paths pass through unchanged."""
+        ctx = IngressContextV1(_default_profile())
+        valid_paths = [
+            "field",
+            "field.confidence",
+            "field.amount.sign",
+            "a-b-c",
+            "field_v1",
+            "X",
+        ]
+        for p in valid_paths:
+            d = ctx.construct_decimal(0, "1", 0, p)
+            assert d == 1
+
+    def test_path_does_not_appear_in_shape_error(self) -> None:
+        """When a valid path is used, only it (not any input text) appears."""
+        ctx = IngressContextV1(_default_profile())
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(True, "1", 0, "field.sign")
+        msg = str(exc_info.value)
+        assert "field.sign" in msg
+        assert "True" not in msg
+
+    # -- check_registered path validation ----------------------------------
+
+    def test_check_registered_newline_path_rejected(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d = ctx.construct_decimal(0, "1", 0, "field.v")
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.check_registered(d, "bad\npath")
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+        assert "\n" not in str(exc_info.value)
+
+    def test_check_registered_non_str_path_rejected(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d = ctx.construct_decimal(0, "1", 0, "field.v")
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.check_registered(d, None)
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+    def test_check_registered_valid_path_accepted(self) -> None:
+        ctx = IngressContextV1(_default_profile())
+        d = ctx.construct_decimal(0, "42", 0, "field.amount")
+        result = ctx.check_registered(d, "field.amount")
+        assert result is d
+
+    def test_invalid_path_before_unregistered_check(self) -> None:
+        """Path validation fires before the unregistered-Decimal check."""
+        ctx = IngressContextV1(_default_profile())
+        external = Decimal("42")
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.check_registered(external, "bad path!")
+        # PROFILE_INVALID (path bad) takes precedence over UNREGISTERED_DECIMAL
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+    def test_path_validated_before_budget_check(self) -> None:
+        """Path validation fires before construction-budget check."""
+        p = _default_profile(max_constructions=1)
+        ctx = IngressContextV1(p)
+        ctx.construct_decimal(0, "1", 0, "field.a")  # exhaust budget
+        with pytest.raises(NumericIngressError) as exc_info:
+            ctx.construct_decimal(0, "2", 0, "bad path!")
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+
+# ===================================================================
+# Hardening H2: Profile subclass bypass
+# ===================================================================
+
+class TestProfileSubclassBypass:
+    """H2: IngressContextV1 requires the exact IngressProfileV1 class.
+
+    A subclass that overrides or bypasses __post_init__ cannot slip
+    through; type(profile) is IngressProfileV1 catches it.
+    """
+
+    def test_profile_subclass_bypassing_post_init_rejected(self) -> None:
+        """A subclass whose __post_init__ skips validation is rejected."""
+
+        class _EvilProfile(IngressProfileV1):
+            """Subclass that intentionally bypasses __post_init__ limits."""
+
+            def __post_init__(self) -> None:
+                # Deliberately do NOT call super().__post_init__() so
+                # invalid limits are accepted by this subclass instance.
+                pass
+
+        # Construct with deliberately invalid limits (0 < 1 would normally fail)
+        evil = object.__new__(_EvilProfile)
+        # Use object.__setattr__ to bypass frozen dataclass protection
+        for field, val in [
+            ("max_coefficient_digits", 0),
+            ("max_exponent_magnitude", 0),
+            ("max_constructions", 0),
+            ("max_work_units", 0),
+        ]:
+            object.__setattr__(evil, field, val)
+
+        with pytest.raises(NumericIngressError) as exc_info:
+            IngressContextV1(evil)
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+    def test_profile_subclass_with_valid_limits_still_rejected(self) -> None:
+        """Even a 'benign' subclass with correct limits is rejected.
+
+        Only the exact IngressProfileV1 class is accepted.
+        """
+
+        class _SubProfile(IngressProfileV1):
+            pass
+
+        sub = _SubProfile(
+            max_coefficient_digits=10,
+            max_exponent_magnitude=20,
+            max_constructions=50,
+            max_work_units=500,
+        )
+        with pytest.raises(NumericIngressError) as exc_info:
+            IngressContextV1(sub)
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+    def test_exact_profile_class_accepted(self) -> None:
+        """The exact IngressProfileV1 (not a subclass) is still accepted."""
+        profile = IngressProfileV1(
+            max_coefficient_digits=5,
+            max_exponent_magnitude=10,
+            max_constructions=20,
+            max_work_units=100,
+        )
+        ctx = IngressContextV1(profile)
+        d = ctx.construct_decimal(0, "1", 0, "field.v")
+        assert d == 1
+
+    def test_dict_profile_rejected(self) -> None:
+        """A plain dict is not IngressProfileV1 (unchanged from before)."""
+        with pytest.raises(NumericIngressError) as exc_info:
+            IngressContextV1({"max_coefficient_digits": 10})
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
+
+    def test_none_profile_rejected(self) -> None:
+        """None is not IngressProfileV1 (unchanged from before)."""
+        with pytest.raises(NumericIngressError) as exc_info:
+            IngressContextV1(None)
+        assert exc_info.value.code == NumericIngressErrorCode.PROFILE_INVALID
