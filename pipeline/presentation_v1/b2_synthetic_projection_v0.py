@@ -1,8 +1,9 @@
 """Synthetic evidence-first B2 execution and strict Presentation V1 emission.
 
 The trusted caller evaluates its synthetic gate and attaches evidence once before
-calling this module. This component calls B2 once; it neither calls L01 nor
-reattaches evidence. Aliases are invocation-local, not authenticated identities
+calling this module. The extracting entry point calls B2 once; the retained-result
+entry point calls no upstream stages. Neither calls L01 or reattaches evidence.
+Aliases are invocation-local, not authenticated identities
 or a request/replay registry. No operational processing or failure envelope is
 provided. Public failures deliberately omit upstream messages and traceback
 chains, which may contain private source identifiers.
@@ -40,7 +41,10 @@ from pipeline.presentation_v1.conformance import (
     decode_and_validate_presentation_v1,
 )
 
-__all__ = ("extract_b2_fixture_presentation_v1",)
+__all__ = (
+    "extract_b2_fixture_presentation_v1",
+    "project_retained_b2_fixture_presentation_v1",
+)
 
 _NAMESPACE = re.compile(r"[0-9a-f]{32}")
 _PROTOCOL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -415,6 +419,55 @@ def extract_b2_fixture_presentation_v1(
     Failure propagation uses safe exception text rather than publishing upstream
     messages, chained tracebacks or private record representations.
     """
+    return _produce_fixture_presentation_v1(
+        adapted_source=adapted_source, source_evidence=source_evidence,
+        b2_result=None, run_extraction=True, request_id=request_id, image_id=image_id,
+        alias_namespace=alias_namespace, producer_id=producer_id, consumer_mode=consumer_mode,
+    )
+
+
+def project_retained_b2_fixture_presentation_v1(
+    *,
+    adapted_source: AdaptedOcrSource,
+    source_evidence: ReceiptSourceEvidence,
+    b2_result: B2ExtractionResult,
+    request_id: str,
+    image_id: str,
+    alias_namespace: str,
+    producer_id: str,
+    consumer_mode: str,
+) -> bytes:
+    """Project an original retained synthetic B2 result without executing B2.
+
+    The caller owns and retains all original stage records. This checks their
+    associations, not historical execution authenticity. Invalid or missing
+    results never cause extraction, evidence reconstruction or a retry.
+    """
+    return _produce_fixture_presentation_v1(
+        adapted_source=adapted_source, source_evidence=source_evidence,
+        b2_result=b2_result, run_extraction=False, request_id=request_id, image_id=image_id,
+        alias_namespace=alias_namespace, producer_id=producer_id, consumer_mode=consumer_mode,
+    )
+
+
+def _produce_fixture_presentation_v1(
+    *,
+    adapted_source: AdaptedOcrSource,
+    source_evidence: ReceiptSourceEvidence,
+    b2_result: B2ExtractionResult | None,
+    run_extraction: bool,
+    request_id: str,
+    image_id: str,
+    alias_namespace: str,
+    producer_id: str,
+    consumer_mode: str,
+) -> bytes:
+    """Share ordering, mapping and sanitization across both public boundaries.
+
+    Only the extracting entry point selects extraction. Keeping the selection
+    inside the existing handler preserves pre-B2 rejection and B2 exception
+    classification; retained results proceed directly to result validation.
+    """
     stage = "input"
     diagnostic_structure = None
     admitted_diagnostic = None
@@ -429,8 +482,11 @@ def extract_b2_fixture_presentation_v1(
         _require(type(alias_namespace) is str and _NAMESPACE.fullmatch(alias_namespace) is not None)
         _validate_source(adapted_source, source_evidence)
         _require(image_id == adapted_source.image_id == source_evidence.image_id)
-        stage = "b2"
-        result = extract_b2(source_evidence)
+        if run_extraction:
+            stage = "b2"
+            result = extract_b2(source_evidence)
+        else:
+            result = b2_result
         stage = "projection"
         _validate_result(result, source_evidence)
         diagnostic_structure = _diagnostic_bounds(source_evidence, result)
