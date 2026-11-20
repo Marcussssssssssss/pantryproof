@@ -1,5 +1,6 @@
 package com.pantryproof.prototype.data
 
+import com.pantryproof.prototype.contract.v1.AutomaticExtractionStatus
 import com.pantryproof.prototype.contract.v1.PresentationFailureStage
 import com.pantryproof.prototype.contract.v1.ReceiptPresentationIssue
 import java.math.BigDecimal
@@ -34,6 +35,7 @@ data class PresentedReceipt(
     val purchaseDate: PresentedField,
     val receiptTotal: PresentedField,
     val items: List<PresentedReceiptItem>,
+    val automaticExtractionStatus: AutomaticExtractionStatus? = null,
 ) {
     /**
      * Converts only values that the legacy session inventory can represent

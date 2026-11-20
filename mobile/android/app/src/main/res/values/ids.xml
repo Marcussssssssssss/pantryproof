@@ -43,6 +43,7 @@
     <item name="details_item_2" type="id" />
 
     <item name="review_error_summary" type="id" />
+    <item name="review_extraction_failed_annotation" type="id" />
     <item name="review_status" type="id" />
     <item name="review_store_name" type="id" />
     <item name="review_purchase_date" type="id" />
@@ -72,4 +73,28 @@
     <item name="inventory_stock_rice_decrease" type="id" />
     <item name="inventory_stock_rice_value" type="id" />
     <item name="inventory_stock_rice_increase" type="id" />
+    <item name="screen_processing_demo" type="id" />
+    <item name="home_processing_demo" type="id" />
+    <item name="processing_scenario" type="id" />
+    <item name="processing_status" type="id" />
+    <item name="processing_progress" type="id" />
+    <item name="processing_start" type="id" />
+    <item name="processing_cancel" type="id" />
+    <item name="processing_new_input" type="id" />
+    <item name="processing_receipt" type="id" />
+    <item name="preview_process_selected" type="id" />
+    <item name="screen_selected_processing" type="id" />
+    <item name="selected_processing_status" type="id" />
+    <item name="selected_processing_progress" type="id" />
+    <item name="selected_processing_start" type="id" />
+    <item name="selected_processing_cancel" type="id" />
+    <item name="selected_processing_prepare_again" type="id" />
+    <item name="inventory_search" type="id" />
+    <item name="inventory_clear_search" type="id" />
+    <item name="inventory_sort" type="id" />
+    <item name="inventory_filter" type="id" />
+    <item name="inventory_browse_count" type="id" />
+    <item name="inventory_browse_results" type="id" />
+    <item name="inventory_no_matches" type="id" />
+    <item name="inventory_empty_state" type="id" />
 </resources>
