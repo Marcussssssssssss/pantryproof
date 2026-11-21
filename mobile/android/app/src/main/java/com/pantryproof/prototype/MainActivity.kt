@@ -16,6 +16,9 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.text.Editable
 import android.text.InputFilter
@@ -30,7 +33,11 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.inputmethod.EditorInfo
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.EditText
+import android.widget.ProgressBar
+import android.widget.Spinner
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -43,6 +50,9 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.AccessibilityDelegateCompat
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
+import com.pantryproof.prototype.data.BoundSyntheticReceiptProcessingTransport
+import com.pantryproof.prototype.image.SelectedImageSnapshotEncoder
+import com.pantryproof.prototype.ui.SelectedImageProcessingController
 import com.pantryproof.prototype.data.MockReceiptPresentationSource
 import com.pantryproof.prototype.data.InventoryItem
 import com.pantryproof.prototype.data.PresentedField
@@ -52,12 +62,15 @@ import com.pantryproof.prototype.data.PresentedReceiptItem
 import com.pantryproof.prototype.data.Receipt
 import com.pantryproof.prototype.data.ReceiptItem
 import com.pantryproof.prototype.data.ReceiptPresentationUiResult
+import com.pantryproof.prototype.data.ReceiptProcessingLifecycle
+import com.pantryproof.prototype.data.SyntheticReceiptProcessingTransport
 import com.pantryproof.prototype.image.ReceiptCaptureStore
 import com.pantryproof.prototype.image.CropEdge
 import com.pantryproof.prototype.image.ReceiptCrop
 import com.pantryproof.prototype.image.ReceiptCropView
 import com.pantryproof.prototype.image.ReceiptZoom
 import com.pantryproof.prototype.image.ZoomReceiptView
+import com.pantryproof.prototype.ui.InventoryBrowseProjection
 import com.pantryproof.prototype.ui.EditableReceipt
 import com.pantryproof.prototype.ui.EditableReceiptItem
 import com.pantryproof.prototype.ui.MoneyFormatter
@@ -67,6 +80,8 @@ import com.pantryproof.prototype.ui.PantryUiState
 import com.pantryproof.prototype.ui.PantryUiComponents
 import com.pantryproof.prototype.ui.ReceiptValidator
 import com.pantryproof.prototype.ui.ReceiptValidationResult
+import com.pantryproof.prototype.ui.ReceiptReviewAnnotationPolicy
+import com.pantryproof.prototype.ui.ReceiptProcessingUiController
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -74,12 +89,15 @@ import java.util.ArrayDeque
 import java.util.GregorianCalendar
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import kotlin.math.roundToInt
 
 @SuppressLint("SetTextI18n", "ExifInterface")
 class MainActivity : ComponentActivity() {
     private enum class Screen {
-        HOME, ADD_RECEIPT, PREVIEW, DETAILS, REVIEW, MANUAL, INVENTORY,
+        HOME, ADD_RECEIPT, PREVIEW, DETAILS, REVIEW, MANUAL, INVENTORY, PROCESSING_DEMO, SELECTED_PROCESSING,
     }
 
     private enum class LocalImageSource {
@@ -142,7 +160,20 @@ class MainActivity : ComponentActivity() {
     private var temporaryConfirmationVisible = false
     private var reviewValidationAttempted = false
     private val reviewValidationErrors = linkedMapOf<String, String>()
+    private val inventoryBrowse = InventoryBrowseProjection()
+    private var inventoryResults: LinearLayout? = null
+    private var inventoryBrowseCount: TextView? = null
+    private val inventoryBrowseHandler = Handler(Looper.getMainLooper())
+    private var inventoryCountAnnouncement: Runnable? = null
     private var screenScrollView: ScrollView? = null
+    private var selectedProcessingController: SelectedImageProcessingController? = null
+    private var selectedProcessingWorker: ExecutorService? = null
+    private var selectedProcessingHandler: Handler? = null
+    private var processingController: ReceiptProcessingUiController? = null
+    private var processingWorker: ExecutorService? = null
+    private var processingHandler: Handler? = null
+    @Volatile
+    private var processingScenario = SyntheticReceiptProcessingTransport.Scenario.AVAILABLE
 
     private val imagePicker = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -197,7 +228,32 @@ class MainActivity : ComponentActivity() {
         render()
     }
 
+    override fun onStart() {
+        super.onStart()
+        if ((currentScreen == Screen.PROCESSING_DEMO && processingController == null) ||
+            (currentScreen == Screen.SELECTED_PROCESSING && selectedProcessingController == null)
+        ) render()
+        if (currentScreen == Screen.INVENTORY) updateInventoryBrowseResults(announceImmediately = true)
+    }
+
+    override fun onStop() {
+        inventoryCountAnnouncement?.let(inventoryBrowseHandler::removeCallbacks)
+        disposeProcessingDemo()
+        disposeSelectedImageProcessing()
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        inventoryBrowseHandler.removeCallbacksAndMessages(null)
+        disposeProcessingDemo()
+        disposeSelectedImageProcessing()
+        super.onDestroy()
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("inventoryBrowseQuery", inventoryBrowse.query)
+        outState.putString("inventoryBrowseSort", inventoryBrowse.sort.name)
+        outState.putString("inventoryBrowseSource", inventoryBrowse.source.name)
         outState.putString("selectedImageUri", selectedImageUri?.toString())
         outState.putFloatArray("selectedImageCrop", selectedImageCrop?.values())
         outState.putString("selectedImageSource", selectedImageSource?.name)
@@ -229,7 +285,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleBackNavigation() {
-        if (currentScreen == Screen.MANUAL) {
+        if (currentScreen == Screen.SELECTED_PROCESSING) {
+            disposeSelectedImageProcessing()
+            currentScreen = backStack.pollLast() ?: Screen.PREVIEW
+            render()
+        } else if (currentScreen == Screen.PROCESSING_DEMO) {
+            disposeProcessingDemo()
+            currentScreen = backStack.pollLast() ?: Screen.HOME
+            render()
+        } else if (currentScreen == Screen.MANUAL) {
             confirmDiscardManualDraft()
         } else if (currentScreen == Screen.REVIEW && reviewHasUnsavedChanges) {
             confirmDiscardEdits { goBack() }
@@ -308,6 +372,8 @@ class MainActivity : ComponentActivity() {
             Screen.REVIEW -> renderReview()
             Screen.MANUAL -> renderManualReceipt()
             Screen.INVENTORY -> renderInventory()
+            Screen.PROCESSING_DEMO -> renderProcessingDemo()
+            Screen.SELECTED_PROCESSING -> renderSelectedImageProcessing()
         }
     }
 
@@ -348,12 +414,378 @@ class MainActivity : ComponentActivity() {
             switchToSyntheticDemo()
             navigate(Screen.PREVIEW)
         })
+        add(space(12))
+        add(ui.actionButton(
+            getString(R.string.processing_demo_title), PantryActionStyle.SECONDARY,
+            viewId = R.id.home_processing_demo,
+        ) { navigate(Screen.PROCESSING_DEMO) })
         add(space(24))
         add(ui.banner(
             getString(R.string.home_boundary_title),
             getString(R.string.home_boundary_body),
             PantryBannerTone.DEMO,
         ))
+    }
+
+
+    private fun enqueueProcessingWorker(worker: ExecutorService, action: () -> Unit) {
+        if (worker.isShutdown) return
+        try {
+            worker.execute(action)
+        } catch (_: RejectedExecutionException) {
+            // Disposal can shut down the executor between the check and enqueue.
+        }
+    }
+
+    private fun ensureProcessingController(): ReceiptProcessingUiController {
+        processingController?.let { return it }
+        val handler = Handler(Looper.getMainLooper())
+        val worker = Executors.newSingleThreadExecutor()
+        processingHandler = handler
+        processingWorker = worker
+        val transport = SyntheticReceiptProcessingTransport(
+            scenario = { processingScenario },
+            dispatchResponse = { action ->
+                handler.postDelayed({ enqueueProcessingWorker(worker, action) }, 500L)
+            },
+        )
+        val controller = ReceiptProcessingUiController(
+            transport = transport,
+            postWorker = { action -> enqueueProcessingWorker(worker, action) },
+            postUi = { action -> handler.post { action() } },
+            schedule = { delay, action -> handler.postDelayed({ action() }, delay) },
+            nowMillis = { SystemClock.elapsedRealtime() },
+            timeoutMillis = 10_000L,
+            newImageId = { "synthetic-image-" + UUID.randomUUID() },
+            newRequestId = { "synthetic-request-" + UUID.randomUUID() },
+            onStateChanged = { next ->
+                if (currentScreen == Screen.PROCESSING_DEMO && processingController?.state === next) {
+                    render()
+                }
+            },
+        )
+        controller.selectInput()
+        processingController = controller
+        return controller
+    }
+
+    private fun disposeProcessingDemo() {
+        processingController?.dispose()
+        processingController = null
+        processingHandler?.removeCallbacksAndMessages(null)
+        processingHandler = null
+        processingWorker?.shutdown()
+        processingWorker = null
+    }
+
+    private fun processingFocusedView(view: View, accessibility: Boolean): View? {
+        val focused = if (accessibility) view.isAccessibilityFocused else view.isFocused
+        if (focused && view.id != View.NO_ID) return view
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+                processingFocusedView(view.getChildAt(index), accessibility)?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun restoreProcessingFocus(
+        root: View,
+        inputId: Int?,
+        inputInTouchMode: Boolean,
+        accessibilityId: Int?,
+        statusId: Int,
+        initialEntry: Boolean,
+    ) {
+        val input = inputId?.let { root.findViewById<View>(it) }?.takeIf { it.isEnabled }
+            ?: if (inputId != null || initialEntry) root.findViewById<View>(statusId)?.takeIf { it.isEnabled } else null
+        if (input != null) {
+            if (inputInTouchMode) input.isFocusableInTouchMode = true
+            if (!input.isFocused) input.requestFocus()
+        }
+        // A missing/disabled reader target has no forced substitute. Pane/live-region
+        // behavior remains unchanged, and the accessibility service owns its navigation.
+        val reader = accessibilityId?.let { root.findViewById<View>(it) }?.takeIf { it.isEnabled }
+        if (reader != null && !reader.isAccessibilityFocused) reader.performAccessibilityAction(
+            android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null,
+        )
+    }
+
+    private fun renderProcessingDemo() {
+        val controller = ensureProcessingController()
+        // Only the current controller's rendered tree may supply restoration intent.
+        val previousRoot = findViewById<View>(R.id.screen_processing_demo)?.takeIf { it.tag === controller }
+        val inputFocus = previousRoot?.let { processingFocusedView(it, accessibility = false) }
+        val inputId = inputFocus?.id
+        val inputInTouchMode = inputFocus?.isFocusableInTouchMode == true
+        val accessibilityId = previousRoot?.let { processingFocusedView(it, accessibility = true) }?.id
+        val current = controller.state
+        setScreen(getString(R.string.processing_demo_title), true) {
+            add(bodyText(getString(R.string.processing_demo_body)))
+            add(space(12))
+            add(TextView(this@MainActivity).apply {
+                text = getString(R.string.processing_sample_label)
+                labelFor = R.id.processing_scenario
+            })
+            add(Spinner(this@MainActivity).apply {
+                id = R.id.processing_scenario
+                contentDescription = getString(R.string.processing_sample_label)
+                minimumHeight = dp(48)
+                adapter = ArrayAdapter.createFromResource(
+                    this@MainActivity,
+                    R.array.processing_scenarios,
+                    android.R.layout.simple_spinner_dropdown_item,
+                )
+                setSelection(processingScenario.ordinal, false)
+                onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                    override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, rowId: Long) {
+                        val selected = SyntheticReceiptProcessingTransport.Scenario.values()[position]
+                        if (processingController === controller && selected != processingScenario) {
+                            processingScenario = selected
+                            controller.selectInput()
+                        }
+                    }
+                    override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+                }
+            })
+            add(space(12))
+            val status: View = when (current) {
+                ReceiptProcessingLifecycle.State.Idle -> ui.statePanel(
+                    getString(R.string.processing_idle), getString(R.string.processing_idle_body), PantryBannerTone.INFO,
+                )
+                is ReceiptProcessingLifecycle.State.Ready -> ui.statePanel(
+                    getString(R.string.processing_ready), getString(R.string.processing_ready_body), PantryBannerTone.INFO,
+                )
+                is ReceiptProcessingLifecycle.State.Pending -> ui.statePanel(
+                    getString(R.string.processing_pending), getString(R.string.processing_pending_body), PantryBannerTone.INFO,
+                )
+                is ReceiptProcessingLifecycle.State.Finished -> when (val outcome = current.outcome) {
+                    is ReceiptProcessingLifecycle.Outcome.Presentation -> presentationStatePanel(outcome.result)
+                    ReceiptProcessingLifecycle.Outcome.LocalFailure.MISSING_RESPONSE -> ui.statePanel(
+                        getString(R.string.processing_missing), getString(R.string.processing_missing_body), PantryBannerTone.INFO,
+                    )
+                    ReceiptProcessingLifecycle.Outcome.LocalFailure.TIMEOUT -> ui.statePanel(
+                        getString(R.string.processing_timeout), getString(R.string.processing_timeout_body), PantryBannerTone.INFO,
+                    )
+                    ReceiptProcessingLifecycle.Outcome.LocalFailure.EXECUTION_FAILURE -> ui.statePanel(
+                        getString(R.string.processing_execution_failure), getString(R.string.processing_execution_failure_body), PantryBannerTone.ERROR,
+                    )
+                }
+            }
+            add(status.apply {
+                id = R.id.processing_status
+                accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+                isFocusable = true
+                isFocusableInTouchMode = true
+            })
+            add(space(12))
+            if (current is ReceiptProcessingLifecycle.State.Pending) {
+                add(ProgressBar(this@MainActivity).apply {
+                    id = R.id.processing_progress
+                    contentDescription = getString(R.string.processing_pending)
+                })
+                add(ui.actionButton(
+                    getString(R.string.processing_cancel), PantryActionStyle.SECONDARY,
+                    viewId = R.id.processing_cancel,
+                ) { if (processingController === controller) controller.cancel() })
+            } else {
+                add(ui.actionButton(
+                    getString(R.string.processing_start), PantryActionStyle.PRIMARY,
+                    enabled = current is ReceiptProcessingLifecycle.State.Ready,
+                    viewId = R.id.processing_start,
+                ) { if (processingController === controller) controller.start() })
+            }
+            add(ui.actionButton(
+                getString(R.string.processing_new_input), PantryActionStyle.SECONDARY,
+                viewId = R.id.processing_new_input,
+            ) { if (processingController === controller) controller.selectInput() })
+            if (current is ReceiptProcessingLifecycle.State.Finished) {
+                val result = (current.outcome as? ReceiptProcessingLifecycle.Outcome.Presentation)?.result
+                if (result is ReceiptPresentationUiResult.ProcessingFailed) {
+                    add(bodyText(getString(R.string.processing_failure_stage, result.stage.name)))
+                }
+                if (result is ReceiptPresentationUiResult.Available) {
+                    add(space(12))
+                    add(sectionTitle(getString(R.string.processing_review_title)).apply { id = R.id.processing_receipt })
+                    if (ReceiptReviewAnnotationPolicy.requiresManualReviewAnnotation(result)) {
+                        add(ui.banner(
+                            getString(R.string.review_extraction_failed_title),
+                            getString(R.string.review_extraction_failed_annotation),
+                            PantryBannerTone.INFO,
+                        ).apply { id = R.id.review_extraction_failed_annotation })
+                    }
+                    add(ui.card {
+                        id = R.id.processing_receipt
+                        addView(summaryRow(getString(R.string.field_store_name), presentedText(result.receipt.storeName)))
+                        addView(summaryRow(getString(R.string.field_purchase_date), presentedText(result.receipt.purchaseDate)))
+                        addView(summaryRow(getString(R.string.field_receipt_total), presentedMoney(result.receipt.receiptTotal)))
+                    })
+                    result.receipt.items.forEachIndexed { index, item ->
+                        add(space(10))
+                        add(receiptItemCard(index + 1, item))
+                    }
+                }
+            }
+        }
+        if (currentScreen != Screen.PROCESSING_DEMO || processingController !== controller) return
+        val root = findViewById<View>(R.id.screen_processing_demo) ?: return
+        root.tag = controller
+        restoreProcessingFocus(root, inputId, inputInTouchMode, accessibilityId,
+            R.id.processing_status, initialEntry = previousRoot == null)
+    }
+
+    private fun ensureSelectedImageProcessing(): SelectedImageProcessingController {
+        selectedProcessingController?.let { return it }
+        val handler = Handler(Looper.getMainLooper())
+        val worker = Executors.newSingleThreadExecutor()
+        selectedProcessingHandler = handler
+        selectedProcessingWorker = worker
+        val transport = BoundSyntheticReceiptProcessingTransport(
+            scenario = { SyntheticReceiptProcessingTransport.Scenario.AVAILABLE },
+            dispatchResponse = { action ->
+                handler.postDelayed({ enqueueProcessingWorker(worker, action) }, 500L)
+            },
+        )
+        val controller = SelectedImageProcessingController(
+            transport = transport,
+            postWorker = { action -> enqueueProcessingWorker(worker, action) },
+            postUi = { action -> handler.post { action() } },
+            schedule = { delay, action -> handler.postDelayed({ action() }, delay) },
+            nowMillis = { SystemClock.elapsedRealtime() },
+            timeoutMillis = 10_000L,
+            newImageId = { "selected-image-" + UUID.randomUUID() },
+            newRequestId = { "selected-request-" + UUID.randomUUID() },
+            maximumBytes = SelectedImageSnapshotEncoder.MAX_RETAINED_BYTES,
+            onChanged = {
+                if (currentScreen == Screen.SELECTED_PROCESSING && selectedProcessingController != null) render()
+            },
+        )
+        // Capture exactly this URI and crop. No worker reads later Activity selection values.
+        val uri = selectedImageUri
+        val crop = selectedImageCrop ?: ReceiptCrop.FULL
+        val encoder = SelectedImageSnapshotEncoder(applicationContext.contentResolver)
+        controller.prepareInput { encoder.encode(checkNotNull(uri), crop) }
+        selectedProcessingController = controller
+        return controller
+    }
+
+    private fun disposeSelectedImageProcessing() {
+        selectedProcessingController?.dispose()
+        selectedProcessingController = null
+        // Queued preparation callbacks must run to release their stale O07 snapshots.
+        selectedProcessingHandler = null
+        selectedProcessingWorker?.shutdown()
+        selectedProcessingWorker = null
+    }
+
+    private fun renderSelectedImageProcessing() {
+        val controller = ensureSelectedImageProcessing()
+        // Only the current controller's rendered tree may supply restoration intent.
+        val previousRoot = findViewById<View>(R.id.screen_selected_processing)?.takeIf { it.tag === controller }
+        val inputFocus = previousRoot?.let { processingFocusedView(it, accessibility = false) }
+        val inputId = inputFocus?.id
+        val inputInTouchMode = inputFocus?.isFocusableInTouchMode == true
+        val accessibilityId = previousRoot?.let { processingFocusedView(it, accessibility = true) }?.id
+        val current = controller.state
+        val input = controller.inputState
+        setScreen(getString(R.string.selected_processing_title), true) {
+            add(bodyText(getString(R.string.selected_processing_fictional)))
+            add(bodyText(getString(if (selectedImageCrop == null) {
+                R.string.selected_processing_full
+            } else R.string.selected_processing_cropped)))
+            add(space(12))
+            val panel = when (input) {
+                SelectedImageProcessingController.InputState.PREPARING -> ui.statePanel(
+                    getString(R.string.selected_processing_preparing),
+                    getString(R.string.selected_processing_limits), PantryBannerTone.INFO,
+                )
+                SelectedImageProcessingController.InputState.ERROR -> ui.statePanel(
+                    getString(R.string.selected_processing_error),
+                    getString(R.string.selected_processing_error_body), PantryBannerTone.ERROR,
+                )
+                else -> when (current) {
+                    ReceiptProcessingLifecycle.State.Idle -> ui.statePanel(
+                        getString(R.string.processing_idle), getString(R.string.selected_processing_error_body), PantryBannerTone.INFO,
+                    )
+                    is ReceiptProcessingLifecycle.State.Ready -> ui.statePanel(
+                        getString(R.string.selected_processing_ready), getString(R.string.selected_processing_ready_body), PantryBannerTone.INFO,
+                    )
+                    is ReceiptProcessingLifecycle.State.Pending -> ui.statePanel(
+                        getString(R.string.processing_pending), getString(R.string.selected_processing_fictional), PantryBannerTone.INFO,
+                    )
+                    is ReceiptProcessingLifecycle.State.Finished -> when (val outcome = current.outcome) {
+                        is ReceiptProcessingLifecycle.Outcome.Presentation -> presentationStatePanel(outcome.result)
+                        ReceiptProcessingLifecycle.Outcome.LocalFailure.MISSING_RESPONSE -> ui.statePanel(
+                            getString(R.string.processing_missing), getString(R.string.processing_missing_body), PantryBannerTone.INFO,
+                        )
+                        ReceiptProcessingLifecycle.Outcome.LocalFailure.TIMEOUT -> ui.statePanel(
+                            getString(R.string.processing_timeout), getString(R.string.processing_timeout_body), PantryBannerTone.INFO,
+                        )
+                        ReceiptProcessingLifecycle.Outcome.LocalFailure.EXECUTION_FAILURE -> ui.statePanel(
+                            getString(R.string.processing_execution_failure), getString(R.string.processing_execution_failure_body), PantryBannerTone.ERROR,
+                        )
+                    }
+                }
+            }
+            add(panel.apply {
+                id = R.id.selected_processing_status
+                accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+                isFocusable = true
+                isFocusableInTouchMode = true
+            })
+            add(space(12))
+            if (input == SelectedImageProcessingController.InputState.PREPARING || current is ReceiptProcessingLifecycle.State.Pending) {
+                add(ProgressBar(this@MainActivity).apply {
+                    id = R.id.selected_processing_progress
+                    contentDescription = getString(R.string.processing_pending)
+                })
+            }
+            if (current is ReceiptProcessingLifecycle.State.Pending) {
+                add(ui.actionButton(
+                    getString(R.string.processing_cancel), PantryActionStyle.SECONDARY,
+                    viewId = R.id.selected_processing_cancel,
+                ) { if (selectedProcessingController === controller) controller.cancel() })
+            } else {
+                add(ui.actionButton(
+                    getString(R.string.selected_processing_start), PantryActionStyle.PRIMARY,
+                    enabled = input == SelectedImageProcessingController.InputState.READY && current is ReceiptProcessingLifecycle.State.Ready,
+                    viewId = R.id.selected_processing_start,
+                ) { if (selectedProcessingController === controller) controller.start() })
+            }
+            add(ui.actionButton(
+                getString(R.string.selected_processing_prepare_again), PantryActionStyle.SECONDARY,
+                viewId = R.id.selected_processing_prepare_again,
+            ) {
+                disposeSelectedImageProcessing()
+                render()
+            })
+            val result = ((current as? ReceiptProcessingLifecycle.State.Finished)?.outcome
+                as? ReceiptProcessingLifecycle.Outcome.Presentation)?.result
+            if (result is ReceiptPresentationUiResult.Available) {
+                add(sectionTitle(getString(R.string.processing_review_title)))
+                add(bodyText(getString(R.string.selected_processing_fictional)))
+                if (ReceiptReviewAnnotationPolicy.requiresManualReviewAnnotation(result)) {
+                    add(ui.banner(
+                        getString(R.string.review_extraction_failed_title),
+                        getString(R.string.review_extraction_failed_annotation), PantryBannerTone.INFO,
+                    ))
+                }
+                add(ui.card {
+                    addView(summaryRow(getString(R.string.field_store_name), presentedText(result.receipt.storeName)))
+                    addView(summaryRow(getString(R.string.field_purchase_date), presentedText(result.receipt.purchaseDate)))
+                    addView(summaryRow(getString(R.string.field_receipt_total), presentedMoney(result.receipt.receiptTotal)))
+                })
+                result.receipt.items.forEachIndexed { index, item ->
+                    add(space(10))
+                    add(receiptItemCard(index + 1, item))
+                }
+            }
+        }
+        if (currentScreen != Screen.SELECTED_PROCESSING || selectedProcessingController !== controller) return
+        val root = findViewById<View>(R.id.screen_selected_processing) ?: return
+        root.tag = controller
+        restoreProcessingFocus(root, inputId, inputInTouchMode, accessibilityId,
+            R.id.selected_processing_status, initialEntry = previousRoot == null)
     }
 
     private fun renderAddReceipt() = setScreen(getString(R.string.add_receipt_title), true) {
@@ -453,6 +885,7 @@ class MainActivity : ComponentActivity() {
         source: LocalImageSource,
         captureFileName: String?,
     ) {
+        disposeSelectedImageProcessing()
         releaseSelectedGalleryPermission(replacementUri = uri)
         if (selectedImageUri != uri || selectedImageSource != source) {
             manualDraft = null
@@ -469,6 +902,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun switchToSyntheticDemo() {
+        disposeSelectedImageProcessing()
         releaseSelectedGalleryPermission(replacementUri = null)
         manualDraft = null
         ownsSelectedGalleryReadGrant = false
@@ -609,6 +1043,10 @@ class MainActivity : ComponentActivity() {
                 ) { launchImagePicker() })
             }
             uri == null || !localImageAvailable -> {
+                add(ui.actionButton(
+                    getString(R.string.selected_processing_action), PantryActionStyle.SECONDARY,
+                    enabled = false, viewId = R.id.preview_process_selected,
+                ) {})
                 add((imageInputNotice?.let(::imageInputNoticePanel) ?: ui.statePanel(
                     getString(R.string.preview_image_unavailable_title),
                     getString(R.string.preview_image_unavailable_body),
@@ -654,6 +1092,11 @@ class MainActivity : ComponentActivity() {
                 ).apply { id = R.id.preview_source_status })
                 add(space(14))
                 add(selectedImagePreview(previewBitmap, imageSource))
+                add(space(12))
+                add(ui.actionButton(
+                    getString(R.string.selected_processing_action), PantryActionStyle.SECONDARY,
+                    viewId = R.id.preview_process_selected,
+                ) { navigate(Screen.SELECTED_PROCESSING) })
                 if (selectedImageCrop != null) {
                     add(bodyText(getString(R.string.crop_applied)).apply { id = R.id.preview_crop_status })
                 }
@@ -853,6 +1296,7 @@ class MainActivity : ComponentActivity() {
             if (selectedImageUri == uri) {
                 val bounds = ReceiptCrop.from(editor.crop.values())
                 if (bounds != null && canReadSelectedImage(uri)) {
+                    disposeSelectedImageProcessing()
                     selectedImageCrop = bounds.takeUnless { it == ReceiptCrop.FULL }
                 }
                 render()
@@ -897,10 +1341,7 @@ class MainActivity : ComponentActivity() {
     private fun applyExifOrientation(uri: Uri, bitmap: Bitmap): Bitmap {
         val orientation = runCatching {
             contentResolver.openInputStream(uri)?.use { input ->
-                android.media.ExifInterface(input).getAttributeInt(
-                    android.media.ExifInterface.TAG_ORIENTATION,
-                    android.media.ExifInterface.ORIENTATION_NORMAL,
-                )
+                SelectedImageSnapshotEncoder.readOrientation(input)
             }
         }.getOrNull() ?: android.media.ExifInterface.ORIENTATION_NORMAL
         val matrix = Matrix().apply {
@@ -1146,6 +1587,14 @@ class MainActivity : ComponentActivity() {
             return@setScreen
         }
         val draft = reviewDraft ?: currentEditableDraft(available.receipt).also { reviewDraft = it }
+        if (ReceiptReviewAnnotationPolicy.requiresManualReviewAnnotation(available)) {
+            add(ui.banner(
+                getString(R.string.review_extraction_failed_title),
+                getString(R.string.review_extraction_failed_annotation),
+                PantryBannerTone.INFO,
+            ).apply { id = R.id.review_extraction_failed_annotation })
+            add(space(12))
+        }
         add(ui.banner(
             getString(R.string.review_boundary_title),
             getString(R.string.review_boundary_body),
@@ -1790,7 +2239,11 @@ class MainActivity : ComponentActivity() {
             .show()
     }
 
-    private fun renderInventory() = setScreen(getString(R.string.inventory_title), true) {
+    private fun renderInventory() = setScreen(
+        getString(if (resources.configuration.fontScale >= 1.3f || resources.configuration.screenWidthDp < 360) {
+            R.string.inventory_browse_compact_title
+        } else R.string.inventory_title), true,
+    ) {
         add(ui.banner(
             getString(R.string.inventory_banner_title),
             getString(
@@ -1813,18 +2266,89 @@ class MainActivity : ComponentActivity() {
             )
         })
         add(space(14))
-        if (state.inventory.isEmpty()) {
-            add(ui.statePanel(
-                getString(R.string.inventory_empty_title),
-                getString(R.string.inventory_empty_body),
-                PantryBannerTone.INFO,
-            ))
-        } else {
-            state.inventory.forEach { item ->
-                add(inventoryItemCard(item))
-                add(space(10))
-            }
+        val search = EditText(this@MainActivity).apply {
+            id = R.id.inventory_search
+            hint = getString(R.string.inventory_search_hint)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            setSingleLine(true)
+            imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+            minimumHeight = dp(48)
+            setText(inventoryBrowse.query)
         }
+        add(TextView(this@MainActivity).apply {
+            text = getString(R.string.inventory_search_label)
+            labelFor = search.id
+        })
+        add(search)
+        val clear = ui.actionButton(
+            getString(R.string.inventory_clear_search), PantryActionStyle.SECONDARY,
+            enabled = inventoryBrowse.query.isNotEmpty(), viewId = R.id.inventory_clear_search,
+        ) {
+            search.text.clear()
+            search.requestFocus()
+        }
+        add(clear)
+        search.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(text: Editable?) {
+                if (currentScreen != Screen.INVENTORY || findViewById<EditText>(R.id.inventory_search) !== search) return
+                inventoryBrowse.query = text?.toString().orEmpty()
+                clear.isEnabled = inventoryBrowse.query.isNotEmpty()
+                updateInventoryBrowseResults()
+            }
+        })
+        fun option(label: Int, viewId: Int, entries: Int, selected: Int, changed: (Int) -> Unit) {
+            add(TextView(this@MainActivity).apply { text = getString(label); labelFor = viewId })
+            add(Spinner(this@MainActivity).apply {
+                id = viewId
+                minimumHeight = dp(48)
+                contentDescription = getString(label)
+                adapter = object : ArrayAdapter<String>(
+                    this@MainActivity, android.R.layout.simple_spinner_dropdown_item, resources.getStringArray(entries),
+                ) {
+                    private fun wrapped(view: View): View = (view as TextView).apply {
+                        setSingleLine(false)
+                        maxLines = Int.MAX_VALUE
+                        ellipsize = null
+                        minimumHeight = dp(48)
+                        layoutParams?.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                    }
+                    override fun getView(position: Int, recycled: View?, parent: ViewGroup): View =
+                        wrapped(super.getView(position, recycled, parent))
+                    override fun getDropDownView(position: Int, recycled: View?, parent: ViewGroup): View =
+                        wrapped(super.getDropDownView(position, recycled, parent))
+                }
+                setSelection(selected, false)
+                onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                    override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, rowId: Long) {
+                        if (currentScreen == Screen.INVENTORY && findViewById<Spinner>(viewId) === parent) changed(position)
+                    }
+                    override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+                }
+            })
+        }
+        option(R.string.inventory_sort_label, R.id.inventory_sort, R.array.inventory_sort_options, inventoryBrowse.sort.ordinal) {
+            val sort = InventoryBrowseProjection.Sort.values()[it]
+            if (sort != inventoryBrowse.sort) { inventoryBrowse.sort = sort; updateInventoryBrowseResults() }
+        }
+        option(R.string.inventory_filter_label, R.id.inventory_filter, R.array.inventory_filter_options, inventoryBrowse.source.ordinal) {
+            val source = InventoryBrowseProjection.Source.values()[it]
+            if (source != inventoryBrowse.source) { inventoryBrowse.source = source; updateInventoryBrowseResults() }
+        }
+        add(TextView(this@MainActivity, null, 0, R.style.TextAppearance_PantryProof_Body).apply {
+            id = R.id.inventory_browse_count
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+            inventoryBrowseCount = this
+        })
+        add(space(14))
+        add(LinearLayout(this@MainActivity).apply {
+            id = R.id.inventory_browse_results
+            orientation = LinearLayout.VERTICAL
+            inventoryResults = this
+        })
+        updateInventoryBrowseResults(announceImmediately = true)
         add(space(8))
         add(ui.actionButton(
             getString(R.string.inventory_add_receipt),
@@ -1835,6 +2359,77 @@ class MainActivity : ComponentActivity() {
             getString(R.string.inventory_back_home),
             PantryActionStyle.TERTIARY,
         ) { navigateHome() })
+    }
+
+    private fun inventoryFocusedQuantityControl(view: View, accessibility: Boolean): View? {
+        val tag = view.tag as? String
+        val quantityAction = tag?.startsWith("inventory-increase:") == true ||
+            tag?.startsWith("inventory-decrease:") == true
+        if (quantityAction && if (accessibility) view.isAccessibilityFocused else view.isFocused) return view
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+                inventoryFocusedQuantityControl(view.getChildAt(index), accessibility)?.let { return it }
+            }
+        }
+        return null
+    }
+
+
+    private fun updateInventoryBrowseResults(announceImmediately: Boolean = false) {
+        val results = inventoryResults ?: return
+        if (currentScreen != Screen.INVENTORY) return
+        // Inventory controls have stable action tags even when they have no resource ID.
+        // The two focus channels may belong to different controls.
+        val oldInputFocus = inventoryFocusedQuantityControl(results, accessibility = false)
+        val inputTag = oldInputFocus?.tag
+        val inputTouchFocus = oldInputFocus?.isFocusableInTouchMode == true
+        val accessibilityTag = inventoryFocusedQuantityControl(results, accessibility = true)?.tag
+        val visible = inventoryBrowse.project(state.inventory)
+        results.removeAllViews()
+        if (state.inventory.isEmpty()) {
+            results.addView(ui.statePanel(
+                getString(R.string.inventory_empty_title), getString(R.string.inventory_empty_body), PantryBannerTone.INFO,
+            ).apply { id = R.id.inventory_empty_state })
+        } else if (visible.isEmpty()) {
+            results.addView(ui.statePanel(
+                getString(R.string.inventory_no_matches), getString(R.string.inventory_no_matches_body), PantryBannerTone.INFO,
+            ).apply { id = R.id.inventory_no_matches })
+        } else {
+            visible.forEach { item -> results.addView(inventoryItemCard(item)); results.addView(space(10)) }
+        }
+        if (inputTag != null) {
+            val target = results.findViewWithTag<View>(inputTag)?.takeIf { it.isEnabled }
+            if (target != null) {
+                if (inputTouchFocus) target.isFocusableInTouchMode = true
+                target.requestFocus()
+            } else {
+                // A disabled/removed action must not redirect activation to another item.
+                inventoryBrowseCount?.let { count ->
+                    count.isFocusableInTouchMode = true
+                    count.requestFocus()
+                }
+            }
+        }
+        if (accessibilityTag != null) {
+            // Restore only the same enabled action. If absent, leave reader navigation to
+            // the service and the existing polite count; do not force a different target.
+            results.findViewWithTag<View>(accessibilityTag)?.takeIf { it.isEnabled }?.performAccessibilityAction(
+                android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null,
+            )
+        }
+        inventoryCountAnnouncement?.let(inventoryBrowseHandler::removeCallbacks)
+        val count = inventoryBrowseCount ?: return
+        val message = resources.getQuantityString(
+            R.plurals.inventory_browse_count, state.inventory.size, visible.size, state.inventory.size,
+        )
+        val announcement = Runnable {
+            if (currentScreen == Screen.INVENTORY && inventoryResults === results && count.text.toString() != message) {
+                count.text = message
+            }
+        }
+        inventoryCountAnnouncement = announcement
+        // One polite count after typing settles, rather than an announcement per keystroke.
+        if (announceImmediately) announcement.run() else inventoryBrowseHandler.postDelayed(announcement, 500L)
     }
 
     private fun summaryRow(label: String, value: String, emphasize: Boolean = false): View =
@@ -2073,6 +2668,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun inventoryItemCard(item: InventoryItem): View = ui.card {
+        tag = item.id
         addView(TextView(
             this@MainActivity,
             null,
@@ -2128,8 +2724,8 @@ class MainActivity : ComponentActivity() {
                 },
             ) {
                 state.adjustInventory(item.id, -1)
-                render()
-            })
+                updateInventoryBrowseResults()
+            }.apply { tag = "inventory-decrease:${item.id}" })
             addView(TextView(
                 this@MainActivity,
                 null,
@@ -2158,8 +2754,8 @@ class MainActivity : ComponentActivity() {
                 },
             ) {
                 state.adjustInventory(item.id, 1)
-                render()
-            })
+                updateInventoryBrowseResults()
+            }.apply { tag = "inventory-increase:${item.id}" })
         })
     }
 
@@ -2178,6 +2774,8 @@ class MainActivity : ComponentActivity() {
                 Screen.REVIEW -> R.id.screen_review
                 Screen.MANUAL -> R.id.screen_manual
                 Screen.INVENTORY -> R.id.screen_inventory
+                Screen.PROCESSING_DEMO -> R.id.screen_processing_demo
+                Screen.SELECTED_PROCESSING -> R.id.screen_selected_processing
             }
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(ui.color(R.color.pantry_surface))
@@ -2348,6 +2946,13 @@ class MainActivity : ComponentActivity() {
     }.getOrNull()
 
     private fun restoreSessionState(bundle: Bundle) {
+        inventoryBrowse.query = bundle.getString("inventoryBrowseQuery").orEmpty()
+        inventoryBrowse.sort = runCatching {
+            InventoryBrowseProjection.Sort.valueOf(bundle.getString("inventoryBrowseSort").orEmpty())
+        }.getOrDefault(InventoryBrowseProjection.Sort.ORIGINAL)
+        inventoryBrowse.source = runCatching {
+            InventoryBrowseProjection.Source.valueOf(bundle.getString("inventoryBrowseSource").orEmpty())
+        }.getOrDefault(InventoryBrowseProjection.Source.ALL)
         val restoredReceipt = readReceipt(bundle, "receipt")
         val restoredInventory = readInventory(bundle)
         if (restoredInventory != null) {

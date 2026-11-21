@@ -1,5 +1,6 @@
 package com.pantryproof.prototype.data
 
+import com.pantryproof.prototype.contract.v1.AutomaticExtractionStatus
 import com.pantryproof.prototype.contract.v1.PresentationConsumerContext
 import com.pantryproof.prototype.contract.v1.PresentationOutcomeStatus
 import com.pantryproof.prototype.contract.v1.PresentationField
@@ -22,7 +23,12 @@ class M3eReceiptPresentationAdapter {
     private fun mapAccepted(envelope: ReceiptPresentationV1): ReceiptPresentationUiResult =
         when (envelope.outcome.status) {
             PresentationOutcomeStatus.RESULT_AVAILABLE ->
-                ReceiptPresentationUiResult.Available(mapReceipt(requireNotNull(envelope.receipt)))
+                ReceiptPresentationUiResult.Available(
+                    mapReceipt(
+                        requireNotNull(envelope.receipt),
+                        requireNotNull(envelope.automaticExtraction).extractionStatus,
+                    ),
+                )
             PresentationOutcomeStatus.PROCESSING_UNAVAILABLE -> {
                 val failure = requireNotNull(envelope.outcome.failure)
                 ReceiptPresentationUiResult.ProcessingUnavailable(failure.code, failure.retryable)
@@ -43,6 +49,7 @@ class M3eReceiptPresentationAdapter {
 
     private fun mapReceipt(
         receipt: com.pantryproof.prototype.contract.v1.PresentationReceipt,
+        automaticExtractionStatus: AutomaticExtractionStatus,
     ): PresentedReceipt {
         val receiptFields = receipt.receiptFields.associateBy(PresentationField::role)
         return PresentedReceipt(
@@ -61,6 +68,7 @@ class M3eReceiptPresentationAdapter {
                     lineTotal = mapField(requireNotNull(fields[ReceiptFieldRole.LINE_TOTAL])),
                 )
             },
+            automaticExtractionStatus = automaticExtractionStatus,
         )
     }
 
