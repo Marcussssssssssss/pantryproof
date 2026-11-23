@@ -28,6 +28,15 @@ android {
                 "proguard-rules.pro",
             )
         }
+
+        create("s04Fake") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".s04fake"
+        }
+    }
+
+    if (gradle.startParameter.projectProperties["s04FakeInstrumentation"] == "true") {
+        testBuildType = "s04Fake"
     }
 
     compileOptions {

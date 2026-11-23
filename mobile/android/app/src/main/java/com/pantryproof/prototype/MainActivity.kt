@@ -50,6 +50,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.AccessibilityDelegateCompat
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
+import androidx.lifecycle.Lifecycle
 import com.pantryproof.prototype.data.BoundSyntheticReceiptProcessingTransport
 import com.pantryproof.prototype.image.SelectedImageSnapshotEncoder
 import com.pantryproof.prototype.ui.SelectedImageProcessingController
@@ -169,6 +170,7 @@ class MainActivity : ComponentActivity() {
     private var selectedProcessingController: SelectedImageProcessingController? = null
     private var selectedProcessingWorker: ExecutorService? = null
     private var selectedProcessingHandler: Handler? = null
+    private var renderAfterFixtureTeardown = false
     private var processingController: ReceiptProcessingUiController? = null
     private var processingWorker: ExecutorService? = null
     private var processingHandler: Handler? = null
@@ -230,7 +232,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        if ((currentScreen == Screen.PROCESSING_DEMO && processingController == null) ||
+        if (renderAfterFixtureTeardown ||
+            (currentScreen == Screen.PROCESSING_DEMO && processingController == null) ||
             (currentScreen == Screen.SELECTED_PROCESSING && selectedProcessingController == null)
         ) render()
         if (currentScreen == Screen.INVENTORY) updateInventoryBrowseResults(announceImmediately = true)
@@ -239,7 +242,9 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         inventoryCountAnnouncement?.let(inventoryBrowseHandler::removeCallbacks)
         disposeProcessingDemo()
+        val hadFixture = selectedProcessingController?.isFixture == true
         disposeSelectedImageProcessing()
+        if (hadFixture) leaveFixtureProcessingScreen(renderNow = false)
         super.onStop()
     }
 
@@ -364,6 +369,7 @@ class MainActivity : ComponentActivity() {
         if (itemCount > 0) getItemAt(0).uri else null
 
     private fun render() {
+        renderAfterFixtureTeardown = false
         when (currentScreen) {
             Screen.HOME -> renderHome()
             Screen.ADD_RECEIPT -> renderAddReceipt()
@@ -606,7 +612,7 @@ class MainActivity : ComponentActivity() {
                 }
                 if (result is ReceiptPresentationUiResult.Available) {
                     add(space(12))
-                    add(sectionTitle(getString(R.string.processing_review_title)).apply { id = R.id.processing_receipt })
+                    add(sectionTitle(getString(R.string.processing_review_title)).apply { id = R.id.processing_receipt_heading })
                     if (ReceiptReviewAnnotationPolicy.requiresManualReviewAnnotation(result)) {
                         add(ui.banner(
                             getString(R.string.review_extraction_failed_title),
@@ -640,42 +646,83 @@ class MainActivity : ComponentActivity() {
         val worker = Executors.newSingleThreadExecutor()
         selectedProcessingHandler = handler
         selectedProcessingWorker = worker
-        val transport = BoundSyntheticReceiptProcessingTransport(
-            scenario = { SyntheticReceiptProcessingTransport.Scenario.AVAILABLE },
-            dispatchResponse = { action ->
-                handler.postDelayed({ enqueueProcessingWorker(worker, action) }, 500L)
-            },
-        )
-        val controller = SelectedImageProcessingController(
-            transport = transport,
-            postWorker = { action -> enqueueProcessingWorker(worker, action) },
-            postUi = { action -> handler.post { action() } },
-            schedule = { delay, action -> handler.postDelayed({ action() }, delay) },
-            nowMillis = { SystemClock.elapsedRealtime() },
-            timeoutMillis = 10_000L,
-            newImageId = { "selected-image-" + UUID.randomUUID() },
-            newRequestId = { "selected-request-" + UUID.randomUUID() },
-            maximumBytes = SelectedImageSnapshotEncoder.MAX_RETAINED_BYTES,
-            onChanged = {
-                if (currentScreen == Screen.SELECTED_PROCESSING && selectedProcessingController != null) render()
-            },
-        )
+        val postWorker: (() -> Unit) -> Unit = { action -> enqueueProcessingWorker(worker, action) }
+        val postUi: (() -> Unit) -> Unit = { action -> handler.post { action() } }
+        val schedule: (Long, () -> Unit) -> Unit = { delay, action ->
+            handler.postAtTime({ action() }, handler, SystemClock.uptimeMillis() + delay)
+        }
+        val onChanged: () -> Unit = {
+            if (currentScreen == Screen.SELECTED_PROCESSING &&
+                selectedProcessingHandler === handler && selectedProcessingController != null
+            ) render()
+        }
         // Capture exactly this URI and crop. No worker reads later Activity selection values.
         val uri = selectedImageUri
         val crop = selectedImageCrop ?: ReceiptCrop.FULL
-        val encoder = SelectedImageSnapshotEncoder(applicationContext.contentResolver)
-        controller.prepareInput { encoder.encode(checkNotNull(uri), crop) }
+        val fixture = SelectedImageProcessingController.claimFixture(
+            owner = this,
+            preview = uri.takeIf { selectedImageSource == LocalImageSource.GALLERY && crop == ReceiptCrop.FULL },
+        )
+        val controller = if (fixture != null) {
+            SelectedImageProcessingController(fixture, postWorker, postUi, schedule, onChanged).also {
+                it.prepareInput(fixture.preparedInput)
+            }
+        } else {
+            val transport = BoundSyntheticReceiptProcessingTransport(
+                scenario = { SyntheticReceiptProcessingTransport.Scenario.AVAILABLE },
+                dispatchResponse = { action ->
+                    handler.postDelayed({ enqueueProcessingWorker(worker, action) }, 500L)
+                },
+            )
+            val encoder = SelectedImageSnapshotEncoder(applicationContext.contentResolver)
+            SelectedImageProcessingController(
+                transport = transport,
+                postWorker = postWorker,
+                postUi = postUi,
+                schedule = schedule,
+                nowMillis = { SystemClock.elapsedRealtime() },
+                timeoutMillis = 10_000L,
+                newImageId = { "selected-image-" + UUID.randomUUID() },
+                newRequestId = { "selected-request-" + UUID.randomUUID() },
+                maximumBytes = SelectedImageSnapshotEncoder.MAX_RETAINED_BYTES,
+                onChanged = onChanged,
+            ).also { it.prepareInput { encoder.encode(checkNotNull(uri), crop) } }
+        }
         selectedProcessingController = controller
         return controller
     }
 
+    internal fun resetSelectedImageFixture(binding: SelectedImageProcessingController.FixtureBinding) {
+        check(Looper.myLooper() === Looper.getMainLooper())
+        if (selectedProcessingController?.ownsFixture(binding) != true) return
+        disposeSelectedImageProcessing()
+        leaveFixtureProcessingScreen(
+            renderNow = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) &&
+                !isFinishing && !isDestroyed,
+        )
+    }
+
+    private fun leaveFixtureProcessingScreen(renderNow: Boolean) {
+        if (currentScreen != Screen.SELECTED_PROCESSING) return
+        currentScreen = backStack.pollLast() ?: Screen.PREVIEW
+        renderAfterFixtureTeardown = !renderNow
+        if (renderNow) render()
+    }
+
     private fun disposeSelectedImageProcessing() {
-        selectedProcessingController?.dispose()
+        val controller = selectedProcessingController
+        val handler = selectedProcessingHandler
+        val worker = selectedProcessingWorker
         selectedProcessingController = null
-        // Queued preparation callbacks must run to release their stale O07 snapshots.
         selectedProcessingHandler = null
-        selectedProcessingWorker?.shutdown()
         selectedProcessingWorker = null
+        try {
+            controller?.dispose()
+        } finally {
+            // Remove only deadline callbacks. Queued preparation callbacks release stale snapshots.
+            handler?.removeCallbacksAndMessages(handler)
+            worker?.shutdown()
+        }
     }
 
     private fun renderSelectedImageProcessing() {
@@ -748,7 +795,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 add(ui.actionButton(
                     getString(R.string.selected_processing_start), PantryActionStyle.PRIMARY,
-                    enabled = input == SelectedImageProcessingController.InputState.READY && current is ReceiptProcessingLifecycle.State.Ready,
+                    enabled = controller.canStart,
                     viewId = R.id.selected_processing_start,
                 ) { if (selectedProcessingController === controller) controller.start() })
             }
@@ -756,8 +803,10 @@ class MainActivity : ComponentActivity() {
                 getString(R.string.selected_processing_prepare_again), PantryActionStyle.SECONDARY,
                 viewId = R.id.selected_processing_prepare_again,
             ) {
-                disposeSelectedImageProcessing()
-                render()
+                if (selectedProcessingController === controller) {
+                    disposeSelectedImageProcessing()
+                    render()
+                }
             })
             val result = ((current as? ReceiptProcessingLifecycle.State.Finished)?.outcome
                 as? ReceiptProcessingLifecycle.Outcome.Presentation)?.result

@@ -82,6 +82,7 @@
     <item name="processing_cancel" type="id" />
     <item name="processing_new_input" type="id" />
     <item name="processing_receipt" type="id" />
+    <item name="processing_receipt_heading" type="id" />
     <item name="preview_process_selected" type="id" />
     <item name="screen_selected_processing" type="id" />
     <item name="selected_processing_status" type="id" />
