@@ -56,6 +56,7 @@ import com.pantryproof.prototype.image.SelectedImageSnapshotEncoder
 import com.pantryproof.prototype.ui.SelectedImageProcessingController
 import com.pantryproof.prototype.data.MockReceiptPresentationSource
 import com.pantryproof.prototype.data.InventoryItem
+import com.pantryproof.prototype.data.ManualInventoryStore
 import com.pantryproof.prototype.data.PresentedField
 import com.pantryproof.prototype.data.PresentedFieldStatus
 import com.pantryproof.prototype.data.PresentedReceipt
@@ -140,7 +141,7 @@ class MainActivity : ComponentActivity() {
         val container: View,
     )
 
-    private val state = PantryUiState(MockReceiptPresentationSource())
+    private lateinit var state: PantryUiState
     private val ui by lazy { PantryUiComponents(this) }
     private val captureStore by lazy { ReceiptCaptureStore(this) }
     private val backStack = ArrayDeque<Screen>()
@@ -191,6 +192,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        state = PantryUiState(MockReceiptPresentationSource(), ManualInventoryStore(applicationContext))
         @Suppress("DEPRECATION")
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         selectedImageUri = savedInstanceState?.getString("selectedImageUri")?.let(Uri::parse)
@@ -277,7 +279,7 @@ class MainActivity : ComponentActivity() {
         outState.putBoolean("temporaryConfirmationVisible", temporaryConfirmationVisible)
         outState.putBoolean("reviewValidationAttempted", reviewValidationAttempted)
         state.receipt?.let { writeReceipt(outState, "receipt", it) }
-        writeInventory(outState, state.inventory)
+        writeInventory(outState, state.inventory.filterNot { it.id.startsWith(PantryUiState.MANUAL_ROW_PREFIX) })
         outState.putBoolean("demoConfirmed", state.demoConfirmed)
         reviewDraft?.let { writeDraft(outState, it) }
         manualDraft?.let { draft ->
@@ -406,7 +408,9 @@ class MainActivity : ComponentActivity() {
                 state.inventory.size,
             ),
             actionLabel = getString(R.string.home_inventory_action),
-            badge = getString(R.string.status_temporary),
+            badge = getString(
+                if (hasManualInventory()) R.string.inventory_saved_locally else R.string.status_temporary,
+            ),
             viewId = R.id.home_inventory,
         ) { navigate(Screen.INVENTORY) })
         add(space(12))
@@ -2252,7 +2256,7 @@ class MainActivity : ComponentActivity() {
             }
             appendLine()
             appendLine(getString(R.string.manual_review_total, MoneyFormatter.ringgit(receipt.receiptTotal)))
-            append(getString(R.string.manual_review_session_notice))
+            append(getString(R.string.manual_review_storage_notice))
         }
         AlertDialog.Builder(this)
             .setTitle(R.string.manual_review_title)
@@ -2288,22 +2292,31 @@ class MainActivity : ComponentActivity() {
             .show()
     }
 
+    private fun hasManualInventory() =
+        state.inventory.any { it.id.startsWith(PantryUiState.MANUAL_ROW_PREFIX) }
+
     private fun renderInventory() = setScreen(
         getString(if (resources.configuration.fontScale >= 1.3f || resources.configuration.screenWidthDp < 360) {
             R.string.inventory_browse_compact_title
         } else R.string.inventory_title), true,
     ) {
         add(ui.banner(
-            getString(R.string.inventory_banner_title),
             getString(
                 when {
-                    state.inventory.any { it.id.startsWith(PantryUiState.MANUAL_ROW_PREFIX) } ->
-                        R.string.manual_inventory_banner
+                    state.manualInventoryLoadFailed -> R.string.manual_inventory_load_failed_title
+                    hasManualInventory() -> R.string.inventory_saved_locally
+                    else -> R.string.inventory_banner_title
+                },
+            ),
+            getString(
+                when {
+                    state.manualInventoryLoadFailed -> R.string.manual_inventory_load_failed
+                    hasManualInventory() -> R.string.manual_inventory_banner
                     state.demoConfirmed -> R.string.inventory_banner_confirmed
                     else -> R.string.inventory_banner_mock
                 },
             ),
-            PantryBannerTone.SUCCESS,
+            if (state.manualInventoryLoadFailed) PantryBannerTone.ERROR else PantryBannerTone.SUCCESS,
         ))
         add(space(16))
         add(TextView(this@MainActivity, null, 0, R.style.TextAppearance_PantryProof_Body).apply {
@@ -2772,8 +2785,7 @@ class MainActivity : ComponentActivity() {
                     View.NO_ID
                 },
             ) {
-                state.adjustInventory(item.id, -1)
-                updateInventoryBrowseResults()
+                adjustInventoryQuantity(item.id, -1)
             }.apply { tag = "inventory-decrease:${item.id}" })
             addView(TextView(
                 this@MainActivity,
@@ -2802,10 +2814,21 @@ class MainActivity : ComponentActivity() {
                     View.NO_ID
                 },
             ) {
-                state.adjustInventory(item.id, 1)
-                updateInventoryBrowseResults()
+                adjustInventoryQuantity(item.id, 1)
             }.apply { tag = "inventory-increase:${item.id}" })
         })
+    }
+
+    private fun adjustInventoryQuantity(id: String, delta: Int) {
+        if (state.adjustInventory(id, delta)) {
+            updateInventoryBrowseResults()
+        } else {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.manual_inventory_quantity_failed_title)
+                .setMessage(R.string.manual_inventory_quantity_failed)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+        }
     }
 
     private fun setScreen(

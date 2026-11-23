@@ -1,5 +1,7 @@
 package com.pantryproof.prototype.ui
 
+import com.pantryproof.prototype.data.InventoryItem
+import com.pantryproof.prototype.data.ManualInventoryPersistence
 import com.pantryproof.prototype.data.MockReceiptPresentationSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -181,5 +183,64 @@ class ManualReceiptTest {
             restored.inventory.filter { it.id.startsWith(PantryUiState.MANUAL_ROW_PREFIX) }
                 .map { it.quantity },
         )
+    }
+
+    @Test
+    fun failedCommitKeepsDraftAndInventoryForRetryAndOnlyManualRowsAreSaved() {
+        val store = TestManualInventoryPersistence()
+        val state = PantryUiState(MockReceiptPresentationSource(), store)
+        val draft = draftWithRows(2)
+        val beforeReview = draft.deepCopy()
+        state.adjustInventory("stock-rice", 1)
+        assertTrue(state.confirmForInventoryPreview())
+        val inventoryBefore = state.inventory.toList()
+        assertEquals(emptyList<InventoryItem>(), store.committed)
+
+        store.failWrite = true
+        assertFalse(state.confirmManualReceipt(draft))
+        assertEquals(beforeReview, draft)
+        assertEquals(inventoryBefore, state.inventory)
+        assertEquals(emptyList<InventoryItem>(), store.committed)
+
+        store.failWrite = false
+        assertTrue(state.confirmManualReceipt(draft))
+        assertEquals(inventoryBefore + store.committed, state.inventory)
+        assertEquals(listOf("manual-receipt-oats-0", "manual-receipt-oats-1"), store.committed.map { it.id })
+        assertEquals(listOf("Oats", "Oats"), store.committed.map { it.name })
+        assertFalse(state.confirmManualReceipt(draft))
+        assertEquals(2, store.committed.size)
+
+        val fresh = PantryUiState(MockReceiptPresentationSource(), store)
+        assertEquals(MockReceiptPresentationSource().syntheticInventory() + store.committed, fresh.inventory)
+        assertFalse(fresh.demoConfirmed)
+    }
+
+    @Test
+    fun confirmationChecksCommittedIdsEvenWhenAnotherActivityWasOpenedEarlier() {
+        val store = TestManualInventoryPersistence()
+        val first = PantryUiState(MockReceiptPresentationSource(), store)
+        val earlier = PantryUiState(MockReceiptPresentationSource(), store)
+        assertTrue(first.confirmManualReceipt(draft()))
+
+        assertFalse(earlier.confirmManualReceipt(draft()))
+        assertTrue(earlier.confirmManualReceipt(draft("tea")))
+        assertEquals(listOf("manual-receipt-oats", "manual-receipt-tea"), store.committed.map { it.id })
+    }
+}
+
+internal class TestManualInventoryPersistence(
+    var committed: List<InventoryItem> = emptyList(),
+) : ManualInventoryPersistence {
+    var failRead = false
+    var failWrite = false
+
+    override fun load(): List<InventoryItem>? = if (failRead) null else committed.toList()
+
+    override fun update(change: (List<InventoryItem>) -> List<InventoryItem>?): List<InventoryItem>? {
+        val current = load() ?: return null
+        val updated = change(current) ?: return null
+        if (failWrite && updated != current) return null
+        committed = updated.toList()
+        return committed
     }
 }
