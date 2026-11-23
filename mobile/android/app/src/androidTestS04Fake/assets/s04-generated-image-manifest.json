@@ -1,0 +1,144 @@
+{
+  "scope": "Generated S04 static evidence only. D01 conformance and independent Leng verification pending.",
+  "version": "S04-generated-rgb8-quadrants-v1",
+  "bounds": {
+    "encodedMaxBytes": 32768,
+    "pixels": 12288,
+    "scanlinesMaxBytes": 36960,
+    "exactRgbBytes": 36864
+  },
+  "encoding": "Read palette as [top, bottom][left, right]. Pixel order is top to bottom, left to right, RGB. Split at x=64 and y=48. Prefix each row with filter byte 0. zlib header 78 01. Emit one final DEFLATE fixed-Huffman block; emit 385 literal bytes on each of rows y=0 and y=48. Every other row uses length 258 and length 127 matches at distance 385. Emit EOB 256 and zero pad to octet. Append big-endian Adler-32 of scanlines. PNG signature then IHDR (128 by 96, 8-bit RGB type 2, methods 0 and no interlace), one IDAT containing zlib, then empty IEND. Standard big-endian chunk length and CRC-32 over type plus chunk data.",
+  "staticVerification": "Read exact PNG files, bounded independent .NET zlib inflation, separate CRC and Adler checks and every pixel compared to palette. SHA-256 over exact encoded and reconstructed RGB bytes.",
+  "images": [
+    {
+      "id": "G1",
+      "file": "s04-g1.png",
+      "encodedBytes": 1352,
+      "pngSha256": "865DA7F5BA12869F3A1C31E1A8A5B6C4A9E211D5A634DE79F7840F0DFDE81B24",
+      "width": 128,
+      "height": 96,
+      "pixels": 12288,
+      "bitDepth": 8,
+      "colorType": "RGB (PNG type 2)",
+      "interlace": 0,
+      "scanlineBytes": 36960,
+      "rgbBytes": 36864,
+      "rgbSha256": "243749257BEBC704561E0F34873F199C7D125556132E68AE10950B2E7E93E25B",
+      "palette": [
+        [
+          [
+            32,
+            64,
+            96
+          ],
+          [
+            96,
+            64,
+            32
+          ]
+        ],
+        [
+          [
+            16,
+            48,
+            80
+          ],
+          [
+            80,
+            48,
+            16
+          ]
+        ]
+      ],
+      "adler32": "59AD81D2",
+      "chunks": [
+        {
+          "type": "IHDR",
+          "dataLength": 13,
+          "crc32": "5A18ED1E"
+        },
+        {
+          "type": "IDAT",
+          "dataLength": 1295,
+          "crc32": "A543D78D"
+        },
+        {
+          "type": "IEND",
+          "dataLength": 0,
+          "crc32": "AE426082"
+        }
+      ],
+      "zlib": {
+        "deflateBytes": 1289,
+        "meaningfulDeflateBits": 10306,
+        "block": "one final fixed-Huffman block",
+        "cmfFlg": "7801"
+      }
+    },
+    {
+      "id": "G2",
+      "file": "s04-g2.png",
+      "encodedBytes": 1352,
+      "pngSha256": "586D92088E58AE38BA60CF100BA9AFF9DA9C1CE7CFE7F87FB9763212CC64EC64",
+      "width": 128,
+      "height": 96,
+      "pixels": 12288,
+      "bitDepth": 8,
+      "colorType": "RGB (PNG type 2)",
+      "interlace": 0,
+      "scanlineBytes": 36960,
+      "rgbBytes": 36864,
+      "rgbSha256": "D648B2F6CF2013B9E1228D931351EBEBEC25BF8DD5D9330319711BC805E2A10C",
+      "palette": [
+        [
+          [
+            96,
+            32,
+            64
+          ],
+          [
+            64,
+            96,
+            32
+          ]
+        ],
+        [
+          [
+            80,
+            16,
+            48
+          ],
+          [
+            48,
+            80,
+            16
+          ]
+        ]
+      ],
+      "adler32": "5A0781D2",
+      "chunks": [
+        {
+          "type": "IHDR",
+          "dataLength": 13,
+          "crc32": "5A18ED1E"
+        },
+        {
+          "type": "IDAT",
+          "dataLength": 1295,
+          "crc32": "72F167B9"
+        },
+        {
+          "type": "IEND",
+          "dataLength": 0,
+          "crc32": "AE426082"
+        }
+      ],
+      "zlib": {
+        "deflateBytes": 1289,
+        "meaningfulDeflateBits": 10306,
+        "block": "one final fixed-Huffman block",
+        "cmfFlg": "7801"
+      }
+    }
+  ]
+}
