@@ -448,6 +448,17 @@ class MainActivity : ComponentActivity() {
             getString(R.string.processing_demo_title), PantryActionStyle.SECONDARY,
             viewId = R.id.home_processing_demo,
         ) { navigate(Screen.PROCESSING_DEMO) })
+        if (T09ProcessingConfig.isCapable(packageName)) {
+            val configuration = Intent().setClassName(
+                packageName, "com.pantryproof.prototype.T09DebugConfigurationActivity",
+            )
+            packageManager.resolveActivity(configuration, 0)?.let { entry ->
+                add(space(12))
+                add(ui.actionButton(entry.loadLabel(packageManager).toString(), PantryActionStyle.SECONDARY) {
+                    startActivity(configuration)
+                })
+            }
+        }
         add(space(24))
         add(ui.banner(
             getString(R.string.home_boundary_title),

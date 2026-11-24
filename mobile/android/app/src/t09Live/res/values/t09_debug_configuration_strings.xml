@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="t09_debug_configuration_title">Configure development processing</string>
+    <string name="t09_debug_configuration_instructions">Enter the temporary credential for one receipt processing session. You can then select a receipt image.</string>
+    <string name="t09_debug_bearer_hint">Ephemeral bearer credential</string>
+    <string name="t09_debug_configure">Configure one session</string>
+    <string name="t09_debug_invalid_bearer">Enter a valid bearer credential without the Bearer prefix or spaces.</string>
+</resources>
