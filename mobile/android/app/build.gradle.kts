@@ -33,6 +33,11 @@ android {
             initWith(getByName("debug"))
             applicationIdSuffix = ".s04fake"
         }
+
+        create("t09Live") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".t09live"
+        }
     }
 
     if (gradle.startParameter.projectProperties["s04FakeInstrumentation"] == "true") {

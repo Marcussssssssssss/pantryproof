@@ -20,6 +20,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.security.NetworkSecurityPolicy
 import android.text.Editable
 import android.text.InputFilter
 import android.text.InputType
@@ -66,6 +67,8 @@ import com.pantryproof.prototype.data.ReceiptItem
 import com.pantryproof.prototype.data.ReceiptPresentationUiResult
 import com.pantryproof.prototype.data.ReceiptProcessingLifecycle
 import com.pantryproof.prototype.data.SyntheticReceiptProcessingTransport
+import com.pantryproof.prototype.data.T09HttpTransport
+import com.pantryproof.prototype.data.T09ProcessingConfig
 import com.pantryproof.prototype.image.ReceiptCaptureStore
 import com.pantryproof.prototype.image.CropEdge
 import com.pantryproof.prototype.image.ReceiptCrop
@@ -99,7 +102,7 @@ import kotlin.math.roundToInt
 @SuppressLint("SetTextI18n", "ExifInterface")
 class MainActivity : ComponentActivity() {
     private enum class Screen {
-        HOME, ADD_RECEIPT, PREVIEW, DETAILS, REVIEW, MANUAL, INVENTORY, PROCESSING_DEMO, SELECTED_PROCESSING,
+        HOME, ADD_RECEIPT, PREVIEW, DETAILS, REVIEW, MANUAL, INVENTORY, PROCESSING_DEMO, SELECTED_PROCESSING, T09_PROCESSING,
     }
 
     private enum class LocalImageSource {
@@ -169,6 +172,9 @@ class MainActivity : ComponentActivity() {
     private var inventoryCountAnnouncement: Runnable? = null
     private var screenScrollView: ScrollView? = null
     private var selectedProcessingController: SelectedImageProcessingController? = null
+    private var liveSession: T09ProcessingConfig.Session? = null
+    private var livePhase = T09HttpTransport.Phase.PREPARING
+    private var liveCancelled = false
     private var selectedProcessingWorker: ExecutorService? = null
     private var selectedProcessingHandler: Handler? = null
     private var renderAfterFixtureTeardown = false
@@ -213,6 +219,9 @@ class MainActivity : ComponentActivity() {
         savedInstanceState?.getStringArrayList("backStack")
             ?.mapNotNull { runCatching { Screen.valueOf(it) }.getOrNull() }
             ?.forEach(backStack::addLast)
+        if (currentScreen == Screen.T09_PROCESSING) {
+            currentScreen = backStack.pollLast() ?: Screen.PREVIEW
+        }
         imageInputNotice = savedInstanceState?.getString("imageInputNotice")
             ?.let { runCatching { ImageInputNotice.valueOf(it) }.getOrNull() }
         restoreCaptureFiles()
@@ -245,8 +254,13 @@ class MainActivity : ComponentActivity() {
         inventoryCountAnnouncement?.let(inventoryBrowseHandler::removeCallbacks)
         disposeProcessingDemo()
         val hadFixture = selectedProcessingController?.isFixture == true
+        val hadLive = currentScreen == Screen.T09_PROCESSING
         disposeSelectedImageProcessing()
         if (hadFixture) leaveFixtureProcessingScreen(renderNow = false)
+        if (hadLive) {
+            currentScreen = backStack.pollLast() ?: Screen.PREVIEW
+            renderAfterFixtureTeardown = true
+        }
         super.onStop()
     }
 
@@ -292,7 +306,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleBackNavigation() {
-        if (currentScreen == Screen.SELECTED_PROCESSING) {
+        if (currentScreen == Screen.SELECTED_PROCESSING || currentScreen == Screen.T09_PROCESSING) {
             disposeSelectedImageProcessing()
             currentScreen = backStack.pollLast() ?: Screen.PREVIEW
             render()
@@ -382,6 +396,7 @@ class MainActivity : ComponentActivity() {
             Screen.INVENTORY -> renderInventory()
             Screen.PROCESSING_DEMO -> renderProcessingDemo()
             Screen.SELECTED_PROCESSING -> renderSelectedImageProcessing()
+            Screen.T09_PROCESSING -> renderSelectedImageProcessing(live = true)
         }
     }
 
@@ -644,7 +659,7 @@ class MainActivity : ComponentActivity() {
             R.id.processing_status, initialEntry = previousRoot == null)
     }
 
-    private fun ensureSelectedImageProcessing(): SelectedImageProcessingController {
+    private fun ensureSelectedImageProcessing(live: Boolean): SelectedImageProcessingController {
         selectedProcessingController?.let { return it }
         val handler = Handler(Looper.getMainLooper())
         val worker = Executors.newSingleThreadExecutor()
@@ -655,19 +670,48 @@ class MainActivity : ComponentActivity() {
         val schedule: (Long, () -> Unit) -> Unit = { delay, action ->
             handler.postAtTime({ action() }, handler, SystemClock.uptimeMillis() + delay)
         }
+        val processingScreen = if (live) Screen.T09_PROCESSING else Screen.SELECTED_PROCESSING
         val onChanged: () -> Unit = {
-            if (currentScreen == Screen.SELECTED_PROCESSING &&
+            if (currentScreen == processingScreen &&
                 selectedProcessingHandler === handler && selectedProcessingController != null
             ) render()
         }
         // Capture exactly this URI and crop. No worker reads later Activity selection values.
         val uri = selectedImageUri
         val crop = selectedImageCrop ?: ReceiptCrop.FULL
-        val fixture = SelectedImageProcessingController.claimFixture(
+        val fixture = if (live) null else SelectedImageProcessingController.claimFixture(
             owner = this,
             preview = uri.takeIf { selectedImageSource == LocalImageSource.GALLERY && crop == ReceiptCrop.FULL },
         )
-        val controller = if (fixture != null) {
+        val controller = if (live) {
+            val encoder = SelectedImageSnapshotEncoder(applicationContext.contentResolver)
+            val transport = T09HttpTransport(
+                session = checkNotNull(liveSession),
+                nowMillis = SystemClock::elapsedRealtime,
+                preparePng = { encoder.encode(checkNotNull(uri), crop) },
+                onPhase = { request, phase ->
+                    handler.post {
+                        val pending = selectedProcessingController?.state as? ReceiptProcessingLifecycle.State.Pending
+                        if (currentScreen == processingScreen && selectedProcessingHandler === handler &&
+                            pending?.request === request
+                        ) {
+                            livePhase = phase
+                            render()
+                        }
+                    }
+                },
+            )
+            SelectedImageProcessingController(
+                transport = transport,
+                postWorker = postWorker,
+                postUi = postUi,
+                schedule = schedule,
+                nowMillis = SystemClock::elapsedRealtime,
+                newImageId = { "selected-image-" + UUID.randomUUID() },
+                newRequestId = { "selected-request-" + UUID.randomUUID() },
+                onChanged = onChanged,
+            ).also { it.selectLiveInput() }
+        } else if (fixture != null) {
             SelectedImageProcessingController(fixture, postWorker, postUi, schedule, onChanged).also {
                 it.prepareInput(fixture.preparedInput)
             }
@@ -723,14 +767,17 @@ class MainActivity : ComponentActivity() {
         try {
             controller?.dispose()
         } finally {
+            liveSession?.clear()
+            liveSession = null
             // Remove only deadline callbacks. Queued preparation callbacks release stale snapshots.
             handler?.removeCallbacksAndMessages(handler)
             worker?.shutdown()
         }
     }
 
-    private fun renderSelectedImageProcessing() {
-        val controller = ensureSelectedImageProcessing()
+    private fun renderSelectedImageProcessing(live: Boolean = false) {
+        val controller = ensureSelectedImageProcessing(live)
+        val processingScreen = if (live) Screen.T09_PROCESSING else Screen.SELECTED_PROCESSING
         // Only the current controller's rendered tree may supply restoration intent.
         val previousRoot = findViewById<View>(R.id.screen_selected_processing)?.takeIf { it.tag === controller }
         val inputFocus = previousRoot?.let { processingFocusedView(it, accessibility = false) }
@@ -739,13 +786,13 @@ class MainActivity : ComponentActivity() {
         val accessibilityId = previousRoot?.let { processingFocusedView(it, accessibility = true) }?.id
         val current = controller.state
         val input = controller.inputState
-        setScreen(getString(R.string.selected_processing_title), true) {
-            add(bodyText(getString(R.string.selected_processing_fictional)))
+        setScreen(getString(if (live) R.string.t09_processing_title else R.string.selected_processing_title), true) {
+            add(bodyText(getString(if (live) R.string.t09_processing_notice else R.string.selected_processing_fictional)))
             add(bodyText(getString(if (selectedImageCrop == null) {
                 R.string.selected_processing_full
             } else R.string.selected_processing_cropped)))
             add(space(12))
-            val panel = when (input) {
+            val panel = if (live) liveProcessingPanel(current) else when (input) {
                 SelectedImageProcessingController.InputState.PREPARING -> ui.statePanel(
                     getString(R.string.selected_processing_preparing),
                     getString(R.string.selected_processing_limits), PantryBannerTone.INFO,
@@ -788,22 +835,36 @@ class MainActivity : ComponentActivity() {
             if (input == SelectedImageProcessingController.InputState.PREPARING || current is ReceiptProcessingLifecycle.State.Pending) {
                 add(ProgressBar(this@MainActivity).apply {
                     id = R.id.selected_processing_progress
-                    contentDescription = getString(R.string.processing_pending)
+                    contentDescription = getString(if (live) R.string.t09_processing_waiting else R.string.processing_pending)
                 })
             }
             if (current is ReceiptProcessingLifecycle.State.Pending) {
                 add(ui.actionButton(
                     getString(R.string.processing_cancel), PantryActionStyle.SECONDARY,
                     viewId = R.id.selected_processing_cancel,
-                ) { if (selectedProcessingController === controller) controller.cancel() })
+                ) {
+                    if (selectedProcessingController === controller) {
+                        if (live) liveCancelled = true
+                        controller.cancel()
+                    }
+                })
             } else {
                 add(ui.actionButton(
-                    getString(R.string.selected_processing_start), PantryActionStyle.PRIMARY,
+                    getString(if (live) R.string.t09_processing_start else R.string.selected_processing_start),
+                    PantryActionStyle.PRIMARY,
                     enabled = controller.canStart,
                     viewId = R.id.selected_processing_start,
-                ) { if (selectedProcessingController === controller) controller.start() })
+                ) {
+                    if (selectedProcessingController === controller) {
+                        if (live) {
+                            livePhase = T09HttpTransport.Phase.PREPARING
+                            liveCancelled = false
+                        }
+                        controller.start()
+                    }
+                })
             }
-            add(ui.actionButton(
+            if (!live) add(ui.actionButton(
                 getString(R.string.selected_processing_prepare_again), PantryActionStyle.SECONDARY,
                 viewId = R.id.selected_processing_prepare_again,
             ) {
@@ -816,7 +877,7 @@ class MainActivity : ComponentActivity() {
                 as? ReceiptProcessingLifecycle.Outcome.Presentation)?.result
             if (result is ReceiptPresentationUiResult.Available) {
                 add(sectionTitle(getString(R.string.processing_review_title)))
-                add(bodyText(getString(R.string.selected_processing_fictional)))
+                if (!live) add(bodyText(getString(R.string.selected_processing_fictional)))
                 if (ReceiptReviewAnnotationPolicy.requiresManualReviewAnnotation(result)) {
                     add(ui.banner(
                         getString(R.string.review_extraction_failed_title),
@@ -834,11 +895,46 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        if (currentScreen != Screen.SELECTED_PROCESSING || selectedProcessingController !== controller) return
+        if (currentScreen != processingScreen || selectedProcessingController !== controller) return
         val root = findViewById<View>(R.id.screen_selected_processing) ?: return
         root.tag = controller
         restoreProcessingFocus(root, inputId, inputInTouchMode, accessibilityId,
             R.id.selected_processing_status, initialEntry = previousRoot == null)
+    }
+
+    private fun liveProcessingPanel(current: ReceiptProcessingLifecycle.State): View {
+        if (current is ReceiptProcessingLifecycle.State.Finished) {
+            return when (val outcome = current.outcome) {
+                is ReceiptProcessingLifecycle.Outcome.Presentation ->
+                    if (outcome.result is ReceiptPresentationUiResult.Available) {
+                        ui.statePanel(
+                            getString(R.string.t09_processing_success), getString(R.string.t09_processing_read_only),
+                            PantryBannerTone.SUCCESS,
+                        )
+                    } else presentationStatePanel(outcome.result)
+                ReceiptProcessingLifecycle.Outcome.LocalFailure.TIMEOUT -> ui.statePanel(
+                    getString(R.string.t09_processing_timeout), getString(R.string.t09_processing_recovery),
+                    PantryBannerTone.INFO,
+                )
+                else -> ui.statePanel(
+                    getString(R.string.t09_processing_failure), getString(R.string.t09_processing_recovery),
+                    PantryBannerTone.ERROR,
+                )
+            }
+        }
+        val title = if (current is ReceiptProcessingLifecycle.State.Pending) {
+            when (livePhase) {
+                T09HttpTransport.Phase.PREPARING -> R.string.selected_processing_preparing
+                T09HttpTransport.Phase.UPLOADING -> R.string.t09_processing_uploading
+                T09HttpTransport.Phase.WAITING_FOR_RESULT -> R.string.t09_processing_waiting
+            }
+        } else if (liveCancelled) R.string.t09_processing_cancelled else R.string.t09_processing_ready
+        val body = when {
+            current is ReceiptProcessingLifecycle.State.Pending -> R.string.t09_processing_can_cancel
+            liveCancelled -> R.string.t09_processing_cancelled_body
+            else -> R.string.t09_processing_ready_body
+        }
+        return ui.statePanel(getString(title), getString(body), PantryBannerTone.INFO)
     }
 
     private fun renderAddReceipt() = setScreen(getString(R.string.add_receipt_title), true) {
@@ -1150,6 +1246,20 @@ class MainActivity : ComponentActivity() {
                     getString(R.string.selected_processing_action), PantryActionStyle.SECONDARY,
                     viewId = R.id.preview_process_selected,
                 ) { navigate(Screen.SELECTED_PROCESSING) })
+                if (T09ProcessingConfig.isCapable(packageName) && T09ProcessingConfig.isConfigured() &&
+                    NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted(T09ProcessingConfig.HOST)
+                ) {
+                    add(ui.actionButton(
+                        getString(R.string.t09_processing_action), PantryActionStyle.SECONDARY,
+                    ) {
+                        T09ProcessingConfig.take()?.let { session ->
+                            liveSession = session
+                            livePhase = T09HttpTransport.Phase.PREPARING
+                            liveCancelled = false
+                            navigate(Screen.T09_PROCESSING)
+                        }
+                    })
+                }
                 if (selectedImageCrop != null) {
                     add(bodyText(getString(R.string.crop_applied)).apply { id = R.id.preview_crop_status })
                 }
@@ -2847,7 +2957,7 @@ class MainActivity : ComponentActivity() {
                 Screen.MANUAL -> R.id.screen_manual
                 Screen.INVENTORY -> R.id.screen_inventory
                 Screen.PROCESSING_DEMO -> R.id.screen_processing_demo
-                Screen.SELECTED_PROCESSING -> R.id.screen_selected_processing
+                Screen.SELECTED_PROCESSING, Screen.T09_PROCESSING -> R.id.screen_selected_processing
             }
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(ui.color(R.color.pantry_surface))

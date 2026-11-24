@@ -58,6 +58,7 @@ class ReceiptProcessingLifecycleTest {
         assertEquals(F01.requestId, request.context.expectedRequestId)
         assertEquals(F01.imageId, request.context.expectedImageId)
         assertEquals(PresentationConsumerMode.FIXTURE, request.context.mode)
+        assertNull(request.deadlineElapsedMillis)
         assertEquals(100L, h.deadlines.single())
         assertTrue(h.completed.isEmpty())
         h.assertTerminals()
@@ -174,6 +175,37 @@ class ReceiptProcessingLifecycleTest {
         call.bytes(F01)
         h.drain()
         h.assertRejected(call.request, ReceiptPresentationIssueCodes.SOURCE_MODE_MISMATCH)
+    }
+
+    @Test
+    fun liveStartDeadlineSurvivesWorkerDelayAndValidatedOutputDoesNotTouchStock() {
+        val h = harness()
+        h.select(F01)
+        h.now = 45
+        val request = h.submit(F01, PresentationConsumerMode.LIVE)
+        h.now = 75
+        h.drain()
+        val call = h.fake.calls.single()
+        assertSame(request, call.request)
+        assertEquals(145L, request.deadlineElapsedMillis)
+        assertEquals(listOf(145L), h.deadlines)
+        call.bytes(F01.envelope().decodeToString().replace("SYNTHETIC_FIXTURE", "LOCAL_IMAGE").encodeToByteArray())
+        h.drain()
+        assertTrue(h.presentation(request).result is ReceiptPresentationUiResult.Available)
+        h.assertTerminals(request)
+    }
+
+    @Test
+    fun liveCancellationDropsTheTransportTimeoutAndLateResult() {
+        val h = harness()
+        val call = h.start(F01, PresentationConsumerMode.LIVE)
+        h.lifecycle.cancel()
+        call.deliver(ReceiptProcessingDelivery.TimedOut)
+        call.bytes(F01)
+        h.drain()
+        assertTrue(h.lifecycle.state is State.Ready)
+        assertTrue(h.completed.isEmpty())
+        h.assertTerminals()
     }
 
     @Test
