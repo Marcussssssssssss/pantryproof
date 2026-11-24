@@ -34,8 +34,18 @@ internal class ManualInventoryStore(
         private val lock = Any()
         const val ROW_PREFIX = "manual-receipt-"
         const val ROW_STATE = "Manually entered receipt"
+        const val LIVE_ROW_PREFIX = "live-receipt-"
+        const val LIVE_ROW_STATE = "Confirmed receipt scan"
         const val MIN_QUANTITY = 0
         const val MAX_QUANTITY = 99
+
+        fun isDurableRowId(id: String): Boolean = rowState(id) != null
+
+        private fun rowState(id: String): String? = when {
+            id.startsWith(ROW_PREFIX) && id.removePrefix(ROW_PREFIX).isNotBlank() -> ROW_STATE
+            id.startsWith(LIVE_ROW_PREFIX) && id.removePrefix(LIVE_ROW_PREFIX).isNotBlank() -> LIVE_ROW_STATE
+            else -> null
+        }
     }
 
     override fun load(): List<InventoryItem>? = synchronized(lock) {
@@ -65,11 +75,12 @@ internal class ManualInventoryStore(
         val rows = document.getJSONArray("rows")
         return List(rows.length()) { index ->
             val row = rows.getJSONObject(index)
+            val id = row.get("id") as? String ?: throw JSONException("Expected an item ID")
             InventoryItem(
-                id = row.get("id") as? String ?: throw JSONException("Expected an item ID"),
+                id = id,
                 name = row.get("name") as? String ?: throw JSONException("Expected an item name"),
                 quantity = row.get("quantity") as? Int ?: throw JSONException("Expected a whole quantity"),
-                state = ROW_STATE,
+                state = rowState(id) ?: throw JSONException("Unrecognized item ID"),
             )
         }.also(::validate)
     }
@@ -100,10 +111,9 @@ internal class ManualInventoryStore(
     private fun validate(rows: List<InventoryItem>) {
         val ids = mutableSetOf<String>()
         for (row in rows) {
-            require(row.id.startsWith(ROW_PREFIX) && row.id.removePrefix(ROW_PREFIX).isNotBlank())
             require(ids.add(row.id))
             require(row.name.isNotBlank() && row.quantity in MIN_QUANTITY..MAX_QUANTITY)
-            require(row.state == ROW_STATE)
+            require(row.state == rowState(row.id))
         }
     }
 

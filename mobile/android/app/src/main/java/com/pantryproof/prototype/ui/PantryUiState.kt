@@ -76,8 +76,8 @@ class PantryUiState internal constructor(
                 state = "Temporary receipt preview",
             )
         }
-        val manualRows = inventory.filter { it.id.startsWith(MANUAL_ROW_PREFIX) }
-        inventory = (existingStock + receiptPreview + manualRows).toMutableList()
+        val durableRows = inventory.filter { ManualInventoryStore.isDurableRowId(it.id) }
+        inventory = (existingStock + receiptPreview + durableRows).toMutableList()
         demoConfirmed = true
         return true
     }
@@ -103,10 +103,29 @@ class PantryUiState internal constructor(
         }
     }
 
+    internal enum class LiveConfirmation { SAVED, INVALID, ALREADY_SAVED, SAVE_FAILED }
+
+    internal fun confirmLiveReceipt(
+        draft: LiveReceiptReviewDraft,
+        reviewed: LiveReceiptReviewDraft.Selection.Ready,
+    ): LiveConfirmation {
+        if (draft.selection() != reviewed) return LiveConfirmation.INVALID
+        if (manualInventory == null) return LiveConfirmation.SAVE_FAILED
+        var alreadySaved = false
+        val saved = updateManualInventory { committed ->
+            alreadySaved = committed.any { it.id.startsWith(reviewed.receiptIdPrefix) }
+            if (alreadySaved) null else committed + reviewed.rows
+        }
+        if (alreadySaved) return LiveConfirmation.ALREADY_SAVED
+        if (!saved) return LiveConfirmation.SAVE_FAILED
+        draft.discard()
+        return LiveConfirmation.SAVED
+    }
+
     fun adjustInventory(id: String, delta: Int): Boolean {
         val index = inventory.indexOfFirst { it.id == id }
         if (index < 0) return false
-        if (manualInventory != null && id.startsWith(MANUAL_ROW_PREFIX)) {
+        if (manualInventory != null && ManualInventoryStore.isDurableRowId(id)) {
             return updateManualInventory { committed ->
                 if (committed.none { it.id == id }) null
                 else committed.map { row -> if (row.id == id) adjustQuantity(row, delta) else row }
@@ -126,7 +145,7 @@ class PantryUiState internal constructor(
 
     private fun updateManualInventory(change: (List<InventoryItem>) -> List<InventoryItem>?): Boolean {
         val committed = checkNotNull(manualInventory).update(change) ?: return false
-        inventory.removeAll { it.id.startsWith(MANUAL_ROW_PREFIX) }
+        inventory.removeAll { ManualInventoryStore.isDurableRowId(it.id) }
         inventory.addAll(committed)
         manualInventoryLoadFailed = false
         return true
@@ -138,7 +157,7 @@ class PantryUiState internal constructor(
         restoredDemoConfirmed: Boolean,
     ) {
         val sessionInventory = if (manualInventory == null) restoredInventory else
-            restoredInventory.filterNot { it.id.startsWith(MANUAL_ROW_PREFIX) }
+            restoredInventory.filterNot { ManualInventoryStore.isDurableRowId(it.id) }
         // Reject an invalid saved inventory as a whole; never normalize admitted stock.
         if (sessionInventory.any { it.quantity !in MIN_INVENTORY_QUANTITY..MAX_INVENTORY_QUANTITY }) return
         receipt = if (presentationResult is ReceiptPresentationUiResult.Available) {
@@ -160,14 +179,14 @@ class PantryUiState internal constructor(
         val receiptQuantitiesEligible =
             receipt?.items?.all { it.quantity in 1..MAX_INVENTORY_QUANTITY } == true
         demoConfirmed = restoredDemoConfirmed && receiptQuantitiesEligible && receiptRowsMatch
-        val committedManualRows = if (manualInventory == null) emptyList()
-        else inventory.filter { it.id.startsWith(MANUAL_ROW_PREFIX) }
+        val committedRows = if (manualInventory == null) emptyList()
+        else inventory.filter { ManualInventoryStore.isDurableRowId(it.id) }
         inventory = sessionInventory
             .filterNot { item ->
                 item.id.startsWith("receipt-") && !demoConfirmed
             }
             .toMutableList()
-        inventory.addAll(committedManualRows)
+        inventory.addAll(committedRows)
     }
 
     private fun inventoryCompatibleReceipt(result: ReceiptPresentationUiResult): Receipt? =

@@ -194,7 +194,7 @@
     <string name="manual_discard_title">Discard manual entry?</string>
     <string name="manual_discard_body">Your unconfirmed entries will be discarded. You can still view the image or remove it from the preview.</string>
     <string name="manual_inventory_source">From a manually entered receipt</string>
-    <string name="manual_inventory_banner">Items from confirmed manual receipts and their quantities are saved on this device. Demo stock is fictional and temporary.</string>
+    <string name="manual_inventory_banner">Items you confirm from receipts and their quantities are saved on this device. Demo stock is fictional and temporary.</string>
     <string name="manual_inventory_load_failed_title">Saved inventory unavailable</string>
     <string name="manual_inventory_load_failed">Could not read local inventory. Close and reopen PantryProof to try again.</string>
     <string name="manual_inventory_quantity_failed_title">Quantity could not be saved</string>
@@ -281,6 +281,27 @@
     <string name="t09_processing_timeout">Receipt processing timed out</string>
     <string name="t09_processing_failure">Receipt processing failed</string>
     <string name="t09_processing_recovery">Return to Preview to choose another image or start a newly configured session.</string>
+    <string name="live_review_action">Review extracted receipt</string>
+    <string name="live_review_title">Review receipt scan</string>
+    <string name="live_review_notice">Check the extracted details and deselect any items you want to skip. Each selected item needs a description and a whole quantity from 1 to 99. Inventory saves only item names and quantities after you confirm.</string>
+    <string name="live_review_include_item">Include item %1$d in inventory</string>
+    <string name="live_review_extracted">Extracted: %1$s</string>
+    <string name="live_review_missing">Missing from extraction</string>
+    <string name="live_review_unresolved">Unresolved in extraction</string>
+    <string name="live_review_corrected">Edited by you. %1$s</string>
+    <string name="live_review_selection_action">Review selected items</string>
+    <string name="live_review_cancel">Discard review</string>
+    <string name="live_review_no_items">Select at least one item.</string>
+    <string name="live_review_invalid_description">Enter a description for item %1$d or deselect it.</string>
+    <string name="live_review_invalid_quantity">Enter a whole quantity from 1 to 99 for item %1$d or deselect it.</string>
+    <string name="live_review_confirm_title">Add selected items to inventory?</string>
+    <string name="live_review_confirm_body">%1$s\n\nConfirm to save these items on this device.</string>
+    <string name="live_review_confirm_row">%1$s × %2$d</string>
+    <string name="live_review_confirm_action">Confirm and save</string>
+    <string name="live_review_selection_changed">The selected items changed. Review them again before confirming.</string>
+    <string name="live_review_already_saved">Items from this receipt result were already saved.</string>
+    <string name="live_review_save_failed">Could not save these items. Your edits are still here. Try again or discard the review.</string>
+    <string name="live_inventory_source">From a confirmed receipt scan</string>
     <string name="inventory_search_label">Search inventory by product name</string>
     <string name="inventory_search_hint">Type a product name</string>
     <string name="inventory_clear_search">Clear search</string>
@@ -303,6 +324,7 @@
         <item>Existing baseline/demo inventory</item>
         <item>Temporary receipt-preview items</item>
         <item>Manually entered receipt items</item>
+        <item>Confirmed receipt scan items</item>
     </string-array>
     <string name="inventory_browse_compact_title">Inventory</string>
 </resources>
