@@ -16,6 +16,7 @@ import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.intent.Intents
 import androidx.test.espresso.intent.matcher.IntentMatchers.hasAction
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
+import androidx.test.espresso.matcher.ViewMatchers.withContentDescription
 import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.matcher.ViewMatchers.withTagValue
 import androidx.test.espresso.matcher.ViewMatchers.withText
@@ -67,9 +68,9 @@ class ManualInventoryPersistenceInstrumentedTest {
                     ActivityResult(Activity.RESULT_OK, Intent().setData(Uri.fromFile(imageFile))),
                 )
                 ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                    onView(withId(R.id.home_add_receipt)).perform(scrollTo(), click())
+                    onView(withId(R.id.home_add_receipt)).perform(sageScrollTo(), click())
                     onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
-                    onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
+                    onView(withId(R.id.preview_continue)).perform(sageScrollTo(), click())
                     scenario.onActivity { activity ->
                         mapOf(
                             R.id.review_store_name to "Example Market",
@@ -80,19 +81,20 @@ class ManualInventoryPersistenceInstrumentedTest {
                             R.id.review_receipt_total to "8.00",
                         ).forEach { (id, value) -> activity.findViewById<EditText>(id).setText(value) }
                     }
-                    onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
-                    onView(withText(R.string.review_keep_editing)).perform(click())
+                    onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
+                    onView(withId(R.id.app_bar_back)).perform(click())
                     assertEquals(emptyList<InventoryItem>(), store.load())
                     scenario.onActivity { activity ->
                         activity.findViewById<EditText>(R.id.review_item_0_description).setText("Example oats")
                     }
-                    onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
-                    onView(withText(R.string.manual_confirm_action)).perform(click())
+                    onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
+                    onView(withId(R.id.manual_confirm)).perform(click())
                     onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
                     val row = requireNotNull(store.load()).single()
                     assertEquals("Example oats", row.name)
                     assertEquals(2, row.quantity)
-                    onView(withTagValue(equalTo("inventory-increase:${row.id}"))).perform(scrollTo(), click())
+                    openSageInventoryDetails(row.id)
+                    onView(withTagValue(equalTo("inventory-increase:${row.id}"))).perform(sageScrollTo(), click())
                     row.copy(quantity = 3).also { assertEquals(listOf(it), store.load()) }
                 }
             } finally {
@@ -101,10 +103,11 @@ class ManualInventoryPersistenceInstrumentedTest {
 
             // Close and launch a new Activity instead of calling recreate(), which supplies saved state.
             ActivityScenario.launch(MainActivity::class.java).use {
-                onView(withId(R.id.home_inventory)).perform(scrollTo(), click())
-                onView(withText(committed.name)).perform(scrollTo()).check(matches(isDisplayed()))
-                onView(withText(context.getString(R.string.inventory_quantity_label, 3)))
-                    .perform(scrollTo()).check(matches(isDisplayed()))
+                onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
+                openSageInventoryDetails(committed.id)
+                onView(withText(committed.name)).check(matches(isDisplayed()))
+                onView(withContentDescription(context.getString(R.string.inventory_quantity_label, 3)))
+                    .perform(sageScrollTo()).check(matches(isDisplayed()))
                 assertEquals(listOf(committed), ManualInventoryStore(context).load())
             }
         } finally {

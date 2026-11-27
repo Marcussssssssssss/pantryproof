@@ -12,7 +12,6 @@ import android.provider.MediaStore
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
-import android.widget.Spinner
 import android.widget.TextView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -38,6 +37,7 @@ import java.io.IOException
 import java.nio.file.Files
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
+import org.hamcrest.Matchers.allOf
 import org.hamcrest.Matchers.equalTo
 import org.hamcrest.Matchers.not
 import org.junit.After
@@ -88,6 +88,9 @@ class InventoryBrowseInstrumentedTest {
     @Test fun defaultInventoryAndOriginalOrderRemainVisible() {
         launch(null)
         assertRows("stock-rice", "stock-eggs", "stock-oil")
+        onView(withId(R.id.sage_inventory_groups)).check(matches(isDisplayed()))
+        onView(withText("Jasmine Rice 5kg")).check(matches(not(isDisplayed())))
+        onView(withId(R.id.sage_expand_all)).perform(sageScrollTo(), click())
         onView(withText("Jasmine Rice 5kg")).perform(scrollTo()).check(matches(isDisplayed()))
         onView(withId(R.id.inventory_browse_count)).check(matches(withText("Showing 3 of 3 items")))
         onView(withId(R.id.inventory_clear_search)).check(matches(not(isEnabled())))
@@ -97,7 +100,7 @@ class InventoryBrowseInstrumentedTest {
         launch(); search("  rIcE  ")
         assertRows("stock-z", "receipt-one", "manual-receipt-one")
         awaitCount("Showing 3 of 5 items")
-        onView(withId(R.id.inventory_clear_search)).perform(scrollTo(), click())
+        onView(withId(R.id.inventory_clear_search)).perform(sageScrollTo(), click())
         assertRows(*fixture.map { it.id }.toTypedArray())
         onView(withId(R.id.inventory_search)).check(matches(withText("")))
         awaitCount("Showing 5 of 5 items")
@@ -111,7 +114,7 @@ class InventoryBrowseInstrumentedTest {
         search("no such fictional product")
         assertRows()
         awaitCount("Showing 0 of 1 item")
-        onView(withId(R.id.inventory_clear_search)).perform(scrollTo(), click())
+        onView(withId(R.id.inventory_clear_search)).perform(sageScrollTo(), click())
         assertRows("stock-z")
         awaitCount("Showing 1 of 1 item")
     }
@@ -122,7 +125,7 @@ class InventoryBrowseInstrumentedTest {
         assertRows("stock-z")
         awaitCount("Showing 1 of 5 items")
         onView(withId(R.id.inventory_browse_count)).check(matches(withText("Showing 1 of 5 items")))
-        onView(withId(R.id.inventory_clear_search)).perform(scrollTo(), click())
+        onView(withId(R.id.inventory_clear_search)).perform(sageScrollTo(), click())
         assertRows(*fixture.map { it.id }.toTypedArray())
         awaitCount("Showing 5 of 5 items")
     }
@@ -131,11 +134,12 @@ class InventoryBrowseInstrumentedTest {
         launch()
         sort("Product name A–Z")
         assertRows("stock-a", "stock-duplicate", "manual-receipt-one", "receipt-one", "stock-z")
+        recordSageScreen("03b-inventory-flat")
         sort("Quantity low to high")
         assertRows("stock-a", "manual-receipt-one", "stock-duplicate", "stock-z", "receipt-one")
         sort("Quantity high to low")
         assertRows("receipt-one", "stock-z", "manual-receipt-one", "stock-duplicate", "stock-a")
-        sort("Original inventory order")
+        sort("Original order")
         assertRows(*fixture.map { it.id }.toTypedArray())
     }
 
@@ -157,6 +161,7 @@ class InventoryBrowseInstrumentedTest {
     @Test fun noMatchesIsDistinctFromAnActuallyEmptyInventory() {
         launch(); search("no such fictional product")
         onView(withId(R.id.inventory_no_matches)).perform(scrollTo()).check(matches(isDisplayed()))
+        recordSageScreen("19-no-matches")
         onView(withId(R.id.inventory_empty_state)).check(doesNotExist())
         awaitCount("Showing 0 of 5 items")
     }
@@ -165,13 +170,16 @@ class InventoryBrowseInstrumentedTest {
         launch(emptyList()); search("anything")
         onView(withId(R.id.inventory_empty_state)).perform(scrollTo()).check(matches(isDisplayed()))
         onView(withText(R.string.inventory_empty_title)).check(matches(isDisplayed()))
+        recordSageScreen("18-empty-inventory")
         onView(withId(R.id.inventory_no_matches)).check(doesNotExist())
         awaitCount("Showing 0 of 0 items")
     }
 
     @Test fun sortedDuplicateNameControlsKeepExactIdsAndReorderAfterQuantityChange() {
         launch(); sort("Quantity high to low")
+        openSageInventoryDetails("stock-a")
         repeat(2) { onView(withTagValue(equalTo("inventory-increase:stock-a"))).perform(scrollTo(), click()) }
+        pressBack()
         assertRows("receipt-one", "stock-z", "stock-a", "manual-receipt-one", "stock-duplicate")
         expectedInventory = fixture.map { if (it.id == "stock-a") it.copy(quantity = 3) else it }
         scenario!!.onActivity { assertEquals(expectedInventory, pantry(it).inventory) }
@@ -181,8 +189,11 @@ class InventoryBrowseInstrumentedTest {
     @Test fun filteredControlsStillRespectBothQuantityBoundaries() {
         launch(listOf(InventoryItem("stock-low", "Limit low", 0, "In pantry"), InventoryItem("stock-high", "Limit high", 99, "In pantry")))
         search("limit"); sort("Quantity high to low")
-        onView(withTagValue(equalTo("inventory-decrease:stock-low"))).check(matches(not(isEnabled())))
+        openSageInventoryDetails("stock-high")
         onView(withTagValue(equalTo("inventory-increase:stock-high"))).check(matches(not(isEnabled())))
+        pressBack()
+        openSageInventoryDetails("stock-low")
+        onView(withTagValue(equalTo("inventory-decrease:stock-low"))).check(matches(not(isEnabled())))
         onView(withTagValue(equalTo("inventory-increase:stock-low"))).perform(scrollTo(), click())
         onView(withTagValue(equalTo("inventory-decrease:stock-low"))).perform(scrollTo(), click())
         onView(withTagValue(equalTo("inventory-decrease:stock-low"))).check(matches(not(isEnabled())))
@@ -190,7 +201,7 @@ class InventoryBrowseInstrumentedTest {
 
     @Test fun typingKeepsSameSearchWidgetRootCursorAndKeyboard() {
         launch()
-        onView(withId(R.id.inventory_search)).perform(scrollTo(), click(), replaceText("ri"))
+        onView(withId(R.id.inventory_search)).perform(sageScrollTo(), click(), replaceText("ri"))
         await { a -> ViewCompat.getRootWindowInsets(a.findViewById(R.id.inventory_search))?.isVisible(WindowInsetsCompat.Type.ime()) == true }
         scenario!!.onActivity { a ->
             val field = a.findViewById<EditText>(R.id.inventory_search)
@@ -199,18 +210,19 @@ class InventoryBrowseInstrumentedTest {
             assertSame(field, a.findViewById(R.id.inventory_search)); assertSame(root, a.findViewById(R.id.screen_inventory))
             assertTrue(field.hasFocus()); assertEquals(2, field.selectionStart); assertEquals(2, field.selectionEnd)
             assertTrue(ViewCompat.getRootWindowInsets(field)!!.isVisible(WindowInsetsCompat.Type.ime()))
+            assertEquals(View.INVISIBLE, a.findViewById<View>(R.id.home_add_receipt).visibility)
         }
     }
 
     @Test fun navigationAwayAndBackKeepsAllBrowseControls() {
         launch(); search("rice"); sort("Product name A–Z"); filter("Existing baseline/demo inventory")
-        onView(withText(R.string.inventory_add_receipt)).perform(scrollTo(), click())
+        onView(withId(R.id.home_add_receipt)).perform(click())
         pressBack()
         onView(withId(R.id.inventory_search)).check(matches(withText("rice")))
         assertRows("stock-z")
         scenario!!.onActivity { a ->
-            assertEquals("Product name A–Z", a.findViewById<Spinner>(R.id.inventory_sort).selectedItem)
-            assertEquals("Existing baseline/demo inventory", a.findViewById<Spinner>(R.id.inventory_filter).selectedItem)
+            assertEquals("Product name A–Z", ViewCompat.getStateDescription(a.findViewById<View>(R.id.inventory_sort))?.toString())
+            assertEquals("Demo", ViewCompat.getStateDescription(a.findViewById<View>(R.id.inventory_filter)).toString())
         }
     }
 
@@ -222,7 +234,7 @@ class InventoryBrowseInstrumentedTest {
         onView(withId(R.id.inventory_search)).check(matches(withText(" rice ")))
         scenario!!.onActivity {
             assertEquals(before, rows(it))
-            assertEquals("Quantity high to low", it.findViewById<Spinner>(R.id.inventory_sort).selectedItem)
+            assertEquals("Quantity high to low", ViewCompat.getStateDescription(it.findViewById<View>(R.id.inventory_sort))?.toString())
             assertTrue(pantry(it).demoConfirmed)
         }
     }
@@ -246,39 +258,40 @@ class InventoryBrowseInstrumentedTest {
     }
 
     @Test fun narrowTwoHundredPercentLayoutKeepsLabelsTargetsAndResultsReachable() {
-        val oldFont = shell("settings get system font_scale").trim().toFloatOrNull() ?: 1f
-        val oldSize = Regex("Override size: (\\S+)").find(shell("wm size"))?.groupValues?.get(1)
-        val oldDensity = Regex("Override density: (\\S+)").find(shell("wm density"))?.groupValues?.get(1)
-        try {
-            shell("wm size 720x1280"); shell("wm density 360"); shell("settings put system font_scale 2.0")
-            launch(fixture.filterNot { it.id.startsWith("receipt-") }); await { it.resources.configuration.fontScale >= 1.99f && it.resources.configuration.screenWidthDp <= 320 }
-            onView(withText(R.string.inventory_browse_compact_title)).check(matches(isDisplayed()))
-            search("rice")
-            awaitCount("Showing 2 of 4 items")
-            onView(withId(R.id.inventory_clear_search)).perform(scrollTo()).check(matches(isDisplayed()))
-            onView(withId(R.id.inventory_sort)).perform(scrollTo()).check(matches(isDisplayed()))
-            capture("inventory-browse-controls-narrow.png")
-            onView(withId(R.id.inventory_filter)).perform(scrollTo()).check(matches(isDisplayed()))
-            onView(withText("Zulu rice")).perform(scrollTo()).check(matches(isDisplayed()))
-            capture("inventory-browse-results-narrow.png")
-            scenario!!.onActivity { a ->
-                for (id in listOf(R.id.inventory_sort, R.id.inventory_filter)) {
-                    val selected = a.findViewById<Spinner>(id).selectedView as TextView
-                    assertTrue(selected.maxLines > 1)
-                    assertTrue((0 until selected.layout.lineCount).all { selected.layout.getEllipsisCount(it) == 0 })
-                }
-                val density = a.resources.displayMetrics.density
-                for (id in listOf(R.id.inventory_search, R.id.inventory_clear_search, R.id.inventory_sort, R.id.inventory_filter)) {
-                    assertTrue(a.findViewById<View>(id).height >= 48 * density)
-                }
-                val labels = listOf(R.string.inventory_search_label to R.id.inventory_search, R.string.inventory_sort_label to R.id.inventory_sort, R.string.inventory_filter_label to R.id.inventory_filter)
-                for ((label, target) in labels) assertEquals(target, textView(a.window.decorView, context.getString(label))?.labelFor)
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("v4Compact") == "true")
+        val manual = fixture.single { it.id == "manual-receipt-one" }
+        seedDurableRows(listOf(manual))
+        val sessionRows = fixture.filter { it.id.startsWith("stock-") }
+        launch(sessionRows + manual)
+        scenario!!.onActivity { enlargeSageTestText(it); refreshInventoryFixture(it) }
+        await { it.resources.configuration.fontScale >= 1.99f && it.resources.configuration.screenWidthDp <= 320 }
+        onView(withText(R.string.app_name)).check(matches(isDisplayed()))
+        search("rice")
+        awaitCount("Showing 2 of 4 items")
+        onView(withId(R.id.inventory_clear_search)).perform(sageScrollTo()).check(matches(isDisplayed()))
+        onView(withId(R.id.inventory_sort)).perform(sageScrollTo()).check(matches(isDisplayed()))
+        capture("inventory-browse-controls-narrow.png")
+        onView(withId(R.id.inventory_filter)).perform(click())
+        onView(withId(R.id.inventory_filter_choices)).check(matches(isDisplayed()))
+        pressBack()
+        onView(withText("Zulu rice")).perform(sageScrollTo()).check(matches(isDisplayed()))
+        capture("inventory-browse-results-narrow.png")
+        recordSageScreen("20-inventory-320dp-200")
+        scenario!!.onActivity { a ->
+            val density = a.resources.displayMetrics.density
+            for (id in listOf(R.id.inventory_search, R.id.inventory_clear_search, R.id.inventory_sort, R.id.inventory_filter)) {
+                assertTrue(a.findViewById<View>(id).height >= 48 * density)
             }
-            val bitmap = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
-            context.cacheDir.resolve("inventory-browse-narrow.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
-        } finally {
-            shell("settings put system font_scale $oldFont"); shell("wm density ${oldDensity ?: "reset"}"); shell("wm size ${oldSize ?: "reset"}")
+            val search = a.findViewById<EditText>(R.id.inventory_search)
+            assertEquals(context.getString(R.string.inventory_search_hint), search.createAccessibilityNodeInfo().hintText.toString())
+            assertEquals(context.getString(R.string.inventory_sort_label),
+                a.findViewById<View>(R.id.inventory_sort).contentDescription.toString())
+            assertEquals(context.getString(R.string.inventory_filter_label),
+                a.findViewById<View>(R.id.inventory_filter).contentDescription.toString())
         }
+        val bitmap = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+        context.cacheDir.resolve("inventory-browse-narrow.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
+
     }
 
     @Test fun nonRiceNoIdQuantityActionRetainsExactInputFocus() {
@@ -301,7 +314,7 @@ class InventoryBrowseInstrumentedTest {
             assertEquals(1, pantry(a).inventory.single { it.id == "stock-a" }.quantity)
             assertEquals(3, pantry(a).inventory.single { it.id == "stock-duplicate" }.quantity)
             assertFalse(a.findViewById<ViewGroup>(R.id.inventory_browse_results)
-                .findViewWithTag<View>("inventory-increase:stock-a").isFocused)
+                .findViewWithTag<View>("stock-a").isFocused)
         }
     }
 
@@ -328,14 +341,19 @@ class InventoryBrowseInstrumentedTest {
 
         filter("Confirmed receipt scan items")
         assertRows(live.id)
+        openSageInventoryDetails(live.id)
         onView(withText(R.string.live_inventory_source)).perform(scrollTo()).check(matches(isDisplayed()))
         onView(withTagValue(equalTo("inventory-edit:" + live.id))).check(doesNotExist())
         onView(withTagValue(equalTo("inventory-delete:" + live.id))).check(doesNotExist())
+        pressBack()
         filter("Manually entered receipt items")
         assertRows(manual.id)
+        openSageInventoryDetails(manual.id)
         onView(withTagValue(equalTo("inventory-edit:" + manual.id))).perform(scrollTo()).check(matches(isDisplayed()))
+        pressBack()
         filter("Items added directly")
         assertRows(standalone.id)
+        openSageInventoryDetails(standalone.id)
         onView(withText(R.string.inventory_standalone_source)).perform(scrollTo()).check(matches(isDisplayed()))
         onView(withTagValue(equalTo("inventory-delete:" + standalone.id))).perform(scrollTo()).check(matches(isDisplayed()))
         assertEquals(committed, committedRows())
@@ -344,10 +362,12 @@ class InventoryBrowseInstrumentedTest {
     @Test fun standaloneAddEditAndDeleteUseStableIdsAndSurviveFreshLaunch() {
         launch(null)
         assertTrue(committedRows().isEmpty())
+        openSageInventoryDetails("stock-rice")
         onView(withTagValue(equalTo("inventory-edit:stock-rice"))).check(doesNotExist())
         onView(withTagValue(equalTo("inventory-delete:stock-rice"))).check(doesNotExist())
+        pressBack()
 
-        onView(withId(R.id.inventory_add_item)).perform(scrollTo(), click())
+        onView(withId(R.id.inventory_add_item)).perform(sageScrollTo(), click())
         saveItem()
         onView(withId(R.id.inventory_item_name))
             .check(matches(hasErrorText(context.getString(R.string.inventory_name_required))))
@@ -355,7 +375,7 @@ class InventoryBrowseInstrumentedTest {
         saveItem()
         onView(withId(R.id.inventory_item_quantity))
             .check(matches(hasErrorText(context.getString(R.string.inventory_quantity_invalid))))
-        onView(withId(android.R.id.button2)).perform(click())
+        onView(withContentDescription(R.string.sage_close)).perform(click())
         assertTrue(committedRows().isEmpty())
 
         val first = addStandaloneItem("Synthetic oats", "0")
@@ -367,9 +387,11 @@ class InventoryBrowseInstrumentedTest {
         sort("Quantity high to low")
         assertRows(second.id, first.id)
 
+        openSageInventoryDetails(first.id)
         onView(withTagValue(equalTo("inventory-edit:${first.id}"))).perform(scrollTo(), click())
         onView(withId(R.id.inventory_item_name)).check(matches(withText("Synthetic oats")))
         onView(withId(R.id.inventory_item_quantity)).check(matches(withText("0")))
+        recordSageScreen("05b-edit-item")
         editFields("Rolled oats", "4")
         saveItem()
         val edited = first.copy(name = "Rolled oats", quantity = 4)
@@ -378,8 +400,10 @@ class InventoryBrowseInstrumentedTest {
         onView(withId(R.id.inventory_search)).check(matches(withText(" OATS ")))
         assertRows(second.id, first.id)
 
+        openSageInventoryDetails(second.id)
         onView(withTagValue(equalTo("inventory-delete:${second.id}"))).perform(scrollTo(), click())
         onView(withText(R.string.inventory_delete_title)).check(matches(isDisplayed()))
+        recordSageScreen("06-delete-confirmation")
         onView(withId(android.R.id.button2)).perform(click())
         assertEquals(listOf(edited, second), committedRows())
         assertRows(second.id, first.id)
@@ -395,8 +419,9 @@ class InventoryBrowseInstrumentedTest {
         launch(null)
         filter("Items added directly")
         assertRows(first.id)
-        onView(withText(edited.name)).perform(scrollTo()).check(matches(isDisplayed()))
-        onView(withText(context.getString(R.string.inventory_quantity_label, edited.quantity)))
+        openSageInventoryDetails(first.id)
+        onView(withText(edited.name)).check(matches(isDisplayed()))
+        onView(withContentDescription(context.getString(R.string.inventory_quantity_label, edited.quantity)))
             .perform(scrollTo()).check(matches(isDisplayed()))
         assertEquals(listOf(edited), committedRows())
     }
@@ -413,17 +438,18 @@ class InventoryBrowseInstrumentedTest {
             val state = PantryUiState(MockReceiptPresentationSource(), failing)
             launch(null, replacementState = state)
 
-            onView(withId(R.id.inventory_add_item)).perform(scrollTo(), click())
+            onView(withId(R.id.inventory_add_item)).perform(sageScrollTo(), click())
             editFields("Uncommitted oats", "9")
             saveItem()
             assertEditorFailure("Uncommitted oats", "9")
-            onView(withId(android.R.id.button2)).perform(click())
+            onView(withContentDescription(R.string.sage_close)).perform(click())
+            openSageInventoryDetails(row.id)
 
             onView(withTagValue(equalTo("inventory-edit:${row.id}"))).perform(scrollTo(), click())
             editFields("Uncommitted pasta", "8")
             saveItem()
             assertEditorFailure("Uncommitted pasta", "8")
-            onView(withId(android.R.id.button2)).perform(click())
+            onView(withContentDescription(R.string.sage_close)).perform(click())
 
             onView(withTagValue(equalTo("inventory-delete:${row.id}"))).perform(scrollTo(), click())
             onView(withId(android.R.id.button1)).perform(click())
@@ -432,7 +458,9 @@ class InventoryBrowseInstrumentedTest {
             assertArrayEquals(originalBytes, Files.readAllBytes(snapshot))
             assertEquals(listOf(row), initialStore.load())
             assertEquals(expectedInventory, state.inventory)
-            onView(withText(row.name)).perform(scrollTo()).check(matches(isDisplayed()))
+            onView(withText(row.name)).check(matches(isDisplayed()))
+            pressBack()
+            onView(withId(R.id.inventory_success)).check(doesNotExist())
         } finally {
             Files.deleteIfExists(snapshot)
             Files.deleteIfExists(directory)
@@ -482,12 +510,12 @@ class InventoryBrowseInstrumentedTest {
                 Intents.intending(hasAction(picker)).respondWith(
                     ActivityResult(Activity.RESULT_OK, Intent().setData(previewUri)),
                 )
-                onView(withId(R.id.home_add_receipt)).perform(scrollTo(), click())
+                onView(withId(R.id.home_add_receipt)).perform(sageScrollTo(), click())
                 onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
                 scenario!!.onActivity { SelectedImageProcessingController.offerFixture(it, previewUri, binding) }
-                onView(withId(R.id.preview_process_selected)).perform(scrollTo(), click())
+                onView(withId(R.id.preview_process_selected)).perform(sageScrollTo(), click())
                 await { selectedProcessing(it).inputState == SelectedImageProcessingController.InputState.READY }
-                onView(withId(R.id.selected_processing_start)).perform(scrollTo(), click())
+                onView(withId(R.id.selected_processing_start)).perform(sageScrollTo(), click())
                 await { selectedProcessing(it).state is ReceiptProcessingLifecycle.State.Finished }
                 scenario!!.onActivity {
                     val controller = selectedProcessing(it)
@@ -527,98 +555,103 @@ class InventoryBrowseInstrumentedTest {
 
     @Test fun resultRebuildDoesNotStealSearchCursorOrSpinnerInputFocus() {
         launch()
-        onView(withId(R.id.inventory_search)).perform(scrollTo())
+        onView(withId(R.id.inventory_search)).perform(sageScrollTo())
         scenario!!.onActivity { a ->
             val search = a.findViewById<EditText>(R.id.inventory_search)
             assertTrue(search.requestFocus()); search.setText("apple"); search.setSelection(2)
-            a.findViewById<Spinner>(R.id.inventory_sort).setSelection(3)
         }
+        sort("Quantity high to low")
         await { rows(it) == listOf("stock-duplicate", "stock-a") }
         scenario!!.onActivity { a ->
             val search = a.findViewById<EditText>(R.id.inventory_search)
             assertTrue(search.isFocused); assertEquals(2, search.selectionStart); assertEquals(2, search.selectionEnd)
-            val sort = a.findViewById<Spinner>(R.id.inventory_sort)
-            sort.isFocusableInTouchMode = true; assertTrue(sort.requestFocus()); sort.setSelection(0)
+            val sort = a.findViewById<View>(R.id.inventory_sort)
+            sort.isFocusableInTouchMode = true; assertTrue(sort.requestFocus())
         }
+        sort("Original order")
         await { rows(it) == listOf("stock-a", "stock-duplicate") }
         scenario!!.onActivity { a ->
-            assertTrue(a.findViewById<Spinner>(R.id.inventory_sort).isFocused)
-            val filter = a.findViewById<Spinner>(R.id.inventory_filter)
-            filter.isFocusableInTouchMode = true; assertTrue(filter.requestFocus()); filter.setSelection(3)
+            assertTrue(a.findViewById<View>(R.id.inventory_sort).isFocused)
+            val filter = a.findViewById<View>(R.id.inventory_filter)
+            filter.isFocusableInTouchMode = true; assertTrue(filter.requestFocus())
         }
+        selectInventoryFilter("Manual")
         await { it.findViewById<View>(R.id.inventory_no_matches) != null }
         scenario!!.onActivity { a ->
-            assertTrue(a.findViewById<Spinner>(R.id.inventory_filter).isFocused)
+            assertTrue(a.findViewById<View>(R.id.inventory_filter).isFocused)
             assertEquals(2, a.findViewById<EditText>(R.id.inventory_search).selectionStart)
         }
     }
 
     private fun changeFocusedQuantity(tag: String, countFallback: Boolean = false) {
-        onView(withTagValue(equalTo(tag))).perform(scrollTo())
-        scenario!!.onActivity { a ->
-            val results = a.findViewById<ViewGroup>(R.id.inventory_browse_results)
-            val original = requireNotNull(results.findViewWithTag<View>(tag))
-            assertEquals(View.NO_ID, original.id); assertTrue(original.isEnabled)
-            original.isFocusableInTouchMode = true; assertTrue(original.requestFocus()); assertTrue(original.isFocused)
-            val id = tag.substringAfter(':')
-            val delta = if (tag.startsWith("inventory-increase:")) 1 else -1
-            expectedInventory = expectedInventory.map { if (it.id == id) it.copy(quantity = it.quantity + delta) else it }
+        val id = tag.substringAfter(':')
+        openSageInventoryDetails(id)
+        val delta = if (tag.startsWith("inventory-increase:")) 1 else -1
+        expectedInventory = expectedInventory.map { if (it.id == id) it.copy(quantity = it.quantity + delta) else it }
+        onView(withTagValue(equalTo(tag))).check { original, missing ->
+            if (missing != null) throw missing
+            assertEquals(View.NO_ID, original.id)
+            assertTrue(original.isEnabled)
+            original.isFocusableInTouchMode = true
+            assertTrue(original.requestFocus())
             assertTrue(original.performClick())
-            val replacement = requireNotNull(results.findViewWithTag<View>(tag))
-            assertNotSame(original, replacement)
-            assertEquals(expectedInventory, pantry(a).inventory)
+            val root = original.rootView
+            assertSame(original, root.findViewWithTag<View>(tag))
             if (countFallback) {
-                assertFalse(replacement.isEnabled)
-                assertSame(a.findViewById<View>(R.id.inventory_browse_count), a.currentFocus)
+                assertFalse(original.isEnabled)
+                assertEquals(expectedInventory.single { it.id == id }.quantity.toString(),
+                    (root.findFocus() as TextView).text.toString())
             } else {
-                assertTrue(replacement.isEnabled); assertSame(replacement, a.currentFocus)
-                assertTrue(replacement.isFocused)
+                assertTrue(original.isEnabled)
+                assertSame(original, root.findFocus())
             }
-            assertEquals(if (countFallback) emptyList<String>() else listOf(tag), focusedQuantityTags(results))
+        }
+        scenario!!.onActivity { a -> assertEquals(expectedInventory, pantry(a).inventory) }
+        pressBack()
+        scenario!!.onActivity { a ->
+            assertSame(a.findViewById<View>(R.id.inventory_browse_results).findViewWithTag<View>(id), a.currentFocus)
         }
     }
-
-    private fun focusedQuantityTags(view: View): List<String> {
-        val own = (view.tag as? String)?.takeIf {
-            view.isFocused && (it.startsWith("inventory-increase:") || it.startsWith("inventory-decrease:"))
-        }?.let(::listOf) ?: emptyList()
-        return own + if (view is ViewGroup) (0 until view.childCount).flatMap { focusedQuantityTags(view.getChildAt(it)) } else emptyList()
-    }
-
 
     @Test fun automatedReaderKeepsInventoryFocusChannelsOnIndependentTaggedActions() {
         launch(); sort("Quantity low to high")
         automatedReaderProbe("i2j-inventory-accessibility.json") { observe ->
             scenario!!.onActivity { a ->
                 val results = a.findViewById<ViewGroup>(R.id.inventory_browse_results)
-                val input = results.findViewWithTag<View>("inventory-increase:stock-a")
-                val reader = results.findViewWithTag<View>("inventory-decrease:stock-duplicate")
-                input.isFocusableInTouchMode = true; assertTrue(input.requestFocus())
+                val input = a.findViewById<EditText>(R.id.inventory_search)
+                val reader = results.findViewWithTag<View>("stock-duplicate")
+                assertTrue(input.requestFocus())
                 assertTrue(reader.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null))
-                assertTrue(input.isFocused); assertTrue(reader.isAccessibilityFocused)
-                expectedInventory = fixture.map { if (it.id == "stock-a") it.copy(quantity = 2) else it }
-                assertTrue(input.performClick())
-                assertSame(results.findViewWithTag<View>("inventory-increase:stock-a"), a.currentFocus)
-                assertTrue(results.findViewWithTag<View>("inventory-decrease:stock-duplicate").isAccessibilityFocused)
+                input.setText("apple")
+                input.setSelection(2)
+                assertSame(input, a.currentFocus)
+                assertEquals(2, input.selectionStart)
+                assertTrue(results.findViewWithTag<View>("stock-duplicate").isAccessibilityFocused)
             }
-            observe("independent-input-and-reader-restored-by-tag")
-            onView(withId(R.id.inventory_search)).perform(scrollTo())
+            observe("search-input-and-reader-row-restored-by-tag")
+            openSageInventoryDetails("stock-duplicate")
+            expectedInventory = fixture.map { if (it.id == "stock-duplicate") it.copy(quantity = 1) else it }
+            onView(withTagValue(equalTo("inventory-decrease:stock-duplicate"))).check { input, missing ->
+                if (missing != null) throw missing
+                val reader = input.rootView.findViewWithTag<View>("inventory-increase:stock-duplicate")
+                input.isFocusableInTouchMode = true
+                assertTrue(input.requestFocus())
+                assertTrue(reader.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null))
+                assertTrue(input.performClick())
+                assertTrue(input.isFocused)
+                assertTrue(reader.isAccessibilityFocused)
+            }
+            pressBack()
+            observe("reader-row-restored-after-management-sheet")
             scenario!!.onActivity { a ->
                 val search = a.findViewById<EditText>(R.id.inventory_search)
-                assertTrue(search.requestFocus()); search.setText("apple"); search.setSelection(2)
-                val reader = a.findViewById<ViewGroup>(R.id.inventory_browse_results)
-                    .findViewWithTag<View>("inventory-decrease:stock-duplicate")
-                assertTrue(reader.isAccessibilityFocused)
-                expectedInventory = expectedInventory.map { if (it.id == "stock-duplicate") it.copy(quantity = 1) else it }
-                assertTrue(reader.performClick())
-                assertSame(search, a.currentFocus); assertEquals(2, search.selectionStart)
-                assertTrue(a.findViewById<ViewGroup>(R.id.inventory_browse_results)
-                    .findViewWithTag<View>("inventory-decrease:stock-duplicate").isAccessibilityFocused)
+                assertEquals(2, search.selectionStart)
+                val row = a.findViewById<ViewGroup>(R.id.inventory_browse_results).findViewWithTag<View>("stock-duplicate")
+                assertTrue(row.isAccessibilityFocused)
+                assertTrue(row.isFocused)
             }
-            observe("search-input-preserved-reader-row-restored")
         }
     }
-
 
     /** Diagnostic automation service, not a TalkBack speech test. Focus observations are
      * retained even when they reveal a production policy gap outside this task's scope. */
@@ -699,10 +732,11 @@ class InventoryBrowseInstrumentedTest {
             if (confirmed) {
                 assertTrue(state.confirmForInventoryPreview())
             } else if (items != null) { state.inventory.clear(); state.inventory.addAll(items) }
+            refreshInventoryFixture(a)
             expectedInventory = state.inventory.toList(); expectedReceipt = state.receipt
             expectedPresentation = state.presentationResult; expectedConfirmation = state.demoConfirmed
         }
-        onView(withId(R.id.home_inventory)).perform(scrollTo(), click())
+        onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
     }
 
     private fun seedDurableRows(rows: List<InventoryItem>) {
@@ -718,7 +752,7 @@ class InventoryBrowseInstrumentedTest {
 
     private fun addStandaloneItem(name: String, quantity: String): InventoryItem {
         val existingIds = committedRows().map { it.id }.toSet()
-        onView(withId(R.id.inventory_add_item)).perform(scrollTo(), click())
+        onView(withId(R.id.inventory_add_item)).perform(sageScrollTo(), click())
         editFields(name, quantity)
         saveItem()
         val row = committedRows().single { it.id !in existingIds }
@@ -742,14 +776,17 @@ class InventoryBrowseInstrumentedTest {
         onView(withId(R.id.inventory_item_quantity)).check(matches(withText(quantity)))
     }
 
-    private fun search(query: String) { onView(withId(R.id.inventory_search)).perform(scrollTo(), replaceText(query), closeSoftKeyboard()) }
-    private fun sort(label: String) { choose(R.id.inventory_sort, label) }
-    private fun filter(label: String) { choose(R.id.inventory_filter, label) }
-    private fun choose(id: Int, label: String) { onView(withId(id)).perform(scrollTo(), click()); onData(equalTo(label)).perform(click()) }
+    private fun search(query: String) { onView(withId(R.id.inventory_search)).perform(sageScrollTo(), replaceText(query), closeSoftKeyboard()) }
+    private fun sort(label: String) = selectInventorySort(label)
+    private fun filter(label: String) = selectInventoryFilter(label)
     private fun assertRows(vararg ids: String) { scenario!!.onActivity { assertEquals(ids.toList(), rows(it)) } }
     private fun rows(a: MainActivity): List<String> {
         val group = a.findViewById<ViewGroup>(R.id.inventory_browse_results)
-        return (0 until group.childCount).mapNotNull { group.getChildAt(it).tag as? String }
+        fun collect(view: View): List<String> {
+            (view.tag as? String)?.let { return listOf(it) }
+            return if (view is ViewGroup) (0 until view.childCount).flatMap { collect(view.getChildAt(it)) } else emptyList()
+        }
+        return collect(group)
     }
     private fun awaitCount(expected: String) { await { it.findViewById<TextView>(R.id.inventory_browse_count).text.toString() == expected } }
     private fun await(predicate: (MainActivity) -> Boolean) {

@@ -11,6 +11,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.intent.Intents
 import androidx.test.espresso.intent.matcher.IntentMatchers.hasAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -146,8 +149,8 @@ class S04FakeHttpIntegrationTest {
                     beforeInventory = inventory(activity)
                     S04FakeHarnessBinding.attach(staged, activity, previewUri)
                     click(activity, R.id.home_add_receipt)
-                    click(activity, R.id.add_import_image)
                 }
+                onView(withId(R.id.add_import_image)).perform(click())
                 awaitActivity(launched, "S04 generated preview was not selected") {
                     it.findViewById<View>(R.id.preview_process_selected)?.isEnabled == true
                 }

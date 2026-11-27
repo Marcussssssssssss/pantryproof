@@ -17,8 +17,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.DatePicker
 import android.widget.EditText
-import android.widget.Spinner
 import android.widget.TextView
+import androidx.core.view.ViewCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onData
 import androidx.test.espresso.Espresso.onView
@@ -39,6 +39,7 @@ import com.pantryproof.prototype.contract.v1.PresentationConsumerMode
 import com.pantryproof.prototype.data.*
 import com.pantryproof.prototype.image.ReceiptCrop
 import com.pantryproof.prototype.image.ReceiptCropView
+import com.pantryproof.prototype.ui.InventoryBrowseProjection
 import com.pantryproof.prototype.ui.PantryUiState
 import com.pantryproof.prototype.ui.ReceiptProcessingUiController
 import com.pantryproof.prototype.ui.SelectedImageProcessingController
@@ -49,6 +50,7 @@ import org.hamcrest.Matchers.equalTo
 import org.hamcrest.Matchers.not
 import org.junit.After
 import org.junit.Assert.*
+import org.hamcrest.Matchers.containsString
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -78,30 +80,32 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
     fun independentProcessingThenReviewedDemoAndBrowseRemainSeparate() {
         launch()
         val initial = session()
-        onView(withId(R.id.home_add_receipt)).perform(scrollTo(), click())
+        onView(withId(R.id.home_add_receipt)).perform(sageScrollTo(), click())
         onView(withId(R.id.screen_add_receipt)).check(matches(isDisplayed()))
         pressBack()
-        onView(withId(R.id.home_processing_demo)).perform(scrollTo(), click())
+        openSageProcessingDemo()
         onView(withId(R.id.processing_start)).check(matches(isEnabled()))
         scenario!!.onActivity { assertTrue(processing(it).state is ReceiptProcessingLifecycle.State.Ready) }
-        onView(withId(R.id.processing_start)).perform(scrollTo(), click())
+        onView(withId(R.id.processing_start)).perform(sageScrollTo(), click())
         await { processing(it).state is ReceiptProcessingLifecycle.State.Finished }
         onView(withText("Synthetic Processing Market")).perform(scrollTo()).check(matches(isDisplayed()))
-        onView(withText("0.750")).perform(scrollTo()).check(matches(isDisplayed()))
+        onView(withText(containsString("Qty: 0.750"))).perform(scrollTo()).check(matches(isDisplayed()))
         onView(withId(R.id.review_confirm)).check(doesNotExist())
         scenario!!.onActivity { assertTrue(hasText(it.window.decorView, context.getString(R.string.processing_demo_body))) }
         assertEquals(initial, session())
         pressBack()
 
         // The independently reviewed demo receipt is intentionally a separate route.
+        pressBack()
         openManualReview()
         onView(withId(R.id.review_store_name)).check(matches(withText("Demo Grocery Store (Synthetic)")))
         field(R.id.review_store_name, "I2E reviewed synthetic store")
         field(R.id.review_item_0_description, "I2E reviewed milk")
-        onView(withId(R.id.review_confirm)).perform(scrollTo(), click())
+        onView(withId(R.id.review_confirm)).perform(sageScrollTo(), click())
         onView(withId(R.id.review_success)).check(matches(isDisplayed()))
-        onView(withId(R.id.review_confirm)).perform(scrollTo(), click())
-        onView(withId(R.id.review_view_inventory)).perform(scrollTo(), click())
+        pressBack()
+        onView(withId(R.id.review_confirm)).perform(sageScrollTo(), click())
+        onView(withId(R.id.review_view_inventory)).perform(sageScrollTo(), click())
         val confirmed = session()
         assertTrue(confirmed.confirmed)
         assertEquals(6, confirmed.inventory.size)
@@ -148,7 +152,8 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
         startSelectedAndAssertFictional()
         assertEquals(initial, session())
         pressBack()
-        onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
+        onView(withId(R.id.preview_continue)).perform(sageScrollTo(), click())
+        recordSageScreen("15-manual-entry")
         reviewEnteredValues()
         onView(withText(R.string.manual_confirm_action)).check(doesNotExist())
         assertEquals(initial, session())
@@ -161,11 +166,13 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
         field(R.id.review_receipt_total, "8.00")
         reviewEnteredValues()
         onView(withText(R.string.manual_review_title)).check(matches(isDisplayed()))
-        onView(withText(R.string.review_keep_editing)).perform(click())
+        recordSageScreen("16-manual-precommit")
+        onView(withId(R.id.app_bar_back)).perform(click())
         assertEquals(initial, session())
         reviewEnteredValues()
-        onView(withText(R.string.manual_confirm_action)).perform(click())
+        onView(withId(R.id.manual_confirm)).perform(click())
         onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
+        recordSageScreen("17b-durable-success")
         val admitted = session()
         assertEquals(initial.receipt, admitted.receipt)
         assertEquals(initial.presentation, admitted.presentation)
@@ -197,7 +204,7 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
             context.contentResolver.openOutputStream(uri, "w")!!.use { it.write(fixture.readBytes()) }
             ActivityResult(Activity.RESULT_OK, null)
         }
-        onView(withId(R.id.home_add_receipt)).perform(scrollTo(), click())
+        onView(withId(R.id.home_add_receipt)).perform(sageScrollTo(), click())
         onView(withId(R.id.add_capture_image)).perform(scrollTo(), click())
         onView(withText(R.string.preview_camera_status)).check(matches(isDisplayed()))
         ownedCaptures.addAll(captures().filterNot { it.name in previousCaptureNames })
@@ -216,7 +223,7 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
         onView(withId(R.id.selected_processing_start)).check(matches(isEnabled()))
         assertEquals(initial, session())
         pressBack()
-        onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
+        onView(withId(R.id.preview_continue)).perform(sageScrollTo(), click())
         field(R.id.review_store_name, "Unconfirmed camera draft")
         pressBack()
         onView(withText(R.string.manual_discard_title)).check(matches(isDisplayed()))
@@ -224,7 +231,7 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
         onView(withId(R.id.screen_preview)).check(matches(isDisplayed()))
         onView(withId(R.id.preview_remove_image)).perform(scrollTo(), click())
         assertEquals(previousCaptureNames, captures().map { it.name }.toSet())
-        onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
+        onView(withId(R.id.preview_continue)).perform(sageScrollTo(), click())
         onView(withId(R.id.screen_details)).check(matches(isDisplayed()))
         onView(withText("Demo Grocery Store (Synthetic)")).check(matches(isDisplayed()))
         assertEquals(initial, session())
@@ -257,7 +264,7 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
         assertEquals(confirmed, session())
         pressBack()
         galleryInput.set(image(left = Color.GREEN))
-        onView(withId(R.id.preview_choose_another)).perform(scrollTo(), click())
+        onView(withId(R.id.preview_choose_another)).perform(sageScrollTo(), click())
         prepareSelected()
         lateinit var selectionB: ReceiptProcessingRequest.Selection
         scenario!!.onActivity { a ->
@@ -279,8 +286,7 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
         assertEquals(confirmed, session())
         pressBack()
         pressBack()
-        onView(withId(R.id.screen_add_receipt)).check(matches(isDisplayed()))
-        pressBack()
+        onView(withId(R.id.screen_add_receipt)).check(doesNotExist())
         onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
         assertBrowse("milk", "Quantity high to low", "Temporary receipt-preview items")
         assertRows(milk.id)
@@ -315,22 +321,22 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
     }
 
     private fun openGalleryFromHome() {
-        onView(withId(R.id.home_add_receipt)).perform(scrollTo(), click())
+        onView(withId(R.id.home_add_receipt)).perform(sageScrollTo(), click())
         onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
     }
 
     private fun prepareSelected() {
-        onView(withId(R.id.preview_process_selected)).perform(scrollTo(), click())
+        onView(withId(R.id.preview_process_selected)).perform(sageScrollTo(), click())
         await { selected(it).inputState == SelectedImageProcessingController.InputState.READY }
         onView(withId(R.id.selected_processing_start)).check(matches(isEnabled()))
         scenario!!.onActivity { assertTrue(selected(it).state is ReceiptProcessingLifecycle.State.Ready) }
     }
 
     private fun startSelectedAndAssertFictional() {
-        onView(withId(R.id.selected_processing_start)).perform(scrollTo(), click())
+        onView(withId(R.id.selected_processing_start)).perform(sageScrollTo(), click())
         await { selected(it).state is ReceiptProcessingLifecycle.State.Finished }
         onView(withText("Synthetic Processing Market")).perform(scrollTo()).check(matches(isDisplayed()))
-        onView(withText("0.750")).perform(scrollTo()).check(matches(isDisplayed()))
+        onView(withText(containsString("Qty: 0.750"))).perform(scrollTo()).check(matches(isDisplayed()))
         onView(withId(R.id.review_apply)).check(doesNotExist())
         onView(withId(R.id.review_confirm)).check(doesNotExist())
         scenario!!.onActivity { a ->
@@ -344,13 +350,13 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
     private fun field(id: Int, value: String) {
         // Move input focus as a user would. replaceText alone leaves the invalid
         // store field focused, allowing its scroll requests to race later actions.
-        onView(withId(id)).perform(scrollTo(), click(), replaceText(value), closeSoftKeyboard())
+        onView(withId(id)).perform(sageScrollTo(), click(), replaceText(value), closeSoftKeyboard())
         onView(withId(id)).check(matches(withText(value)))
         onView(withId(id)).check(matches(hasFocus()))
     }
 
     private fun chooseManualDate() {
-        onView(withId(R.id.review_purchase_date)).perform(scrollTo(), click())
+        onView(withId(R.id.manual_calendar)).perform(sageScrollTo(), click())
         onView(isAssignableFrom(DatePicker::class.java)).perform(object : ViewAction {
             override fun getConstraints() = isAssignableFrom(DatePicker::class.java)
             override fun getDescription() = "choose a fictional session receipt date"
@@ -360,7 +366,7 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
             }
         })
         onView(withId(android.R.id.button1)).perform(click())
-        onView(withId(R.id.review_purchase_date)).check(matches(withText("2026-11-10")))
+        onView(withId(R.id.review_purchase_date)).check(matches(withText("10-11-2026")))
     }
 
     private fun reviewEnteredValues() {
@@ -368,7 +374,7 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
         while (SystemClock.uptimeMillis() < deadline) {
             // Validation feedback changes form height. Scroll again after pending layout,
             // and keep Espresso's real click/visibility constraints rather than bypassing them.
-            onView(withId(R.id.manual_review_action)).perform(scrollTo())
+            onView(withId(R.id.manual_review_action)).perform(sageScrollTo())
             var visible = false
             scenario!!.onActivity { a ->
                 val action = a.findViewById<View>(R.id.manual_review_action)
@@ -394,13 +400,13 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
                 (view as ReceiptCropView).setCrop(requireNotNull(ReceiptCrop.from(floatArrayOf(0f, 0f, .5f, 1f))))
             }
         })
-        onView(withText(R.string.crop_apply)).inRoot(isDialog()).perform(scrollTo(), click())
+        onView(withId(R.id.crop_apply_action)).inRoot(isDialog()).perform(click())
     }
 
     private fun browse(query: String, sort: String, filter: String) {
         field(R.id.inventory_search, query)
-        choose(R.id.inventory_sort, sort)
-        choose(R.id.inventory_filter, filter)
+        selectInventorySort(sort)
+        selectInventoryFilter(filter)
     }
 
     private fun choose(id: Int, label: String) {
@@ -411,15 +417,22 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
     private fun assertBrowse(query: String, sort: String, filter: String) {
         onView(withId(R.id.inventory_search)).check(matches(withText(query)))
         scenario!!.onActivity { a ->
-            assertEquals(sort, a.findViewById<Spinner>(R.id.inventory_sort).selectedItem)
-            assertEquals(filter, a.findViewById<Spinner>(R.id.inventory_filter).selectedItem)
+            assertEquals(sort, ViewCompat.getStateDescription(a.findViewById<View>(R.id.inventory_sort))?.toString())
+            val index = a.resources.getStringArray(R.array.inventory_filter_options).indexOf(filter)
+            val option = a.resources.getStringArray(R.array.sage_inventory_filter_labels)[index]
+            val control = a.findViewById<View>(R.id.inventory_filter)
+            assertEquals(index != 0, control.isSelected)
+            assertEquals(option, ViewCompat.getStateDescription(control).toString())
         }
     }
 
     private fun assertRows(vararg ids: String) {
         scenario!!.onActivity { a ->
             val rows = a.findViewById<ViewGroup>(R.id.inventory_browse_results)
-            assertEquals(ids.toList(), (0 until rows.childCount).mapNotNull { rows.getChildAt(it).tag as? String })
+            fun collect(view: View): List<String> = (view.tag as? String)?.let(::listOf)
+                ?: if (view is ViewGroup) (0 until view.childCount).flatMap { collect(view.getChildAt(it)) }
+                else emptyList()
+            assertEquals(ids.toList(), collect(rows))
         }
     }
 
@@ -451,10 +464,7 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
     private fun pantry(a: MainActivity) = MainActivity::class.java.getDeclaredField("state").apply { isAccessible = true }.get(a) as PantryUiState
     private fun processing(a: MainActivity) = MainActivity::class.java.getDeclaredField("processingController").apply { isAccessible = true }.get(a) as ReceiptProcessingUiController
     private fun selected(a: MainActivity) = MainActivity::class.java.getDeclaredField("selectedProcessingController").apply { isAccessible = true }.get(a) as SelectedImageProcessingController
-    private fun snapshot(a: MainActivity): ReceiptSubmissionBinding.Snapshot {
-        val transport = SelectedImageProcessingController::class.java.getDeclaredField("transport").apply { isAccessible = true }.get(selected(a))
-        return BoundSyntheticReceiptProcessingTransport::class.java.getDeclaredField("snapshot").apply { isAccessible = true }.get(transport) as ReceiptSubmissionBinding.Snapshot
-    }
+    private fun snapshot(a: MainActivity) = selectedImageSnapshot(selected(a))
 
     private fun assertReleased(snapshot: ReceiptSubmissionBinding.Snapshot) {
         try { snapshot.copyBytes(); fail("Disposed image snapshot must be released") } catch (_: IllegalStateException) { }

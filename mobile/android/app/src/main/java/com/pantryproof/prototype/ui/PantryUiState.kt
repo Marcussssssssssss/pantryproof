@@ -6,11 +6,13 @@ import com.pantryproof.prototype.data.ManualInventoryStore
 import com.pantryproof.prototype.data.Receipt
 import com.pantryproof.prototype.data.ReceiptPresentationUiResult
 import com.pantryproof.prototype.data.ReceiptPresentationSource
+import java.time.LocalDate
 import java.util.UUID
 
 class PantryUiState internal constructor(
     private val source: ReceiptPresentationSource,
     private val manualInventory: ManualInventoryPersistence?,
+    private val today: () -> LocalDate = LocalDate::now,
 ) {
     constructor(source: ReceiptPresentationSource) : this(source, null)
 
@@ -85,8 +87,10 @@ class PantryUiState internal constructor(
         return true
     }
 
+    internal fun currentLocalDate(): LocalDate = today()
+
     fun confirmManualReceipt(draft: EditableReceipt): Boolean {
-        val confirmed = ReceiptValidator.validateManual(draft).receipt ?: return false
+        val confirmed = ReceiptValidator.validateManual(draft, today()).receipt ?: return false
         val rows = confirmed.items.map { item ->
             InventoryItem(
                 id = "$MANUAL_ROW_PREFIX${item.id}",
@@ -106,13 +110,17 @@ class PantryUiState internal constructor(
         }
     }
 
-    internal enum class LiveConfirmation { SAVED, INVALID, ALREADY_SAVED, SAVE_FAILED }
+    internal enum class LiveConfirmation { SAVED, INVALID, INVALID_DATE, ALREADY_SAVED, SAVE_FAILED }
 
     internal fun confirmLiveReceipt(
         draft: LiveReceiptReviewDraft,
         reviewed: LiveReceiptReviewDraft.Selection.Ready,
     ): LiveConfirmation {
-        if (draft.selection() != reviewed) return LiveConfirmation.INVALID
+        val current = draft.selection(today())
+        if (current is LiveReceiptReviewDraft.Selection.Invalid &&
+            current.problem == LiveReceiptReviewDraft.Problem.PURCHASE_DATE
+        ) return LiveConfirmation.INVALID_DATE
+        if (current != reviewed) return LiveConfirmation.INVALID
         if (manualInventory == null) return LiveConfirmation.SAVE_FAILED
         var alreadySaved = false
         val saved = updateManualInventory { committed ->

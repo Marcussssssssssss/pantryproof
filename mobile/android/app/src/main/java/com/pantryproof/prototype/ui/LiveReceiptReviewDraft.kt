@@ -11,6 +11,7 @@ import com.pantryproof.prototype.data.ReceiptPresentationUiResult
 import com.pantryproof.prototype.data.ReceiptProcessingLifecycle
 import com.pantryproof.prototype.data.ReceiptProcessingRequest
 import java.security.MessageDigest
+import java.time.LocalDate
 
 /** In-memory corrections overlay the original validated evidence for this submission. */
 internal class LiveReceiptReviewDraft private constructor(
@@ -32,11 +33,11 @@ internal class LiveReceiptReviewDraft private constructor(
         var selected = true
     }
 
-    enum class Problem { INACTIVE, NO_ITEMS, DESCRIPTION, QUANTITY }
+    enum class Problem { INACTIVE, PURCHASE_DATE, NO_ITEMS, DESCRIPTION, QUANTITY }
 
     sealed interface Selection {
         data class Invalid(val problem: Problem, val itemNumber: Int? = null) : Selection
-        data class Ready(val receiptIdPrefix: String, val rows: List<InventoryItem>) : Selection
+        data class Ready(val receiptIdPrefix: String, val rows: List<InventoryItem>, val purchaseDate: LocalDate) : Selection
     }
 
     val storeName = Field(available.receipt.storeName)
@@ -54,8 +55,12 @@ internal class LiveReceiptReviewDraft private constructor(
         active = false
     }
 
-    fun selection(): Selection {
+    fun selection(today: LocalDate = LocalDate.now()): Selection {
         if (!active) return Selection.Invalid(Problem.INACTIVE)
+        val finalDate = ReceiptValidator.parsePurchaseDate(purchaseDate.value)
+        if (ReceiptValidator.purchaseDateProblem(finalDate, today) != null) {
+            return Selection.Invalid(Problem.PURCHASE_DATE)
+        }
         val rows = mutableListOf<InventoryItem>()
         items.forEachIndexed { index, item ->
             if (!item.selected) return@forEachIndexed
@@ -69,7 +74,7 @@ internal class LiveReceiptReviewDraft private constructor(
             rows.add(InventoryItem(receiptIdPrefix + item.rowId, name, quantity, ManualInventoryStore.LIVE_ROW_STATE))
         }
         if (rows.isEmpty()) return Selection.Invalid(Problem.NO_ITEMS)
-        return Selection.Ready(receiptIdPrefix, rows.toList())
+        return Selection.Ready(receiptIdPrefix, rows.toList(), requireNotNull(finalDate))
     }
 
     companion object {

@@ -18,12 +18,43 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
 
 class LiveReceiptReviewTest {
     private val source = MockReceiptPresentationSource()
     private val originalStock = InventoryItem(
         "${ManualInventoryStore.ROW_PREFIX}existing", "Oats", 3, ManualInventoryStore.ROW_STATE,
     )
+
+    @Test
+    fun futureOrEditedPurchaseDateCannotUseAnEarlierLiveConfirmation() {
+        val draft = draft()
+        val sourceDate = LocalDate.of(2026, 10, 31)
+        var today = sourceDate.minusDays(1)
+        val store = TestManualInventoryPersistence(listOf(originalStock))
+        val state = PantryUiState(source, store, today = { today })
+        val before = state.inventory.toList()
+        val original = draft.purchaseDate.original
+        val invalidDate = LiveReceiptReviewDraft.Selection.Invalid(LiveReceiptReviewDraft.Problem.PURCHASE_DATE)
+        assertEquals(invalidDate, draft.selection(today))
+        assertEquals(sourceDate.toString(), draft.purchaseDate.value)
+
+        today = sourceDate
+        val reviewed = draft.selection(today) as LiveReceiptReviewDraft.Selection.Ready
+        today = sourceDate.minusDays(1)
+        assertEquals(LiveConfirmation.INVALID_DATE, state.confirmLiveReceipt(draft, reviewed))
+        draft.purchaseDate.value = ""
+        assertEquals(invalidDate, draft.selection(today))
+        draft.purchaseDate.value = today.toString()
+        val corrected = draft.selection(today) as LiveReceiptReviewDraft.Selection.Ready
+        assertEquals(LiveConfirmation.INVALID, state.confirmLiveReceipt(draft, reviewed))
+        assertEquals(listOf(originalStock), store.committed)
+        assertEquals(before, state.inventory)
+        assertEquals(original, draft.purchaseDate.original)
+        assertEquals(sourceDate.toString(), original.value)
+        assertEquals(LiveConfirmation.SAVED, state.confirmLiveReceipt(draft, corrected))
+        assertEquals(LiveConfirmation.INVALID, state.confirmLiveReceipt(draft, corrected))
+    }
 
     @Test
     fun validatedLiveResultKeepsOriginalValuesAndBinding() {

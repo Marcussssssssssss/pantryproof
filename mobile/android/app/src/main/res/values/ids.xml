@@ -101,4 +101,34 @@
     <item name="inventory_add_item" type="id" />
     <item name="inventory_item_name" type="id" />
     <item name="inventory_item_quantity" type="id" />
+    <item name="sage_nav_home" type="id" />
+    <item name="sage_nav_add" type="id" />
+    <item name="sage_nav_inventory" type="id" />
+    <item name="sage_development_tools" type="id" />
+    <item name="sage_inventory_groups" type="id" />
+    <item name="sage_inventory_details" type="id" />
+    <item name="sage_inventory_editor" type="id" />
+    <item name="sage_receipt_image" type="id" />
+    <item name="sage_result_sheet" type="id" />
+    <item name="sage_expand_all" type="id" />
+    <item name="inventory_sort_choices" type="id" />
+    <item name="crop_workspace" type="id" />
+    <item name="crop_precise_toggle" type="id" />
+    <item name="crop_close" type="id" />
+    <item name="crop_reset_action" type="id" />
+    <item name="crop_apply_action" type="id" />
+    <item name="inventory_pinned_controls" type="id" />
+    <item name="inventory_filter_choices" type="id" />
+    <item name="screen_development" type="id" />
+    <item name="v5_development_image" type="id" />
+    <item name="screen_manual_review" type="id" />
+    <item name="manual_confirm" type="id" />
+    <item name="manual_review_error" type="id" />
+    <item name="manual_calendar" type="id" />
+    <item name="sage_action_title" type="id" />
+    <item name="sage_action_subtitle" type="id" />
+    <item name="inventory_success" type="id" />
+    <item name="inventory_success_dismiss" type="id" />
+    <item name="inventory_success_host" type="id" />
+    <item name="pantry_brand_logo" type="id" />
 </resources>

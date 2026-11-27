@@ -20,4 +20,10 @@
     <dimen name="pantry_radius_hero">24dp</dimen>
     <dimen name="pantry_stroke">1dp</dimen>
     <dimen name="pantry_form_max_width">640dp</dimen>
+    <dimen name="pantry_radius_navigation">22dp</dimen>
+    <dimen name="pantry_radius_sheet">28dp</dimen>
+    <dimen name="pantry_radius_dialog">20dp</dimen>
+    <dimen name="pantry_content_max_width">720dp</dimen>
+    <dimen name="pantry_brand_size">38dp</dimen>
+    <dimen name="pantry_brand_radius">11dp</dimen>
 </resources>

@@ -30,6 +30,7 @@ import com.pantryproof.prototype.ui.ReceiptProcessingUiController
 import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.equalTo
 import org.hamcrest.Matchers.not
+import org.hamcrest.Matchers.allOf
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
@@ -79,14 +80,16 @@ class ReceiptProcessingUiInstrumentedTest {
         }
 
         onView(withText(R.string.live_review_title)).check(matches(isDisplayed()))
-        onView(withText(originalDescription)).perform(scrollTo(), replaceText("Reviewed milk"))
+        recordSageScreen("13b-offline-live-review")
+        onView(allOf(withText(originalDescription), isAssignableFrom(android.widget.EditText::class.java)))
+            .perform(sageScrollTo(), replaceText("Reviewed milk"))
         closeSoftKeyboard()
         val resources = InstrumentationRegistry.getInstrumentation().targetContext.resources
         for (itemNumber in 2..draft.items.size) {
             onView(withText(resources.getString(R.string.live_review_include_item, itemNumber)))
                 .perform(scrollTo(), click())
         }
-        onView(withText(R.string.live_review_selection_action)).perform(scrollTo(), click())
+        onView(withText(R.string.live_review_selection_action)).perform(sageScrollTo(), click())
         onView(withText(R.string.live_review_confirm_title)).check(matches(isDisplayed()))
         onView(withText(containsString("Reviewed milk"))).check(matches(isDisplayed()))
         onView(withId(android.R.id.button2)).perform(click())
@@ -111,7 +114,7 @@ class ReceiptProcessingUiInstrumentedTest {
         scenario!!.onActivity { controller(it).clearSelection() }
         awaitText("No synthetic input selected")
         onView(withId(R.id.processing_start)).check(matches(not(isEnabled())))
-        onView(withId(R.id.processing_new_input)).perform(scrollTo(), click())
+        onView(withId(R.id.processing_new_input)).perform(sageScrollTo(), click())
         awaitText("Ready for synthetic processing")
         scenario!!.onActivity { assertTrue(controller(it).state is State.Ready) }
     }
@@ -122,10 +125,13 @@ class ReceiptProcessingUiInstrumentedTest {
         start()
         awaitText("Validated synthetic receipt")
         onView(withText("Synthetic Processing Market")).perform(scrollTo()).check(matches(isDisplayed()))
-        onView(withText("0.750")).perform(scrollTo()).check(matches(isDisplayed()))
+        onView(withText(containsString("Qty: 0.750"))).perform(scrollTo()).check(matches(isDisplayed()))
         screenshot("processing-weighted-fields.png")
         onView(withText("Synthetic rice")).perform(scrollTo()).check(matches(isDisplayed()))
-        onView(withText("Unresolved · Needs review")).perform(scrollTo()).check(matches(isDisplayed()))
+        onView(withText(containsString("Unresolved · Needs review"))).perform(scrollTo()).check(matches(isDisplayed()))
+        val optionalPrice = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.v4_unit_price_optional)
+        onView(withText(containsString(optionalPrice))).perform(sageScrollTo()).check(matches(isDisplayed()))
+        recordSageScreen("08-v4-decimal-receipt-details")
         onView(withId(R.id.review_confirm)).check(doesNotExist())
         onView(withId(R.id.review_apply)).check(doesNotExist())
         scenario!!.onActivity {
@@ -168,14 +174,14 @@ class ReceiptProcessingUiInstrumentedTest {
             assertSame(activity.findViewById<View>(R.id.processing_status), activity.currentFocus)
         }
         assertProcessingResultIdsAbsent()
-        onView(withId(R.id.processing_cancel)).perform(scrollTo(), click())
+        onView(withId(R.id.processing_cancel)).perform(sageScrollTo(), click())
         awaitText("Ready for synthetic processing")
         assertProcessingResultIdsAbsent()
         select("Available receipt")
         start()
         awaitText("Validated synthetic receipt")
         assertProcessingResultIds("before-replacement")
-        onView(withId(R.id.processing_new_input)).perform(scrollTo(), click())
+        onView(withId(R.id.processing_new_input)).perform(sageScrollTo(), click())
         awaitText("Ready for synthetic processing")
         assertProcessingResultIdsAbsent()
         select("Available with failed extraction")
@@ -301,8 +307,10 @@ class ReceiptProcessingUiInstrumentedTest {
         start()
         awaitText("Processing synthetic response")
         onView(withId(R.id.processing_progress)).check(matches(isDisplayed()))
+        recordSageScreen("10-active-processing")
         onView(withId(R.id.processing_start)).check(doesNotExist())
         awaitText("Synthetic processing timed out", 15_000L)
+        recordSageScreen("11-processing-recovery")
     }
 
     @Test
@@ -311,7 +319,7 @@ class ReceiptProcessingUiInstrumentedTest {
         select("No response")
         start()
         awaitText("Processing synthetic response")
-        onView(withId(R.id.processing_cancel)).perform(scrollTo(), click())
+        onView(withId(R.id.processing_cancel)).perform(sageScrollTo(), click())
         awaitText("Ready for synthetic processing")
         SystemClock.sleep(700L)
         scenario!!.onActivity { assertTrue(controller(it).state is State.Ready) }
@@ -334,7 +342,7 @@ class ReceiptProcessingUiInstrumentedTest {
         select("No response")
         start()
         pressBack()
-        onView(withId(R.id.screen_home)).check(matches(isDisplayed()))
+        onView(withId(R.id.screen_development)).check(matches(isDisplayed()))
         SystemClock.sleep(700L)
         onView(withId(R.id.screen_processing_demo)).check(doesNotExist())
         scenario!!.onActivity {
@@ -383,7 +391,7 @@ class ReceiptProcessingUiInstrumentedTest {
             assertEquals(View.ACCESSIBILITY_LIVE_REGION_POLITE, status.accessibilityLiveRegion)
             assertEquals(R.id.processing_new_input, activity.currentFocus?.id)
         }
-        onView(withId(R.id.processing_cancel)).perform(scrollTo()).check(matches(isDisplayed()))
+        onView(withId(R.id.processing_cancel)).perform(sageScrollTo()).check(matches(isDisplayed()))
         scenario!!.onActivity { activity ->
             val minimum = (48 * activity.resources.displayMetrics.density).toInt()
             assertTrue(activity.findViewById<View>(R.id.processing_cancel).height >= minimum)
@@ -405,8 +413,8 @@ class ReceiptProcessingUiInstrumentedTest {
             }
             assertTrue("System font scale reaches 200 percent", scaled)
             awaitText("Ready for synthetic processing")
-            onView(withId(R.id.processing_start)).perform(scrollTo()).check(matches(isDisplayed()))
-            onView(withId(R.id.processing_new_input)).perform(scrollTo()).check(matches(isDisplayed()))
+            onView(withId(R.id.processing_start)).perform(sageScrollTo()).check(matches(isDisplayed()))
+            onView(withId(R.id.processing_new_input)).perform(sageScrollTo()).check(matches(isDisplayed()))
             scenario!!.onActivity { assertTrue(it.resources.configuration.fontScale >= 1.99f) }
         } finally {
             shell(if (original == "null") "settings delete system font_scale" else "settings put system font_scale $original")
@@ -458,7 +466,7 @@ class ReceiptProcessingUiInstrumentedTest {
             scenario!!.recreate(); awaitText("Ready for synthetic processing"); observe("recreated-fresh-ready")
             scenario!!.onActivity { controller(it).start() }
             pressBack()
-            onView(withId(R.id.screen_home)).check(matches(isDisplayed()))
+            onView(withId(R.id.screen_development)).check(matches(isDisplayed()))
             observe("back-home")
         }
     }
@@ -539,7 +547,7 @@ class ReceiptProcessingUiInstrumentedTest {
             observe("recreated-owner-has-no-inherited-reader")
             lateinit var leaving: ReceiptProcessingUiController
             scenario!!.onActivity { leaving = controller(it); leaving.start() }
-            pressBack(); onView(withId(R.id.screen_home)).check(matches(isDisplayed()))
+            pressBack(); onView(withId(R.id.screen_development)).check(matches(isDisplayed()))
             assertSame(State.Idle, leaving.state)
             scenario!!.onActivity { assertNull(it.findViewById<View>(R.id.screen_processing_demo)) }
             observe("disposed-owner-back-home")
@@ -665,11 +673,11 @@ class ReceiptProcessingUiInstrumentedTest {
             presentation = pantry.presentationResult
             confirmation = pantry.demoConfirmed
         }
-        onView(withId(R.id.home_processing_demo)).perform(scrollTo(), click())
+        openSageProcessingDemo()
     }
 
     private fun start() {
-        onView(withId(R.id.processing_start)).perform(scrollTo(), click())
+        onView(withId(R.id.processing_start)).perform(sageScrollTo(), click())
     }
 
     private fun select(label: String) {

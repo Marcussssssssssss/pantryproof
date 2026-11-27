@@ -43,6 +43,7 @@ import java.util.concurrent.TimeUnit
 import org.hamcrest.Matchers.not
 import org.junit.After
 import org.junit.Assert.*
+import org.hamcrest.Matchers.containsString
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -74,17 +75,18 @@ class SelectedImageProcessingInstrumentedTest {
 
     @Test fun gallerySnapshotIsReadyWithoutSubmissionAndResultIsExplicitFictionalReadOnly() {
         gallery(image())
-        onView(withId(R.id.preview_continue)).perform(scrollTo()).check(matches(isEnabled()))
+        onView(withId(R.id.preview_continue)).perform(sageScrollTo()).check(matches(isEnabled()))
         openTest()
         assertSnapshotRegions()
         scenario!!.onActivity { assertTrue(controller(it).state is ReceiptProcessingLifecycle.State.Ready) }
-        onView(withId(R.id.selected_processing_start)).perform(scrollTo(), click())
-        awaitText("Validated synthetic receipt")
-        onView(withText("0.750")).perform(scrollTo()).check(matches(isDisplayed()))
+        onView(withId(R.id.selected_processing_start)).perform(sageScrollTo(), click())
+        awaitText(context.getString(R.string.v4_test_success))
+        onView(withText(containsString("Qty: 0.750"))).perform(scrollTo()).check(matches(isDisplayed()))
         onView(withId(R.id.review_confirm)).check(doesNotExist())
         onView(withId(R.id.review_apply)).check(doesNotExist())
         scenario!!.onActivity { assertTrue(hasText(it.window.decorView, context.getString(R.string.selected_processing_fictional))) }
-        onView(withId(R.id.selected_processing_start)).perform(scrollTo())
+        recordSageScreen("09-v4-selected-image-test")
+        onView(withId(R.id.selected_processing_start)).perform(sageScrollTo())
         val screen = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
         context.cacheDir.resolve("selected-image-fictional-result.png").outputStream().use {
             screen.compress(Bitmap.CompressFormat.PNG, 100, it)
@@ -240,13 +242,13 @@ class SelectedImageProcessingInstrumentedTest {
         }
         SystemClock.sleep(700)
         scenario!!.onActivity { assertTrue(controller(it).state is ReceiptProcessingLifecycle.State.Ready) }
-        onView(withId(R.id.selected_processing_start)).perform(scrollTo(), click())
+        onView(withId(R.id.selected_processing_start)).perform(sageScrollTo(), click())
         scenario!!.onActivity { a ->
             val next = (controller(a).state as ReceiptProcessingLifecycle.State.Pending).request
             assertSame(first.selection, next.selection); assertNotSame(first.submission, next.submission)
             assertNotEquals(first.context.expectedRequestId, next.context.expectedRequestId)
         }
-        awaitText("Validated synthetic receipt")
+        awaitText(context.getString(R.string.v4_test_success))
     }
 
     @Test fun cropReplacementAfterPendingReleasesOldOwnerAndSnapshot() {
@@ -291,9 +293,9 @@ class SelectedImageProcessingInstrumentedTest {
         gallery(image()); openTest()
         scenario!!.onActivity { controller(it).start() }; pressBack(); SystemClock.sleep(700)
         onView(withId(R.id.screen_preview)).check(matches(isDisplayed()))
-        onView(withId(R.id.preview_continue)).perform(scrollTo()).check(matches(isEnabled()))
+        onView(withId(R.id.preview_continue)).perform(sageScrollTo()).check(matches(isEnabled()))
         onView(withId(R.id.preview_remove_image)).perform(scrollTo(), click())
-        onView(withId(R.id.preview_continue)).perform(scrollTo()).check(matches(isEnabled()))
+        onView(withId(R.id.preview_continue)).perform(sageScrollTo()).check(matches(isEnabled()))
     }
 
     @Test fun selectedPageSupportsPoliteStatusTouchTargetsFocusAndLargeText() {
@@ -301,7 +303,7 @@ class SelectedImageProcessingInstrumentedTest {
         try {
             shell("settings put system font_scale 2.0")
             gallery(image()); openTest()
-            onView(withId(R.id.selected_processing_start)).perform(scrollTo()).check(matches(isDisplayed()))
+            onView(withId(R.id.selected_processing_start)).perform(sageScrollTo()).check(matches(isDisplayed()))
             scenario!!.onActivity { a ->
                 assertEquals(2f, a.resources.configuration.fontScale, .01f)
                 val action = a.findViewById<View>(R.id.selected_processing_prepare_again)
@@ -310,8 +312,8 @@ class SelectedImageProcessingInstrumentedTest {
                 action.isFocusableInTouchMode = true; action.requestFocus(); controller(a).start()
                 assertEquals(R.id.selected_processing_prepare_again, a.currentFocus?.id)
             }
-            awaitText("Validated synthetic receipt")
-            onView(withText("0.750")).perform(scrollTo()).check(matches(isDisplayed()))
+            awaitText(context.getString(R.string.v4_test_success))
+            onView(withText(containsString("Qty: 0.750"))).perform(scrollTo()).check(matches(isDisplayed()))
         } finally { shell("settings put system font_scale $previous") }
     }
 
@@ -341,7 +343,7 @@ class SelectedImageProcessingInstrumentedTest {
                 assertOnlyReaderFocus(a, reader)
             }
             observe("pending-after-distinct-focus")
-            awaitText("Validated synthetic receipt"); observe("available")
+            awaitText(context.getString(R.string.v4_test_success)); observe("available")
             scenario!!.onActivity { a ->
                 val status = a.findViewById<View>(R.id.selected_processing_status)
                 assertEquals(View.ACCESSIBILITY_LIVE_REGION_POLITE, status.accessibilityLiveRegion)
@@ -382,7 +384,7 @@ class SelectedImageProcessingInstrumentedTest {
                 recordProbeFocus(a, "same-control-selected-pending")
                 assertProbeChannels(a, R.id.selected_processing_prepare_again, R.id.selected_processing_prepare_again)
             }
-            awaitText("Validated synthetic receipt")
+            awaitText(context.getString(R.string.v4_test_success))
             scenario!!.onActivity { a ->
                 assertProbeChannels(a, R.id.selected_processing_prepare_again, R.id.selected_processing_prepare_again)
             }
@@ -599,7 +601,7 @@ class SelectedImageProcessingInstrumentedTest {
         onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
     }
     private fun openTest(expectReady: Boolean = true) {
-        onView(withId(R.id.preview_process_selected)).perform(scrollTo(), click())
+        onView(withId(R.id.preview_process_selected)).perform(sageScrollTo(), click())
         if (expectReady) awaitText(context.getString(R.string.selected_processing_ready))
     }
     private fun crop(bounds: ReceiptCrop) {
@@ -609,7 +611,7 @@ class SelectedImageProcessingInstrumentedTest {
             override fun getDescription() = "set fictional two-region crop"
             override fun perform(ui: androidx.test.espresso.UiController, view: View) { (view as ReceiptCropView).setCrop(bounds) }
         })
-        onView(withText(R.string.crop_apply)).inRoot(isDialog()).perform(scrollTo(), click())
+        onView(withId(R.id.crop_apply_action)).inRoot(isDialog()).perform(click())
     }
     private fun assertSnapshotRegions() {
         scenario!!.onActivity { a ->
@@ -661,10 +663,7 @@ class SelectedImageProcessingInstrumentedTest {
         (view is TextView && view.text.toString() == text) ||
             (view is ViewGroup && (0 until view.childCount).any { hasText(view.getChildAt(it), text) })
     private fun controller(a: MainActivity) = MainActivity::class.java.getDeclaredField("selectedProcessingController").apply { isAccessible = true }.get(a) as SelectedImageProcessingController
-    private fun snapshot(a: MainActivity): ReceiptSubmissionBinding.Snapshot {
-        val transport = SelectedImageProcessingController::class.java.getDeclaredField("transport").apply { isAccessible = true }.get(controller(a))
-        return BoundSyntheticReceiptProcessingTransport::class.java.getDeclaredField("snapshot").apply { isAccessible = true }.get(transport) as ReceiptSubmissionBinding.Snapshot
-    }
+    private fun snapshot(a: MainActivity) = selectedImageSnapshot(controller(a))
     private fun pantry(a: MainActivity) = MainActivity::class.java.getDeclaredField("state").apply { isAccessible = true }.get(a) as PantryUiState
     private fun shell(command: String) = AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText() }
 }
