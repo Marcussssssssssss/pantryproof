@@ -92,8 +92,10 @@ internal class ReceiptProcessingLifecycle(
         check(!disposed)
         invalidate()
         val context = PresentationConsumerContext(newRequestId(), selected.imageId, mode)
-        val request = ReceiptProcessingRequest(selected, ReceiptProcessingRequest.Submission(), context)
-        val submission = Submission(request, nowMillis())
+        val startedAt = nowMillis()
+        val deadline = if (mode == PresentationConsumerMode.LIVE) startedAt + timeoutMillis else null
+        val request = ReceiptProcessingRequest(selected, ReceiptProcessingRequest.Submission(), context, deadline)
+        val submission = Submission(request, startedAt)
         active = submission
         state = State.Pending(request)
         schedule(timeoutMillis) {
@@ -175,6 +177,10 @@ internal class ReceiptProcessingLifecycle(
                 ReceiptProcessingDelivery.ExecutionFailure -> {
                     coordinator.cancel(attempt)
                     Outcome.LocalFailure.EXECUTION_FAILURE
+                }
+                ReceiptProcessingDelivery.TimedOut -> {
+                    coordinator.cancel(attempt)
+                    Outcome.LocalFailure.TIMEOUT
                 }
             }
         } catch (_: RuntimeException) {

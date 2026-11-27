@@ -2,6 +2,7 @@ package com.pantryproof.prototype.data
 
 import com.pantryproof.prototype.contract.v1.AutomaticExtractionStatus
 import com.pantryproof.prototype.contract.v1.PresentationConsumerContext
+import com.pantryproof.prototype.contract.v1.PresentationConsumerMode
 import com.pantryproof.prototype.contract.v1.PresentationOutcomeStatus
 import com.pantryproof.prototype.contract.v1.PresentationField
 import com.pantryproof.prototype.contract.v1.ReceiptFieldRole
@@ -17,10 +18,13 @@ class M3eReceiptPresentationAdapter {
     ): ReceiptPresentationUiResult =
         when (val result = ReceiptPresentationV1Validator.decodeAndValidate(payload, context)) {
             is ReceiptPresentationResult.Rejected -> ReceiptPresentationUiResult.Rejected(result.issue)
-            is ReceiptPresentationResult.Accepted -> mapAccepted(result.value)
+            is ReceiptPresentationResult.Accepted -> mapAccepted(result.value, context.mode)
         }
 
-    private fun mapAccepted(envelope: ReceiptPresentationV1): ReceiptPresentationUiResult =
+    private fun mapAccepted(
+        envelope: ReceiptPresentationV1,
+        mode: PresentationConsumerMode,
+    ): ReceiptPresentationUiResult =
         when (envelope.outcome.status) {
             PresentationOutcomeStatus.RESULT_AVAILABLE ->
                 ReceiptPresentationUiResult.Available(
@@ -28,6 +32,7 @@ class M3eReceiptPresentationAdapter {
                         requireNotNull(envelope.receipt),
                         requireNotNull(envelope.automaticExtraction).extractionStatus,
                     ),
+                    liveEvidence = if (mode == PresentationConsumerMode.LIVE) LiveReceiptEvidence(envelope) else null,
                 )
             PresentationOutcomeStatus.PROCESSING_UNAVAILABLE -> {
                 val failure = requireNotNull(envelope.outcome.failure)

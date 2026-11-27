@@ -1,6 +1,7 @@
 package com.pantryproof.prototype.ui
 
 import com.pantryproof.prototype.data.InventoryItem
+import com.pantryproof.prototype.data.ManualInventoryStore
 import com.pantryproof.prototype.data.MockReceiptPresentationSource
 import org.junit.Assert.*
 import org.junit.Test
@@ -68,6 +69,22 @@ class InventoryBrowseProjectionTest {
     }
     @Test fun allSourceFilterIncludesAllThreeExistingGroups() {
         assertEquals(items, InventoryBrowseProjection(source = InventoryBrowseProjection.Source.ALL).project(items))
+    }
+    @Test fun standaloneFilterKeepsReceiptRowsSeparateAndSortsSameNameItemsByQuantity() {
+        val directRows = listOf(1, 9).map { quantity ->
+            InventoryItem("manual-inventory-$quantity", "Manual rice", quantity, ManualInventoryStore.STANDALONE_ROW_STATE)
+        }
+        val mixed = items + directRows
+        val projection = InventoryBrowseProjection(
+            " RICE ", InventoryBrowseProjection.Sort.QUANTITY_DESCENDING, InventoryBrowseProjection.Source.STANDALONE,
+        )
+        assertEquals(directRows.reversed(), projection.project(mixed))
+        projection.source = InventoryBrowseProjection.Source.MANUAL
+        assertEquals(listOf("manual-receipt-one"), projection.project(mixed).map { it.id })
+        projection.query = ""
+        projection.sort = InventoryBrowseProjection.Sort.ORIGINAL
+        projection.source = InventoryBrowseProjection.Source.ALL
+        assertEquals(mixed, projection.project(mixed))
     }
     @Test fun searchSortAndSourceFilterCombine() {
         val p = InventoryBrowseProjection(" apple ", InventoryBrowseProjection.Sort.QUANTITY_DESCENDING, InventoryBrowseProjection.Source.BASELINE)

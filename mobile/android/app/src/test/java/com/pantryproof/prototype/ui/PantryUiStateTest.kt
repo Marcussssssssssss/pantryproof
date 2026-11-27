@@ -2,9 +2,12 @@ package com.pantryproof.prototype.ui
 
 import com.pantryproof.prototype.data.MockReceiptPresentationSource
 import com.pantryproof.prototype.data.InventoryItem
+import com.pantryproof.prototype.data.ManualInventoryStore
 import com.pantryproof.prototype.data.PresentedFieldStatus
 import com.pantryproof.prototype.data.ReceiptPresentationSource
 import com.pantryproof.prototype.data.ReceiptPresentationUiResult
+import com.pantryproof.prototype.ui.PantryUiState.InventoryChange
+import java.util.UUID
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -573,6 +576,110 @@ class PantryUiStateTest {
         assertTrue(state.manualInventoryLoadFailed)
         assertEquals(source.syntheticInventory(), state.inventory)
         assertEquals(listOf(row), store.committed)
+    }
+
+    @Test
+    fun standaloneAddAndEditValidateFieldsAndKeepSameNameRowsDistinct() {
+        val store = TestManualInventoryPersistence()
+        val state = PantryUiState(MockReceiptPresentationSource(), store)
+        val firstId = UUID(0, 1)
+        val secondId = UUID(0, 2)
+        assertEquals(InventoryChange.INVALID_NAME, state.addInventoryItem(" \t ", "1") { firstId })
+        for (quantity in listOf("", " ", "-1", "1.5", "100", "2147483648", "rice")) {
+            assertEquals(InventoryChange.INVALID_QUANTITY, state.addInventoryItem("Rice", quantity) { firstId })
+        }
+        assertTrue(store.committed.isEmpty())
+
+        assertEquals(InventoryChange.SAVED, state.addInventoryItem(" Rice ", " 0 ") { firstId })
+        assertEquals(InventoryChange.SAVED, state.addInventoryItem("Rice", "99") { secondId })
+        val rows = store.committed
+        assertEquals(listOf("manual-inventory-$firstId", "manual-inventory-$secondId"), rows.map { it.id })
+        assertEquals(listOf("Rice", "Rice"), rows.map { it.name })
+        assertEquals(listOf(0, 99), rows.map { it.quantity })
+
+        assertEquals(InventoryChange.NOT_SAVED, state.addInventoryItem("Duplicate ID", "1") { firstId })
+        assertEquals(InventoryChange.INVALID_NAME, state.editInventoryItem(rows[0].id, "", "9"))
+        assertEquals(InventoryChange.INVALID_QUANTITY, state.editInventoryItem(rows[0].id, "Rice", "100"))
+        assertEquals(rows, store.committed)
+        assertEquals(InventoryChange.SAVED, state.editInventoryItem(rows[0].id, " Brown rice ", "99"))
+        assertEquals(listOf(rows[0].copy(name = "Brown rice", quantity = 99), rows[1]), store.committed)
+    }
+
+    @Test
+    fun failedStandaloneChangesDoNotPublishAndCanBeRetried() {
+        val receiptRow = InventoryItem("manual-receipt-pasta", "Pasta", 3, ManualInventoryStore.ROW_STATE)
+        val store = TestManualInventoryPersistence(listOf(receiptRow))
+        val source = MockReceiptPresentationSource()
+        val state = PantryUiState(source, store)
+        val inventoryBefore = state.inventory.toList()
+        val id = UUID(0, 1)
+        store.failWrite = true
+
+        assertEquals(InventoryChange.NOT_SAVED, state.addInventoryItem("Rice", "1") { id })
+        assertEquals(InventoryChange.NOT_SAVED, state.editInventoryItem(receiptRow.id, "New pasta", "7"))
+        assertFalse(state.deleteInventoryItem(receiptRow.id))
+        assertEquals(inventoryBefore, state.inventory)
+        assertEquals(listOf(receiptRow), store.committed)
+
+        store.failWrite = false
+        assertEquals(InventoryChange.SAVED, state.addInventoryItem("Rice", "1") { id })
+        assertEquals(InventoryChange.SAVED, state.editInventoryItem(receiptRow.id, "New pasta", "7"))
+        assertTrue(state.adjustInventory("manual-inventory-$id", 1))
+        assertEquals(
+            listOf(
+                receiptRow.copy(name = "New pasta", quantity = 7),
+                InventoryItem("manual-inventory-$id", "Rice", 2, ManualInventoryStore.STANDALONE_ROW_STATE),
+            ),
+            store.committed,
+        )
+        assertEquals(state.inventory, PantryUiState(source, store).inventory)
+    }
+
+    @Test
+    fun committedDeletionIsAuthoritativeOverStaleEditsAndActivityState() {
+        val source = MockReceiptPresentationSource()
+        val store = TestManualInventoryPersistence()
+        val state = PantryUiState(source, store)
+        assertEquals(InventoryChange.SAVED, state.addInventoryItem("Oats", "2"))
+        val deleted = state.inventory.last()
+        val stale = PantryUiState(source, store)
+        val savedRows = stale.inventory.toList()
+
+        assertTrue(state.deleteInventoryItem(deleted.id))
+        assertFalse(state.deleteInventoryItem(deleted.id))
+        assertEquals(InventoryChange.NOT_SAVED, stale.editInventoryItem(deleted.id, "Oat flakes", "3"))
+        assertFalse(stale.adjustInventory(deleted.id, 1))
+        val reopened = PantryUiState(source, store)
+        reopened.restore(source.syntheticReceipt(), savedRows, restoredDemoConfirmed = false)
+        assertEquals(source.syntheticInventory(), reopened.inventory)
+        assertTrue(store.committed.isEmpty())
+    }
+
+    @Test
+    fun fixturePreviewAndBaselineStayOutsideDurableManagement() {
+        val source = MockReceiptPresentationSource()
+        val store = TestManualInventoryPersistence()
+        val state = PantryUiState(source, store)
+        assertEquals(InventoryChange.SAVED, state.addInventoryItem("Oats", "2"))
+        val draft = EditableReceipt(
+            "Synthetic market", "2026-11-23",
+            mutableListOf(EditableReceiptItem("beans", "Beans", "1", "", "2.00")),
+            "2.00",
+        )
+        assertTrue(state.confirmManualReceipt(draft))
+        val saved = store.committed
+        assertEquals(listOf("Oats", "Beans"), saved.map { it.name })
+        assertTrue(state.confirmForInventoryPreview())
+        val previewId = state.inventory.first { it.id.startsWith("receipt-") }.id
+        val baselineId = source.syntheticInventory().first().id
+        for (id in listOf(previewId, baselineId)) {
+            assertEquals(InventoryChange.NOT_SAVED, state.editInventoryItem(id, "Changed", "8"))
+            assertFalse(state.deleteInventoryItem(id))
+            assertTrue(state.adjustInventory(id, 1))
+        }
+        state.revertReceipt()
+        assertEquals(saved, store.committed)
+        assertEquals(source.syntheticInventory() + saved, PantryUiState(source, store).inventory)
     }
 
     private fun savedReceiptWithQuantity(quantity: Int) =

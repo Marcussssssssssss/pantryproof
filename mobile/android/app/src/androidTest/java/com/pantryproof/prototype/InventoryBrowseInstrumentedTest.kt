@@ -1,8 +1,14 @@
 package com.pantryproof.prototype
 
+import android.app.Activity
+import android.app.Instrumentation.ActivityResult
+import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
+import android.os.Build
 import android.os.ParcelFileDescriptor.AutoCloseInputStream
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
@@ -17,11 +23,20 @@ import androidx.test.espresso.Espresso.pressBack
 import androidx.test.espresso.action.ViewActions.*
 import androidx.test.espresso.assertion.ViewAssertions.doesNotExist
 import androidx.test.espresso.assertion.ViewAssertions.matches
+import androidx.test.espresso.intent.Intents
+import androidx.test.espresso.intent.matcher.IntentMatchers.hasAction
 import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.pantryproof.prototype.contract.v1.PresentationConsumerContext
+import com.pantryproof.prototype.contract.v1.PresentationConsumerMode
 import com.pantryproof.prototype.data.*
 import com.pantryproof.prototype.ui.PantryUiState
+import com.pantryproof.prototype.ui.SelectedImageProcessingController
+import java.io.File
+import java.io.IOException
+import java.nio.file.Files
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import org.hamcrest.Matchers.equalTo
 import org.hamcrest.Matchers.not
@@ -37,6 +52,7 @@ class InventoryBrowseInstrumentedTest {
     private var expectedReceipt: Receipt? = null
     private var expectedPresentation: ReceiptPresentationUiResult? = null
     private var expectedConfirmation = false
+    private val ownedDurableIds = mutableSetOf<String>()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = instrumentation.targetContext
     private val fixture = listOf(
@@ -56,7 +72,17 @@ class InventoryBrowseInstrumentedTest {
                 assertEquals(expectedPresentation, state.presentationResult)
                 assertEquals(expectedConfirmation, state.demoConfirmed)
             }
-        } finally { scenario?.close() }
+        } finally {
+            try {
+                scenario?.close()
+            } finally {
+                if (ownedDurableIds.isNotEmpty()) {
+                    assertNotNull(ManualInventoryStore(context).update { rows ->
+                        rows.filterNot { it.id in ownedDurableIds }
+                    })
+                }
+            }
+        }
     }
 
     @Test fun defaultInventoryAndOriginalOrderRemainVisible() {
@@ -280,12 +306,210 @@ class InventoryBrowseInstrumentedTest {
     }
 
     @Test fun manualReceiptRowRetainsItsStableActionFocus() {
-        launch(); filter("Manually entered receipt items")
+        val manualRow = fixture.single { it.id == "manual-receipt-one" }
+        seedDurableRows(listOf(manualRow))
+        launch(fixture.filterNot { it.id == manualRow.id } + manualRow)
+        filter("Manually entered receipt items")
         changeFocusedQuantity("inventory-decrease:manual-receipt-one")
         assertRows("manual-receipt-one")
         scenario!!.onActivity { a ->
             assertTrue(pantry(a).inventory.single { it.id == "manual-receipt-one" }.id
                 .startsWith(PantryUiState.MANUAL_ROW_PREFIX))
+        }
+    }
+
+    @Test fun mixedDurableRowsReloadWithCorrectFiltersAndManagementControls() {
+        val manual = InventoryItem("manual-receipt-mixed", "Manual rice", 2, ManualInventoryStore.ROW_STATE)
+        val standalone = InventoryItem("manual-inventory-mixed", "Standalone oats", 1, ManualInventoryStore.STANDALONE_ROW_STATE)
+        val live = InventoryItem("live-receipt-mixed", "Scanned beans", 4, ManualInventoryStore.LIVE_ROW_STATE)
+        val committed = listOf(manual, standalone, live)
+        seedDurableRows(committed)
+        launch(null)
+
+        filter("Confirmed receipt scan items")
+        assertRows(live.id)
+        onView(withText(R.string.live_inventory_source)).perform(scrollTo()).check(matches(isDisplayed()))
+        onView(withTagValue(equalTo("inventory-edit:" + live.id))).check(doesNotExist())
+        onView(withTagValue(equalTo("inventory-delete:" + live.id))).check(doesNotExist())
+        filter("Manually entered receipt items")
+        assertRows(manual.id)
+        onView(withTagValue(equalTo("inventory-edit:" + manual.id))).perform(scrollTo()).check(matches(isDisplayed()))
+        filter("Items added directly")
+        assertRows(standalone.id)
+        onView(withText(R.string.inventory_standalone_source)).perform(scrollTo()).check(matches(isDisplayed()))
+        onView(withTagValue(equalTo("inventory-delete:" + standalone.id))).perform(scrollTo()).check(matches(isDisplayed()))
+        assertEquals(committed, committedRows())
+    }
+
+    @Test fun standaloneAddEditAndDeleteUseStableIdsAndSurviveFreshLaunch() {
+        launch(null)
+        assertTrue(committedRows().isEmpty())
+        onView(withTagValue(equalTo("inventory-edit:stock-rice"))).check(doesNotExist())
+        onView(withTagValue(equalTo("inventory-delete:stock-rice"))).check(doesNotExist())
+
+        onView(withId(R.id.inventory_add_item)).perform(scrollTo(), click())
+        saveItem()
+        onView(withId(R.id.inventory_item_name))
+            .check(matches(hasErrorText(context.getString(R.string.inventory_name_required))))
+        editFields("Synthetic oats", "100")
+        saveItem()
+        onView(withId(R.id.inventory_item_quantity))
+            .check(matches(hasErrorText(context.getString(R.string.inventory_quantity_invalid))))
+        onView(withId(android.R.id.button2)).perform(click())
+        assertTrue(committedRows().isEmpty())
+
+        val first = addStandaloneItem("Synthetic oats", "0")
+        val second = addStandaloneItem("Synthetic oats", "99")
+        assertNotEquals(first.id, second.id)
+        assertEquals(listOf(0, 99), committedRows().map { it.quantity })
+        filter("Items added directly")
+        search(" OATS ")
+        sort("Quantity high to low")
+        assertRows(second.id, first.id)
+
+        onView(withTagValue(equalTo("inventory-edit:${first.id}"))).perform(scrollTo(), click())
+        onView(withId(R.id.inventory_item_name)).check(matches(withText("Synthetic oats")))
+        onView(withId(R.id.inventory_item_quantity)).check(matches(withText("0")))
+        editFields("Rolled oats", "4")
+        saveItem()
+        val edited = first.copy(name = "Rolled oats", quantity = 4)
+        expectedInventory = expectedInventory.map { if (it.id == first.id) edited else it }
+        assertEquals(listOf(edited, second), committedRows())
+        onView(withId(R.id.inventory_search)).check(matches(withText(" OATS ")))
+        assertRows(second.id, first.id)
+
+        onView(withTagValue(equalTo("inventory-delete:${second.id}"))).perform(scrollTo(), click())
+        onView(withText(R.string.inventory_delete_title)).check(matches(isDisplayed()))
+        onView(withId(android.R.id.button2)).perform(click())
+        assertEquals(listOf(edited, second), committedRows())
+        assertRows(second.id, first.id)
+
+        onView(withTagValue(equalTo("inventory-delete:${second.id}"))).perform(scrollTo(), click())
+        onView(withId(android.R.id.button1)).perform(click())
+        expectedInventory = expectedInventory.filterNot { it.id == second.id }
+        assertEquals(listOf(edited), committedRows())
+        assertRows(first.id)
+
+        scenario!!.close()
+        scenario = null
+        launch(null)
+        filter("Items added directly")
+        assertRows(first.id)
+        onView(withText(edited.name)).perform(scrollTo()).check(matches(isDisplayed()))
+        onView(withText(context.getString(R.string.inventory_quantity_label, edited.quantity)))
+            .perform(scrollTo()).check(matches(isDisplayed()))
+        assertEquals(listOf(edited), committedRows())
+    }
+
+    @Test fun failedInventoryWritesKeepExistingSnapshotAndEditorInputs() {
+        val directory = Files.createTempDirectory(context.cacheDir.toPath(), "inventory-management-")
+        val snapshot = directory.resolve("inventory.json")
+        try {
+            val row = InventoryItem("manual-receipt-pasta", "Synthetic pasta", 2, ManualInventoryStore.ROW_STATE)
+            val initialStore = ManualInventoryStore(snapshot)
+            assertEquals(listOf(row), initialStore.update { listOf(row) })
+            val originalBytes = Files.readAllBytes(snapshot)
+            val failing = ManualInventoryStore(snapshot) { _, _ -> throw IOException("Injected inventory write failure") }
+            val state = PantryUiState(MockReceiptPresentationSource(), failing)
+            launch(null, replacementState = state)
+
+            onView(withId(R.id.inventory_add_item)).perform(scrollTo(), click())
+            editFields("Uncommitted oats", "9")
+            saveItem()
+            assertEditorFailure("Uncommitted oats", "9")
+            onView(withId(android.R.id.button2)).perform(click())
+
+            onView(withTagValue(equalTo("inventory-edit:${row.id}"))).perform(scrollTo(), click())
+            editFields("Uncommitted pasta", "8")
+            saveItem()
+            assertEditorFailure("Uncommitted pasta", "8")
+            onView(withId(android.R.id.button2)).perform(click())
+
+            onView(withTagValue(equalTo("inventory-delete:${row.id}"))).perform(scrollTo(), click())
+            onView(withId(android.R.id.button1)).perform(click())
+            onView(withText(R.string.inventory_change_failed)).check(matches(isDisplayed()))
+            onView(withId(android.R.id.button1)).perform(click())
+            assertArrayEquals(originalBytes, Files.readAllBytes(snapshot))
+            assertEquals(listOf(row), initialStore.load())
+            assertEquals(expectedInventory, state.inventory)
+            onView(withText(row.name)).perform(scrollTo()).check(matches(isDisplayed()))
+        } finally {
+            Files.deleteIfExists(snapshot)
+            Files.deleteIfExists(directory)
+        }
+    }
+
+    @Test fun generatedFixtureBindingLeavesDurableInventoryUnchanged() {
+        val row = InventoryItem(
+            "manual-inventory-${UUID.randomUUID()}", "Synthetic pantry stock", 5,
+            ManualInventoryStore.STANDALONE_ROW_STATE,
+        )
+        seedDurableRows(listOf(row))
+        val before = committedRows()
+        val image = File.createTempFile("inventory-fixture-boundary-", ".png", context.cacheDir)
+        try {
+            val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+            try {
+                image.outputStream().use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+            } finally {
+                bitmap.recycle()
+            }
+            launch(null)
+            pressBack()
+            val previewUri = Uri.fromFile(image)
+            val transport = BoundSyntheticReceiptProcessingTransport(
+                { SyntheticReceiptProcessingTransport.Scenario.AVAILABLE },
+                dispatchResponse = { it() },
+            )
+            val fixtureContext = PresentationConsumerContext(
+                "inventory-fixture-request", "inventory-fixture-image", PresentationConsumerMode.FIXTURE,
+            )
+            val binding = SelectedImageProcessingController.FixtureBinding(
+                transport = transport,
+                replaceSnapshot = {
+                    transport.replaceSnapshot(it)
+                    true
+                },
+                start = SelectedImageProcessingController.FixtureStart(fixtureContext, Any(), SystemClock::elapsedRealtime),
+                maximumBytes = 256 * 1024,
+                preparedInput = image::readBytes,
+                retire = { transport.replaceSnapshot(null) },
+                release = {},
+            )
+            Intents.init()
+            try {
+                val picker = if (Build.VERSION.SDK_INT >= 33) MediaStore.ACTION_PICK_IMAGES else Intent.ACTION_OPEN_DOCUMENT
+                Intents.intending(hasAction(picker)).respondWith(
+                    ActivityResult(Activity.RESULT_OK, Intent().setData(previewUri)),
+                )
+                onView(withId(R.id.home_add_receipt)).perform(scrollTo(), click())
+                onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
+                scenario!!.onActivity { SelectedImageProcessingController.offerFixture(it, previewUri, binding) }
+                onView(withId(R.id.preview_process_selected)).perform(scrollTo(), click())
+                await { selectedProcessing(it).inputState == SelectedImageProcessingController.InputState.READY }
+                onView(withId(R.id.selected_processing_start)).perform(scrollTo(), click())
+                await { selectedProcessing(it).state is ReceiptProcessingLifecycle.State.Finished }
+                scenario!!.onActivity {
+                    val controller = selectedProcessing(it)
+                    assertTrue(controller.ownsFixture(binding))
+                    val result = controller.state as ReceiptProcessingLifecycle.State.Finished
+                    assertEquals(fixtureContext, result.request.context)
+                    val presentation = result.outcome as ReceiptProcessingLifecycle.Outcome.Presentation
+                    assertTrue(presentation.result is ReceiptPresentationUiResult.Available)
+                }
+                onView(withId(R.id.review_confirm)).check(doesNotExist())
+                assertEquals(before, committedRows())
+            } finally {
+                try {
+                    scenario!!.onActivity {
+                        try { it.resetSelectedImageFixture(binding) } finally { binding.detach() }
+                    }
+                } finally {
+                    Intents.release()
+                }
+            }
+        } finally {
+            image.delete()
         }
     }
 
@@ -460,19 +684,64 @@ class InventoryBrowseInstrumentedTest {
     }
 
 
-    private fun launch(items: List<InventoryItem>? = fixture, confirmed: Boolean = false) {
+    private fun launch(
+        items: List<InventoryItem>? = fixture,
+        confirmed: Boolean = false,
+        replacementState: PantryUiState? = null,
+    ) {
+        if (confirmed) {
+            seedDurableRows(listOf(InventoryItem("manual-receipt-test", "Manual rice", 3, ManualInventoryStore.ROW_STATE)))
+        }
         scenario = ActivityScenario.launch(MainActivity::class.java)
         scenario!!.onActivity { a ->
+            if (replacementState != null) pantryField.set(a, replacementState)
             val state = pantry(a)
             if (confirmed) {
                 assertTrue(state.confirmForInventoryPreview())
-                state.inventory.add(InventoryItem("manual-receipt-test", "Manual rice", 3, "Manually entered receipt"))
             } else if (items != null) { state.inventory.clear(); state.inventory.addAll(items) }
             expectedInventory = state.inventory.toList(); expectedReceipt = state.receipt
             expectedPresentation = state.presentationResult; expectedConfirmation = state.demoConfirmed
         }
         onView(withId(R.id.home_inventory)).perform(scrollTo(), click())
     }
+
+    private fun seedDurableRows(rows: List<InventoryItem>) {
+        val ids = rows.map { it.id }
+        val store = ManualInventoryStore(context)
+        assertNotNull(store.update { committed ->
+            if (committed.any { it.id in ids }) null else committed + rows
+        })
+        ownedDurableIds.addAll(ids)
+    }
+
+    private fun committedRows() = requireNotNull(ManualInventoryStore(context).load())
+
+    private fun addStandaloneItem(name: String, quantity: String): InventoryItem {
+        val existingIds = committedRows().map { it.id }.toSet()
+        onView(withId(R.id.inventory_add_item)).perform(scrollTo(), click())
+        editFields(name, quantity)
+        saveItem()
+        val row = committedRows().single { it.id !in existingIds }
+        ownedDurableIds.add(row.id)
+        expectedInventory = expectedInventory + row
+        assertTrue(row.id.startsWith(ManualInventoryStore.STANDALONE_ROW_PREFIX))
+        UUID.fromString(row.id.removePrefix(ManualInventoryStore.STANDALONE_ROW_PREFIX))
+        return row
+    }
+
+    private fun editFields(name: String, quantity: String) {
+        onView(withId(R.id.inventory_item_name)).perform(replaceText(name), closeSoftKeyboard())
+        onView(withId(R.id.inventory_item_quantity)).perform(replaceText(quantity), closeSoftKeyboard())
+    }
+
+    private fun saveItem() = onView(withId(android.R.id.button1)).perform(click())
+
+    private fun assertEditorFailure(name: String, quantity: String) {
+        onView(withText(R.string.inventory_change_failed)).check(matches(isDisplayed()))
+        onView(withId(R.id.inventory_item_name)).check(matches(withText(name)))
+        onView(withId(R.id.inventory_item_quantity)).check(matches(withText(quantity)))
+    }
+
     private fun search(query: String) { onView(withId(R.id.inventory_search)).perform(scrollTo(), replaceText(query), closeSoftKeyboard()) }
     private fun sort(label: String) { choose(R.id.inventory_sort, label) }
     private fun filter(label: String) { choose(R.id.inventory_filter, label) }
@@ -488,7 +757,11 @@ class InventoryBrowseInstrumentedTest {
         while (SystemClock.uptimeMillis() < deadline) { var ok = false; scenario!!.onActivity { ok = predicate(it) }; if (ok) return; SystemClock.sleep(25) }
         fail("Expected inventory view state did not arrive")
     }
-    private fun pantry(a: MainActivity) = MainActivity::class.java.getDeclaredField("state").apply { isAccessible = true }.get(a) as PantryUiState
+    private val pantryField get() = MainActivity::class.java.getDeclaredField("state").apply { isAccessible = true }
+    private fun pantry(a: MainActivity) = pantryField.get(a) as PantryUiState
+    private fun selectedProcessing(a: MainActivity) = MainActivity::class.java
+        .getDeclaredField("selectedProcessingController").apply { isAccessible = true }
+        .get(a) as SelectedImageProcessingController
     private fun capture(name: String) {
         instrumentation.waitForIdleSync()
         SystemClock.sleep(400L)

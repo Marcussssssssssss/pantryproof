@@ -7,6 +7,7 @@ import com.pantryproof.prototype.data.ReceiptProcessingLifecycle
 import com.pantryproof.prototype.data.ReceiptProcessingRequest
 import com.pantryproof.prototype.data.ReceiptProcessingTransport
 import com.pantryproof.prototype.data.ReceiptSubmissionBinding
+import com.pantryproof.prototype.data.T09HttpTransport
 import java.util.WeakHashMap
 
 /** Serialized UI owner. Image preparation is a local prerequisite, not an I2C outcome. */
@@ -23,6 +24,7 @@ internal class SelectedImageProcessingController private constructor(
     newRequestId: () -> String,
     private val maximumBytes: Int,
     private val onChanged: () -> Unit,
+    private val consumerMode: PresentationConsumerMode = PresentationConsumerMode.FIXTURE,
 ) {
     constructor(
         transport: BoundSyntheticReceiptProcessingTransport,
@@ -72,6 +74,35 @@ internal class SelectedImageProcessingController private constructor(
         newRequestId = { fixture.start.context.expectedRequestId },
         maximumBytes = fixture.maximumBytes,
         onChanged = onChanged,
+    )
+
+    constructor(
+        transport: T09HttpTransport,
+        postWorker: (() -> Unit) -> Unit,
+        postUi: (() -> Unit) -> Unit,
+        schedule: (Long, () -> Unit) -> Unit,
+        nowMillis: () -> Long,
+        newImageId: () -> String,
+        newRequestId: () -> String,
+        onChanged: () -> Unit,
+    ) : this(
+        transport = transport,
+        replaceSnapshot = { snapshot ->
+            check(snapshot == null)
+            transport.close()
+            true
+        },
+        fixture = null,
+        postWorker = postWorker,
+        postUi = postUi,
+        schedule = schedule,
+        nowMillis = nowMillis,
+        timeoutMillis = T09HttpTransport.TOTAL_MS,
+        newImageId = newImageId,
+        newRequestId = newRequestId,
+        maximumBytes = T09HttpTransport.MAX_PNG_BYTES,
+        onChanged = onChanged,
+        consumerMode = PresentationConsumerMode.LIVE,
     )
 
     /** A test owner supplies the transport and the snapshot handler from the same holder. */
@@ -188,7 +219,7 @@ internal class SelectedImageProcessingController private constructor(
         private set
     private val processing = ReceiptProcessingUiController(
         transport, postWorker, postUi, ::scheduleProcessing, nowMillis, timeoutMillis,
-        newImageId, newRequestId, onStateChanged = ::onProcessingChanged,
+        newImageId, newRequestId, onStateChanged = ::onProcessingChanged, consumerMode = consumerMode,
     )
     val state: ReceiptProcessingLifecycle.State get() = processing.state
     val isFixture: Boolean get() = fixture != null
@@ -221,6 +252,7 @@ internal class SelectedImageProcessingController private constructor(
     /** Replacing a URI, crop, or prepared input always invalidates the previous selection. */
     fun prepareInput(encode: () -> ByteArray) {
         check(!disposed)
+        check(consumerMode == PresentationConsumerMode.FIXTURE)
         val token = Any().also { generation = it }
         if (fixture != null && (fixturePreparationStarted || fixture.closed)) {
             fixture.start.revoke()
@@ -261,6 +293,13 @@ internal class SelectedImageProcessingController private constructor(
             }
         }
         publish()
+    }
+
+    /** LIVE owns one captured URI/crop. Its bounded preparation runs after Start. */
+    fun selectLiveInput() {
+        check(!disposed && consumerMode == PresentationConsumerMode.LIVE && inputState == InputState.EMPTY)
+        inputState = InputState.READY
+        processing.selectInput()
     }
 
     fun start() {

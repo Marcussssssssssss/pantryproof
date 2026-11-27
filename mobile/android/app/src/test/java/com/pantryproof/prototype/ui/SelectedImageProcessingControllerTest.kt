@@ -1,5 +1,6 @@
 package com.pantryproof.prototype.ui
 
+import com.pantryproof.prototype.contract.v1.PresentationConsumerMode
 import com.pantryproof.prototype.data.*
 import com.pantryproof.prototype.data.ReceiptProcessingLifecycle.State
 import com.pantryproof.prototype.data.ReceiptProcessingLifecycle.Outcome
@@ -39,6 +40,38 @@ class SelectedImageProcessingControllerTest {
         assertEquals(SelectedImageProcessingController.InputState.PREPARING, h.controller.inputState)
         h.ui.drain(); assertEquals(SelectedImageProcessingController.InputState.READY, h.controller.inputState)
         assertEquals(0, h.submissions)
+    }
+
+    @Test fun liveSelectionDefersPreparationAndCancelBeforeHandoffClearsTheSessionOnDispose() {
+        val worker = Queue()
+        val ui = Queue()
+        val timerDelays = mutableListOf<Long>()
+        val session = T09ProcessingConfig.Session("http", "10.0.2.2", 8765, "test-only")
+        var prepared = false
+        val transport = T09HttpTransport(session, { 50L }, { prepared = true; byteArrayOf() })
+        val controller = SelectedImageProcessingController(
+            transport, worker::post, ui::post, { delay, _ -> timerDelays += delay }, { 50L },
+            { "image-live" }, { "request-live" }, {},
+        )
+        try {
+            controller.selectLiveInput()
+            assertTrue(controller.canStart)
+            assertFalse(prepared)
+            assertTrue(worker.tasks.isEmpty())
+            controller.start()
+            val request = (controller.state as State.Pending).request
+            assertEquals(PresentationConsumerMode.LIVE, request.context.mode)
+            assertEquals(130_050L, request.deadlineElapsedMillis)
+            assertEquals(listOf(130_000L), timerDelays)
+            controller.cancel()
+            worker.drain()
+            ui.drain()
+            assertFalse(prepared)
+            assertTrue(controller.state is State.Ready)
+        } finally {
+            controller.dispose()
+        }
+        assertNull(session.credential())
     }
 
     @Test fun readySelectionIsTheExactSnapshotSelectionAndOwner() {

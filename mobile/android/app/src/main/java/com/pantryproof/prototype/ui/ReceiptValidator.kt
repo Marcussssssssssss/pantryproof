@@ -158,9 +158,6 @@ object ReceiptValidator {
         }
         draft.items.forEachIndexed { index, item ->
             val prefix = "item.$index"
-            if ((item.quantity.trim().toIntOrNull() ?: 0) > PantryUiState.MAX_INVENTORY_QUANTITY) {
-                errors["$prefix.quantity"] = "Quantity must be 99 or less."
-            }
             if (item.unitPrice.isNotBlank()) checkAmount("$prefix.unitPrice", item.unitPrice)
             checkAmount("$prefix.lineTotal", item.lineTotal)
         }
@@ -190,6 +187,8 @@ object ReceiptValidator {
             val quantity = item.quantity.trim().toIntOrNull()
             if (quantity == null || quantity <= 0) {
                 errors["$prefix.quantity"] = "Quantity must be a whole number above zero."
+            } else if (quantity > PantryUiState.MAX_INVENTORY_QUANTITY) {
+                errors["$prefix.quantity"] = "Quantity must be ${PantryUiState.MAX_INVENTORY_QUANTITY} or less."
             }
 
             val unitPrice = if (item.unitPrice.isBlank()) {

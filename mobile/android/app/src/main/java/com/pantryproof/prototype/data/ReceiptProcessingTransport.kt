@@ -7,6 +7,7 @@ internal data class ReceiptProcessingRequest(
     val selection: Selection,
     val submission: Submission,
     val context: PresentationConsumerContext,
+    val deadlineElapsedMillis: Long? = null,
 ) {
     class Owner
     class Selection(val owner: Owner, val imageId: String)
@@ -24,9 +25,10 @@ internal sealed interface ReceiptProcessingDelivery {
 
     data object NoEnvelope : ReceiptProcessingDelivery
     data object ExecutionFailure : ReceiptProcessingDelivery
+    data object TimedOut : ReceiptProcessingDelivery
 }
 
-/** Android-local test boundary. Callbacks may be delayed or delivered after cancellation. */
+/** Callbacks may be delayed or delivered after cancellation. Submitting must not block on I/O. */
 internal fun interface ReceiptProcessingTransport {
     fun submit(
         request: ReceiptProcessingRequest,

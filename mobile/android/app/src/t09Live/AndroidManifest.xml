@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:networkSecurityConfig="@xml/t09_network_security_config">
+        <activity
+            android:name=".T09DebugConfigurationActivity"
+            android:exported="false"
+            android:label="@string/t09_debug_configuration_title" />
+    </application>
+</manifest>
