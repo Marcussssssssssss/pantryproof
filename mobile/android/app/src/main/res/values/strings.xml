@@ -194,7 +194,7 @@
     <string name="manual_discard_title">Discard manual entry?</string>
     <string name="manual_discard_body">Your unconfirmed entries will be discarded. You can still view the image or remove it from the preview.</string>
     <string name="manual_inventory_source">From a manually entered receipt</string>
-    <string name="manual_inventory_banner">Items you confirm from receipts and their quantities are saved on this device. Demo stock is fictional and temporary.</string>
+    <string name="manual_inventory_banner">Items you add directly or confirm from receipts, and their quantities, are saved on this device. Demo stock is fictional and temporary.</string>
     <string name="manual_inventory_load_failed_title">Saved inventory unavailable</string>
     <string name="manual_inventory_load_failed">Could not read local inventory. Close and reopen PantryProof to try again.</string>
     <string name="manual_inventory_quantity_failed_title">Quantity could not be saved</string>
@@ -216,7 +216,22 @@
     <string name="inventory_minimum_hint">Minimum quantity reached</string>
     <string name="inventory_maximum_hint">Maximum quantity reached</string>
     <string name="inventory_empty_title">No inventory items yet</string>
-    <string name="inventory_empty_body">Confirm a manually entered receipt to add its items here.</string>
+    <string name="inventory_empty_body">Add an item or confirm a manually entered receipt.</string>
+    <string name="inventory_add_item">Add item</string>
+    <string name="inventory_edit_item">Edit item</string>
+    <string name="inventory_edit_item_description">Edit %1$s</string>
+    <string name="inventory_delete_item">Delete item</string>
+    <string name="inventory_delete_item_description">Delete %1$s</string>
+    <string name="inventory_delete_title">Delete this item?</string>
+    <string name="inventory_delete_message">Remove %1$s from your saved inventory?</string>
+    <string name="inventory_item_name">Item name</string>
+    <string name="inventory_item_quantity">Quantity (0–99)</string>
+    <string name="inventory_save_item">Save item</string>
+    <string name="inventory_name_required">Enter an item name.</string>
+    <string name="inventory_quantity_invalid">Enter a whole number from 0 to 99.</string>
+    <string name="inventory_change_failed_title">Inventory change failed</string>
+    <string name="inventory_change_failed">Could not save this change. Your saved inventory is unchanged.</string>
+    <string name="inventory_standalone_source">Added directly to inventory</string>
     <string name="inventory_add_receipt">Add another receipt</string>
     <string name="inventory_back_home">Back to dashboard</string>
     <string name="processing_demo_title">Synthetic Processing Demo</string>
@@ -325,6 +340,7 @@
         <item>Temporary receipt-preview items</item>
         <item>Manually entered receipt items</item>
         <item>Confirmed receipt scan items</item>
+        <item>Items added directly</item>
     </string-array>
     <string name="inventory_browse_compact_title">Inventory</string>
 </resources>

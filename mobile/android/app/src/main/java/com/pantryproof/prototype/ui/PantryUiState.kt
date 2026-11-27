@@ -6,12 +6,15 @@ import com.pantryproof.prototype.data.ManualInventoryStore
 import com.pantryproof.prototype.data.Receipt
 import com.pantryproof.prototype.data.ReceiptPresentationUiResult
 import com.pantryproof.prototype.data.ReceiptPresentationSource
+import java.util.UUID
 
 class PantryUiState internal constructor(
     private val source: ReceiptPresentationSource,
     private val manualInventory: ManualInventoryPersistence?,
 ) {
     constructor(source: ReceiptPresentationSource) : this(source, null)
+
+    enum class InventoryChange { SAVED, INVALID_NAME, INVALID_QUANTITY, NOT_SAVED }
 
     companion object {
         const val MIN_INVENTORY_QUANTITY = ManualInventoryStore.MIN_QUANTITY
@@ -122,6 +125,53 @@ class PantryUiState internal constructor(
         return LiveConfirmation.SAVED
     }
 
+    internal fun addInventoryItem(
+        name: String,
+        quantity: String,
+        newId: () -> UUID = UUID::randomUUID,
+    ): InventoryChange = saveInventoryItem(name, quantity) { trimmedName, parsedQuantity ->
+        val id = "${ManualInventoryStore.STANDALONE_ROW_PREFIX}${newId()}"
+        updateManualInventory { committed ->
+            if (committed.any { it.id == id }) null
+            else committed + InventoryItem(id, trimmedName, parsedQuantity, ManualInventoryStore.STANDALONE_ROW_STATE)
+        }
+    }
+
+    internal fun editInventoryItem(id: String, name: String, quantity: String): InventoryChange =
+        saveInventoryItem(name, quantity) { trimmedName, parsedQuantity ->
+            updateExistingInventoryItem(id) { it.copy(name = trimmedName, quantity = parsedQuantity) }
+        }
+
+    internal fun deleteInventoryItem(id: String): Boolean = updateExistingInventoryItem(id) { null }
+
+    private inline fun saveInventoryItem(
+        name: String,
+        quantity: String,
+        save: (String, Int) -> Boolean,
+    ): InventoryChange {
+        val trimmedName = name.trim()
+        if (trimmedName.isBlank()) return InventoryChange.INVALID_NAME
+        val parsedQuantity = quantity.trim().toIntOrNull()
+        if (parsedQuantity == null || parsedQuantity !in MIN_INVENTORY_QUANTITY..MAX_INVENTORY_QUANTITY) {
+            return InventoryChange.INVALID_QUANTITY
+        }
+        return if (save(trimmedName, parsedQuantity)) InventoryChange.SAVED else InventoryChange.NOT_SAVED
+    }
+
+    private fun updateExistingInventoryItem(id: String, change: (InventoryItem) -> InventoryItem?): Boolean {
+        if (!ManualInventoryStore.isDurableRowId(id) || id.startsWith(ManualInventoryStore.LIVE_ROW_PREFIX)) {
+            return false
+        }
+        return updateManualInventory { committed ->
+            val index = committed.indexOfFirst { it.id == id }
+            if (index < 0) return@updateManualInventory null
+            val updated = change(committed[index])
+            committed.toMutableList().apply {
+                if (updated == null) removeAt(index) else set(index, updated)
+            }
+        }
+    }
+
     fun adjustInventory(id: String, delta: Int): Boolean {
         val index = inventory.indexOfFirst { it.id == id }
         if (index < 0) return false
@@ -144,7 +194,7 @@ class PantryUiState internal constructor(
         )
 
     private fun updateManualInventory(change: (List<InventoryItem>) -> List<InventoryItem>?): Boolean {
-        val committed = checkNotNull(manualInventory).update(change) ?: return false
+        val committed = manualInventory?.update(change) ?: return false
         inventory.removeAll { ManualInventoryStore.isDurableRowId(it.id) }
         inventory.addAll(committed)
         manualInventoryLoadFailed = false

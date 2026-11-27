@@ -128,4 +128,43 @@ class ReceiptValidatorTest {
         assertEquals("", draft.items.last().unitPrice)
         assertEquals("23.00", draft.receiptTotal)
     }
+    @Test
+    fun reviewAndManualAcceptBoundaryQuantitiesWithoutCoercion() {
+        for (quantity in listOf(98, 99)) {
+            val draft = EditableReceipt.from(source.syntheticReceipt()).apply {
+                items[0].quantity = " $quantity "
+            }
+            for (result in listOf(ReceiptValidator.validate(draft), ReceiptValidator.validateManual(draft))) {
+                assertTrue(result.errors.toString(), result.isValid)
+                assertEquals(quantity, result.receipt!!.items[0].quantity)
+            }
+            assertEquals(" $quantity ", draft.items[0].quantity)
+        }
+    }
+
+    @Test
+    fun reviewAndManualRejectQuantitiesAboveSessionMaximum() {
+        for (raw in listOf("100", "2147483647", "2147483648", "999999999999999999999999999")) {
+            val draft = EditableReceipt.from(source.syntheticReceipt()).apply { items[0].quantity = raw }
+            for (result in listOf(ReceiptValidator.validate(draft), ReceiptValidator.validateManual(draft))) {
+                assertFalse("Quantity $raw must not be admitted", result.isValid)
+                assertNull(result.receipt)
+                assertTrue(result.errors.containsKey("item.0.quantity"))
+            }
+            assertEquals(raw, draft.items[0].quantity)
+        }
+    }
+
+    @Test
+    fun reviewAndManualRejectInvalidQuantitiesWithoutOverflow() {
+        for (raw in listOf("", " ", "0", "-1", "-2147483648", "1.5", "0.750", "NaN", "1e2")) {
+            val draft = EditableReceipt.from(source.syntheticReceipt()).apply { items[0].quantity = raw }
+            for (result in listOf(ReceiptValidator.validate(draft), ReceiptValidator.validateManual(draft))) {
+                assertFalse("Quantity $raw must not be admitted", result.isValid)
+                assertNull(result.receipt)
+                assertTrue(result.errors.containsKey("item.0.quantity"))
+            }
+        }
+    }
+
 }

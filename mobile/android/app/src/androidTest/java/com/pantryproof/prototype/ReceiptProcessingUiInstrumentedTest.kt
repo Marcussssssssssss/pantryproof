@@ -6,20 +6,25 @@ import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import android.widget.LinearLayout
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
+import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.test.espresso.Espresso.onData
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.Espresso.pressBack
 import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.action.ViewActions.replaceText
 import androidx.test.espresso.action.ViewActions.scrollTo
 import androidx.test.espresso.assertion.ViewAssertions.doesNotExist
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.pantryproof.prototype.contract.v1.PresentationConsumerMode
 import com.pantryproof.prototype.data.*
 import com.pantryproof.prototype.data.ReceiptProcessingLifecycle.State
+import com.pantryproof.prototype.ui.LiveReceiptReviewDraft
 import com.pantryproof.prototype.ui.PantryUiState
 import com.pantryproof.prototype.ui.ReceiptProcessingUiController
 import org.hamcrest.Matchers.containsString
@@ -48,6 +53,47 @@ class ReceiptProcessingUiInstrumentedTest {
             assertEquals(confirmation, pantry.demoConfirmed)
         }
         scenario?.close()
+    }
+
+    @Test
+    fun liveReviewRendersEditsAndSelectionFromAnOfflineFixture() {
+        val context = SyntheticReceiptPresentationPayload.context.copy(mode = PresentationConsumerMode.LIVE)
+        val payload = SyntheticReceiptPresentationPayload.bytes().decodeToString()
+            .replace("SYNTHETIC_FIXTURE", "LOCAL_IMAGE").encodeToByteArray()
+        val result = M3eReceiptPresentationAdapter().decodeAndMap(payload, context)
+        val request = ReceiptProcessingRequest(
+            ReceiptProcessingRequest.Selection(ReceiptProcessingRequest.Owner(), context.expectedImageId),
+            ReceiptProcessingRequest.Submission(),
+            context,
+        )
+        val draft = requireNotNull(LiveReceiptReviewDraft.from(
+            State.Finished(request, ReceiptProcessingLifecycle.Outcome.Presentation(result)),
+        ))
+        val originalDescription = draft.items.first().description.value
+        launch()
+        scenario!!.onActivity { activity ->
+            MainActivity::class.java.getDeclaredField("liveReviewDraft").apply { isAccessible = true }
+                .set(activity, draft)
+            MainActivity::class.java.getDeclaredMethod("renderLiveReceiptReview", LiveReceiptReviewDraft::class.java)
+                .apply { isAccessible = true }.invoke(activity, draft)
+        }
+
+        onView(withText(R.string.live_review_title)).check(matches(isDisplayed()))
+        onView(withText(originalDescription)).perform(scrollTo(), replaceText("Reviewed milk"))
+        closeSoftKeyboard()
+        val resources = InstrumentationRegistry.getInstrumentation().targetContext.resources
+        for (itemNumber in 2..draft.items.size) {
+            onView(withText(resources.getString(R.string.live_review_include_item, itemNumber)))
+                .perform(scrollTo(), click())
+        }
+        onView(withText(R.string.live_review_selection_action)).perform(scrollTo(), click())
+        onView(withText(R.string.live_review_confirm_title)).check(matches(isDisplayed()))
+        onView(withText(containsString("Reviewed milk"))).check(matches(isDisplayed()))
+        onView(withId(android.R.id.button2)).perform(click())
+        scenario!!.onActivity {
+            val selection = draft.selection() as LiveReceiptReviewDraft.Selection.Ready
+            assertEquals(listOf("Reviewed milk"), selection.rows.map(InventoryItem::name))
+        }
     }
 
     @Test
@@ -91,6 +137,103 @@ class ReceiptProcessingUiInstrumentedTest {
         }
         onView(withId(R.id.processing_scenario)).perform(scrollTo())
         screenshot("processing-available.png")
+    }
+
+    @Test
+    fun availableResultIdsResolveDistinctHeadingAndSummaryCard() {
+        launch()
+        start()
+        awaitText("Validated synthetic receipt")
+        assertProcessingResultIds("available")
+        onView(withId(R.id.processing_receipt_heading)).perform(scrollTo())
+            .check(matches(withText(R.string.processing_review_title)))
+        onView(withId(R.id.processing_receipt)).perform(scrollTo())
+            .check(matches(isAssignableFrom(LinearLayout::class.java)))
+        onView(withText("Synthetic Processing Market")).check(matches(isDisplayed()))
+        onView(withId(R.id.review_confirm)).check(doesNotExist())
+        onView(withId(R.id.review_apply)).check(doesNotExist())
+    }
+
+    @Test
+    fun resultIdsStayUniqueAcrossCancellationReplacementAndRecreation() {
+        launch()
+        select("No response")
+        assertProcessingResultIdsAbsent()
+        scenario!!.onActivity { activity ->
+            val action = activity.findViewById<View>(R.id.processing_start)
+            action.isFocusableInTouchMode = true
+            assertTrue(action.requestFocus())
+            controller(activity).start()
+            assertTrue(controller(activity).state is State.Pending)
+            assertSame(activity.findViewById<View>(R.id.processing_status), activity.currentFocus)
+        }
+        assertProcessingResultIdsAbsent()
+        onView(withId(R.id.processing_cancel)).perform(scrollTo(), click())
+        awaitText("Ready for synthetic processing")
+        assertProcessingResultIdsAbsent()
+        select("Available receipt")
+        start()
+        awaitText("Validated synthetic receipt")
+        assertProcessingResultIds("before-replacement")
+        onView(withId(R.id.processing_new_input)).perform(scrollTo(), click())
+        awaitText("Ready for synthetic processing")
+        assertProcessingResultIdsAbsent()
+        select("Available with failed extraction")
+        start()
+        awaitText("Automatic extraction needs manual review.")
+        assertProcessingResultIds("failed-extraction")
+        scenario!!.recreate()
+        awaitText("Ready for synthetic processing")
+        assertProcessingResultIdsAbsent()
+        select("Available receipt")
+        start()
+        awaitText("Validated synthetic receipt")
+        assertProcessingResultIds("after-recreation")
+        select("Processing unavailable")
+        start()
+        awaitText("Receipt processing unavailable")
+        assertProcessingResultIdsAbsent()
+    }
+
+    private fun assertProcessingResultIdsAbsent() {
+        scenario!!.onActivity { activity ->
+            assertNull(activity.findViewById<View>(R.id.processing_receipt_heading))
+            assertNull(activity.findViewById<View>(R.id.processing_receipt))
+        }
+    }
+
+    private fun assertProcessingResultIds(stage: String) {
+        scenario!!.onActivity { activity ->
+            val root = requireNotNull(activity.findViewById<View>(R.id.screen_processing_demo))
+            assertSame(controller(activity), root.tag)
+            val cards = mutableListOf<View>()
+            val headings = mutableListOf<View>()
+            fun visit(view: View) {
+                if (view.id == R.id.processing_receipt) cards.add(view)
+                if (view.id == R.id.processing_receipt_heading) headings.add(view)
+                if (view is ViewGroup) for (index in 0 until view.childCount) visit(view.getChildAt(index))
+            }
+            visit(root)
+            val card = root.findViewById<View>(R.id.processing_receipt)
+            val heading = root.findViewById<View>(R.id.processing_receipt_heading)
+            val snapshot = org.json.JSONObject().put("stage", stage)
+                .put("cardMatches", cards.size).put("headingMatches", headings.size)
+                .put("cardLookupClass", card?.javaClass?.name ?: "ABSENT")
+                .put("headingLookupClass", heading?.javaClass?.name ?: "ABSENT")
+            activity.cacheDir.resolve("f02-view-id-$stage.json").writeText(snapshot.toString(2))
+            assertEquals("Summary card ID must identify exactly one view", 1, cards.size)
+            assertEquals("Heading ID must identify exactly one view", 1, headings.size)
+            assertTrue("Summary lookup must resolve the card", card is LinearLayout)
+            assertTrue("Heading lookup must resolve the heading", heading is TextView)
+            assertSame(cards.single(), card)
+            assertSame(headings.single(), heading)
+            assertNotSame(card, heading)
+            assertNotEquals(heading!!.id, card!!.id)
+            assertEquals(activity.getString(R.string.processing_review_title), (heading as TextView).text.toString())
+            val parent = heading.parent as ViewGroup
+            assertSame(parent, card.parent)
+            assertTrue(parent.indexOfChild(heading) < parent.indexOfChild(card))
+        }
     }
 
     @Test

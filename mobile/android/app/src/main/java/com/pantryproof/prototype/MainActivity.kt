@@ -2579,6 +2579,11 @@ class MainActivity : ComponentActivity() {
             if (state.manualInventoryLoadFailed) PantryBannerTone.ERROR else PantryBannerTone.SUCCESS,
         ))
         add(space(16))
+        add(ui.actionButton(
+            getString(R.string.inventory_add_item), PantryActionStyle.PRIMARY,
+            viewId = R.id.inventory_add_item,
+        ) { showInventoryItemEditor() })
+        add(space(12))
         add(TextView(this@MainActivity, null, 0, R.style.TextAppearance_PantryProof_Body).apply {
             id = R.id.inventory_summary
             text = resources.getQuantityString(
@@ -3004,6 +3009,8 @@ class MainActivity : ComponentActivity() {
                 ui.statusChip(getString(R.string.manual_inventory_source))
             } else if (item.id.startsWith(ManualInventoryStore.LIVE_ROW_PREFIX)) {
                 ui.statusChip(getString(R.string.live_inventory_source))
+            } else if (item.id.startsWith(ManualInventoryStore.STANDALONE_ROW_PREFIX)) {
+                ui.statusChip(getString(R.string.inventory_standalone_source))
             } else if (item.id.startsWith("receipt-")) {
                 ui.statusChip(getString(R.string.inventory_item_source))
             } else {
@@ -3081,6 +3088,116 @@ class MainActivity : ComponentActivity() {
                 adjustInventoryQuantity(item.id, 1)
             }.apply { tag = "inventory-increase:${item.id}" })
         })
+        if (ManualInventoryStore.isDurableRowId(item.id) &&
+            !item.id.startsWith(ManualInventoryStore.LIVE_ROW_PREFIX)
+        ) {
+            addView(space(8))
+            addView(ui.actionButton(getString(R.string.inventory_edit_item), PantryActionStyle.SECONDARY) {
+                showInventoryItemEditor(item)
+            }.apply {
+                tag = "inventory-edit:${item.id}"
+                contentDescription = getString(R.string.inventory_edit_item_description, item.name)
+            })
+            addView(ui.actionButton(getString(R.string.inventory_delete_item), PantryActionStyle.TERTIARY) {
+                confirmInventoryDeletion(item)
+            }.apply {
+                tag = "inventory-delete:${item.id}"
+                contentDescription = getString(R.string.inventory_delete_item_description, item.name)
+            })
+        }
+    }
+
+    private fun showInventoryItemEditor(item: InventoryItem? = null) {
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(12), dp(24), dp(8))
+        }
+        fun field(fieldId: Int, label: Int, type: Int, value: String): EditText {
+            form.addView(bodyText(getString(label)).apply { labelFor = fieldId })
+            return EditText(this).apply {
+                id = fieldId
+                inputType = type
+                setSingleLine(true)
+                minHeight = dp(48)
+                importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+                imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+                setText(value)
+                form.addView(this)
+            }
+        }
+        val name = field(
+            R.id.inventory_item_name, R.string.inventory_item_name, InputType.TYPE_CLASS_TEXT, item?.name.orEmpty(),
+        )
+        val quantity = field(
+            R.id.inventory_item_quantity, R.string.inventory_item_quantity, InputType.TYPE_CLASS_NUMBER,
+            item?.quantity?.toString().orEmpty(),
+        )
+        val feedback = bodyText(getString(R.string.inventory_change_failed)).apply {
+            setTextColor(ui.color(R.color.pantry_error))
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+            visibility = View.GONE
+        }
+        form.addView(feedback)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(if (item == null) R.string.inventory_add_item else R.string.inventory_edit_item)
+            .setView(ScrollView(this).apply { addView(form) })
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.inventory_save_item, null)
+            .show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            name.error = null
+            quantity.error = null
+            feedback.visibility = View.GONE
+            val rawName = name.text.toString()
+            val rawQuantity = quantity.text.toString()
+            val result = if (item == null) state.addInventoryItem(rawName, rawQuantity)
+                else state.editInventoryItem(item.id, rawName, rawQuantity)
+            when (result) {
+                PantryUiState.InventoryChange.INVALID_NAME -> {
+                    name.error = getString(R.string.inventory_name_required)
+                    name.requestFocus()
+                }
+                PantryUiState.InventoryChange.INVALID_QUANTITY -> {
+                    quantity.error = getString(R.string.inventory_quantity_invalid)
+                    quantity.requestFocus()
+                }
+                PantryUiState.InventoryChange.NOT_SAVED -> {
+                    feedback.visibility = View.VISIBLE
+                    feedback.post {
+                        feedback.requestRectangleOnScreen(Rect(0, 0, feedback.width, feedback.height), true)
+                    }
+                }
+                PantryUiState.InventoryChange.SAVED -> {
+                    dialog.dismiss()
+                    refreshInventoryAfterChange()
+                }
+            }
+        }
+    }
+
+    private fun confirmInventoryDeletion(item: InventoryItem) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.inventory_delete_title)
+            .setMessage(getString(R.string.inventory_delete_message, item.name))
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.inventory_delete_item) { _, _ ->
+                if (state.deleteInventoryItem(item.id)) {
+                    refreshInventoryAfterChange()
+                } else {
+                    AlertDialog.Builder(this)
+                        .setTitle(R.string.inventory_change_failed_title)
+                        .setMessage(R.string.inventory_change_failed)
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show()
+                }
+            }
+            .show()
+    }
+
+    private fun refreshInventoryAfterChange() {
+        val scrollY = screenScrollView?.scrollY ?: 0
+        render()
+        screenScrollView?.let { scroll -> scroll.post { scroll.scrollTo(0, scrollY) } }
     }
 
     private fun adjustInventoryQuantity(id: String, delta: Int) {

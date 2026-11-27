@@ -11,7 +11,7 @@ internal class InventoryBrowseProjection(
     var source: Source = Source.ALL,
 ) {
     enum class Sort { ORIGINAL, NAME, QUANTITY_ASCENDING, QUANTITY_DESCENDING }
-    enum class Source { ALL, BASELINE, RECEIPT_PREVIEW, MANUAL, LIVE }
+    enum class Source { ALL, BASELINE, RECEIPT_PREVIEW, MANUAL, LIVE, STANDALONE }
 
     fun project(inventory: List<InventoryItem>): List<InventoryItem> {
         val needle = query.trim()
@@ -39,6 +39,7 @@ internal class InventoryBrowseProjection(
         fun sourceOf(item: InventoryItem): Source = when {
             item.id.startsWith(PantryUiState.MANUAL_ROW_PREFIX) -> Source.MANUAL
             item.id.startsWith(ManualInventoryStore.LIVE_ROW_PREFIX) -> Source.LIVE
+            item.id.startsWith(ManualInventoryStore.STANDALONE_ROW_PREFIX) -> Source.STANDALONE
             item.id.startsWith("receipt-") -> Source.RECEIPT_PREVIEW
             else -> Source.BASELINE
         }

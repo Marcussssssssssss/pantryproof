@@ -36,6 +36,8 @@ internal class ManualInventoryStore(
         const val ROW_STATE = "Manually entered receipt"
         const val LIVE_ROW_PREFIX = "live-receipt-"
         const val LIVE_ROW_STATE = "Confirmed receipt scan"
+        const val STANDALONE_ROW_PREFIX = "manual-inventory-"
+        const val STANDALONE_ROW_STATE = "Added directly to inventory"
         const val MIN_QUANTITY = 0
         const val MAX_QUANTITY = 99
 
@@ -44,6 +46,8 @@ internal class ManualInventoryStore(
         private fun rowState(id: String): String? = when {
             id.startsWith(ROW_PREFIX) && id.removePrefix(ROW_PREFIX).isNotBlank() -> ROW_STATE
             id.startsWith(LIVE_ROW_PREFIX) && id.removePrefix(LIVE_ROW_PREFIX).isNotBlank() -> LIVE_ROW_STATE
+            id.startsWith(STANDALONE_ROW_PREFIX) && id.removePrefix(STANDALONE_ROW_PREFIX).isNotBlank() ->
+                STANDALONE_ROW_STATE
             else -> null
         }
     }

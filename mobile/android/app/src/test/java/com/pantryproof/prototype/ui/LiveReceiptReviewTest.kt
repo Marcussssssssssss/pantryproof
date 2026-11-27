@@ -207,6 +207,52 @@ class LiveReceiptReviewTest {
         assertFalse(staleState.inventory.any { it.id.startsWith(ManualInventoryStore.LIVE_ROW_PREFIX) })
     }
 
+    @Test
+    fun mixedInventoryPersistsAndLiveRowsKeepConfirmationProtection() {
+        val store = TestManualInventoryPersistence(listOf(originalStock))
+        val state = PantryUiState(source, store)
+        assertEquals(PantryUiState.InventoryChange.SAVED, state.addInventoryItem("Oat flour", "99"))
+        val standalone = store.committed.single { it.id.startsWith(ManualInventoryStore.STANDALONE_ROW_PREFIX) }
+        val firstReview = draft().apply { items.drop(1).forEach { it.selected = false } }
+        val selection = ready(firstReview)
+
+        store.failWrite = true
+        assertEquals(LiveConfirmation.SAVE_FAILED, state.confirmLiveReceipt(firstReview, selection))
+        assertEquals(listOf(originalStock, standalone), store.committed)
+        assertEquals(source.syntheticInventory() + store.committed, state.inventory)
+        store.failWrite = false
+        assertEquals(LiveConfirmation.SAVED, state.confirmLiveReceipt(firstReview, selection))
+
+        val liveRow = selection.rows.single()
+        val reopened = PantryUiState(source, store)
+        assertEquals(listOf(originalStock, standalone, liveRow), store.committed)
+        assertEquals(source.syntheticInventory() + store.committed, reopened.inventory)
+        assertEquals(PantryUiState.InventoryChange.NOT_SAVED, reopened.editInventoryItem(liveRow.id, "Other", "0"))
+        assertFalse(reopened.deleteInventoryItem(liveRow.id))
+        assertEquals(listOf(originalStock, standalone, liveRow), store.committed)
+        val duplicate = draft()
+        assertEquals(LiveConfirmation.ALREADY_SAVED, reopened.confirmLiveReceipt(duplicate, ready(duplicate)))
+
+        val filter = InventoryBrowseProjection(source = InventoryBrowseProjection.Source.LIVE)
+        assertEquals(listOf(liveRow), filter.project(reopened.inventory))
+        filter.source = InventoryBrowseProjection.Source.MANUAL
+        assertEquals(listOf(originalStock), filter.project(reopened.inventory))
+        filter.source = InventoryBrowseProjection.Source.STANDALONE
+        assertEquals(listOf(standalone), filter.project(reopened.inventory))
+        assertTrue(reopened.adjustInventory(standalone.id, 1))
+        assertEquals(99, store.committed.single { it.id == standalone.id }.quantity)
+        assertEquals(PantryUiState.InventoryChange.SAVED, reopened.editInventoryItem(standalone.id, "Flour", "0"))
+        assertTrue(reopened.deleteInventoryItem(standalone.id))
+        assertEquals(listOf(originalStock, liveRow), store.committed)
+    }
+
+    @Test
+    fun standaloneAddWithoutStorageReturnsRecoverableFailure() {
+        val state = PantryUiState(source)
+        assertEquals(PantryUiState.InventoryChange.NOT_SAVED, state.addInventoryItem("Oats", "2"))
+        assertEquals(source.syntheticInventory(), state.inventory)
+    }
+
     private fun draft() = requireNotNull(LiveReceiptReviewDraft.from(finished()))
 
     private fun ready(draft: LiveReceiptReviewDraft): LiveReceiptReviewDraft.Selection.Ready =
