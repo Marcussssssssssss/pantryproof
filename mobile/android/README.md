@@ -15,7 +15,7 @@ OCR/correction/persistence is operational.
 - UI: native Android Views created by MainActivity
 - Minimum SDK: 26
 - Compile/target SDK: 36
-- Entry point: app/src/main/java/com/pantryproof/prototype/MainActivity.kt
+- Entry point: app/src/main/java/com/pantryproof/prototype/ui/MainActivity.kt
 
 Kotlin/native Android Views were selected because the repository did not contain
 an existing Android or Flutter application to preserve. MainActivity owns screen
