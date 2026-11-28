@@ -569,6 +569,23 @@ def _new_record(cls: type, **values: object):
     return record
 
 
+def make_purchase_date_discovery_profile_v1(
+    theta_a_reference: ConfigurationRefV1,
+) -> DateDiscoveryMethodProfileV1:
+    """Bind the frozen D1 profile to the caller's existing method reference."""
+    values = {
+        name: value for name, value in _PROFILE_PINS.items()
+        if name not in ("schema_id", "record_version")
+    }
+    profile = _new_record(
+        DateDiscoveryMethodProfileV1, **values,
+        theta_a_reference=theta_a_reference, limits=LIMITS_V1,
+    )
+    _Identifiers(LIMITS_V1).seal(profile, "method_profile")
+    profile.__post_init__()
+    return profile
+
+
 def _nonblank(value: str, path: str, code: _Err = _Shape) -> None:
     if not value or not any(not char.isspace() for char in value):
         raise DateDiscoveryError(code, path)

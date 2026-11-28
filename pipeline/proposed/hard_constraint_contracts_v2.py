@@ -14,6 +14,8 @@ import json
 import re
 from typing import Any, Mapping, NoReturn
 
+from pipeline.proposed import hard_constraint_v2_replay_meter_v1 as vm
+from pipeline.proposed import hard_constraint_v2_serialization_meter_v1 as sm
 from pipeline.proposed.contracts import (
     CandidateLimitStatus,
     CandidateProvenanceV1,
@@ -105,6 +107,7 @@ def _require_text(
     name: str,
     error_type: type[HardConstraintV2Error],
 ) -> str:
+    vm.text_cost(value)
     if not isinstance(value, str) or not value.strip():
         _fail(error_type, f"{name} must be a nonempty string.")
     return value
@@ -126,6 +129,7 @@ def _require_rule_code(
     error_type: type[HardConstraintV2Error],
 ) -> str:
     text = _require_text(value, name, error_type)
+    vm.text_cost(text, pattern=True)
     if _RULE_CODE_RE.fullmatch(text) is None:
         _fail(error_type, f"{name} must match [A-Z][A-Z0-9_]*.")
     return text
@@ -136,6 +140,7 @@ def _require_tuple(
     name: str,
     error_type: type[HardConstraintV2Error],
 ) -> tuple[Any, ...]:
+    vm.tuple_shape(value)
     if not isinstance(value, tuple):
         _fail(error_type, f"{name} must be a tuple.")
     return value
@@ -145,7 +150,8 @@ def _require_version(
     value: object,
     error_type: type[HardConstraintV2Error],
 ) -> None:
-    if value != RECORD_VERSION_V2:
+    vm.exact(value, str)
+    if vm.not_equal(value, RECORD_VERSION_V2):
         _fail(error_type, f"record_version must be {RECORD_VERSION_V2!r}.")
 
 
@@ -155,6 +161,7 @@ def _require_enum(
     name: str,
     error_type: type[HardConstraintV2Error],
 ) -> None:
+    vm.admit(value, enum_type)
     if not isinstance(value, enum_type):
         _fail(error_type, f"{name} must be a {enum_type.__name__} value.")
 
@@ -164,25 +171,30 @@ def _require_exact_integer(
     name: str,
     error_type: type[HardConstraintV2Error],
 ) -> int:
+    vm.integer(value)
     if type(value) is not int:
         _fail(error_type, f"{name} must be a non-Boolean integer.")
     return value
 
 
+@vm.operation
 def _revalidate_v1(
     value: object,
     expected_type: type[Any],
     name: str,
     error_type: type[HardConstraintV2Error],
 ) -> None:
+    vm.exact(value, expected_type)
     if not isinstance(value, expected_type):
         _fail(error_type, f"{name} must be {expected_type.__name__}.")
     try:
+        vm.reserve_v1(value, expected_type)
         value.__post_init__()
     except (AttributeError, TypeError, ValueError) as exc:
         raise error_type(f"{name} is not a valid stored V1 record.") from exc
 
 
+@vm.operation
 def _revalidate_candidate_v1(
     value: object,
     name: str,
@@ -200,9 +212,12 @@ def _revalidate_candidate_v1(
     if not isinstance(candidate.provenance, tuple):
         _fail(error_type, f"{name}.provenance must be a tuple.")
     try:
+        if vm.selected() is not None:
+            vm.scan(len(candidate.provenance))
         for provenance in candidate.provenance:
             if not isinstance(provenance, CandidateProvenanceV1):
                 _fail(error_type, f"{name}.provenance contains an invalid record.")
+            vm.reserve_v1(provenance, CandidateProvenanceV1)
             provenance.__post_init__()
             if not isinstance(provenance.source_kind, CandidateSourceKind):
                 _fail(
@@ -217,9 +232,12 @@ def _revalidate_candidate_v1(
                 )
             if not isinstance(provenance.source_spans, tuple):
                 _fail(error_type, f"{name}.source_spans must be a tuple.")
+            if vm.selected() is not None:
+                vm.scan(len(provenance.source_spans))
             for span in provenance.source_spans:
                 if not isinstance(span, SourceCharacterSpanV1):
                     _fail(error_type, f"{name}.source_spans contains an invalid record.")
+                vm.reserve_v1(span, SourceCharacterSpanV1)
                 span.__post_init__()
                 _require_exact_integer(
                     span.start,
@@ -234,6 +252,7 @@ def _revalidate_candidate_v1(
         if candidate.preliminary_rank is not None:
             if not isinstance(candidate.preliminary_rank, PreliminaryRankV1):
                 _fail(error_type, f"{name}.preliminary_rank is invalid.")
+            vm.reserve_v1(candidate.preliminary_rank, PreliminaryRankV1)
             candidate.preliminary_rank.__post_init__()
             for field_name in (
                 "source_priority_rank",
@@ -261,7 +280,9 @@ class HardConstraintResourceRefV2:
     declared_content_hash: str | None = None
     record_version: str = RECORD_VERSION_V2
 
+    @vm.operation
     def __post_init__(self) -> None:
+        vm.start_record(self, HardConstraintResourceRefV2, "max_resources")
         error = HardConstraintProfileConfigurationError
         _require_version(self.record_version, error)
         _require_text(self.resource_reference_id, "resource_reference_id", error)
@@ -290,11 +311,14 @@ class HardConstraintRuleSpecV2:
     resource_reference_ids: tuple[str, ...] = ()
     record_version: str = RECORD_VERSION_V2
 
+    @vm.operation
     def __post_init__(self) -> None:
+        vm.start_record(self, HardConstraintRuleSpecV2, "max_rules")
         error = HardConstraintProfileConfigurationError
         _require_version(self.record_version, error)
         _require_rule_code(self.rule_id, "rule_id", error)
         _require_text(self.rule_version, "rule_version", error)
+        vm.integer(self.position)
         if (
             isinstance(self.position, bool)
             or not isinstance(self.position, int)
@@ -312,9 +336,12 @@ class HardConstraintRuleSpecV2:
             "resource_reference_ids",
             error,
         )
+        if vm.selected() is not None:
+            vm.reserve(max_resource_references=len(references))
+            vm.scan(len(references))
         for reference_id in references:
             _require_text(reference_id, "resource_reference_id", error)
-        if len(set(references)) != len(references):
+        if vm.has_duplicate_ids(references):
             _fail(error, "resource_reference_ids must be unique.")
 
 
@@ -328,7 +355,9 @@ class HardConstraintProfileRefV2:
     declared_content_hash: str | None = None
     record_version: str = RECORD_VERSION_V2
 
+    @vm.operation
     def __post_init__(self) -> None:
+        vm.start_record(self, HardConstraintProfileRefV2, "max_profiles")
         error = HardConstraintProfileConfigurationError
         _require_version(self.record_version, error)
         _require_text(self.profile_id, "profile_id", error)
@@ -352,14 +381,25 @@ class HardConstraintProfileRefV2:
         rules = _require_tuple(self.ordered_rule_specs, "ordered_rule_specs", error)
         if not rules:
             _fail(error, "A hard-constraint profile must declare at least one rule.")
+        selected = vm.selected() is not None
+        if selected:
+            vm.scan(len(rules))
         for rule in rules:
+            vm.exact(rule, HardConstraintRuleSpecV2)
             if not isinstance(rule, HardConstraintRuleSpecV2):
                 _fail(error, "ordered_rule_specs contains an invalid record.")
             rule.__post_init__()
-        if tuple(rule.position for rule in rules) != tuple(range(len(rules))):
+        positions_differ = (
+            vm.validate_rule_positions(rules) if selected
+            else tuple(rule.position for rule in rules) != tuple(range(len(rules)))
+        )
+        if positions_differ:
             _fail(error, "Rule positions must be contiguous, zero-based, and ordered.")
+        if selected:
+            vm.sequence(len(rules))
+            vm.scan(len(rules))
         rule_ids = tuple(rule.rule_id for rule in rules)
-        if len(set(rule_ids)) != len(rule_ids):
+        if vm.has_duplicate_ids(rule_ids):
             _fail(error, "Rule identifiers must be unique within a profile.")
         if not any(
             rule.requirement is RuleRequirementV2.MANDATORY for rule in rules
@@ -371,15 +411,22 @@ class HardConstraintProfileRefV2:
             "resource_references",
             error,
         )
+        if selected:
+            vm.scan(len(resources))
+            vm.sequence(len(resources))
         for resource in resources:
+            vm.exact(resource, HardConstraintResourceRefV2)
             if not isinstance(resource, HardConstraintResourceRefV2):
                 _fail(error, "resource_references contains an invalid record.")
             resource.__post_init__()
         resource_ids = tuple(
             resource.resource_reference_id for resource in resources
         )
-        if len(set(resource_ids)) != len(resource_ids):
+        if vm.has_duplicate_ids(resource_ids):
             _fail(error, "Profile resource references must be unique.")
+        if selected:
+            _validate_profile_resources_linear(rules, resource_ids)
+            return
         resource_by_id = dict(zip(resource_ids, resources, strict=True))
 
         referenced_ids: set[str] = set()
@@ -395,13 +442,37 @@ class HardConstraintProfileRefV2:
                 for resource_id in resource_ids
                 if resource_id in set(rule.resource_reference_ids)
             )
-            if rule.resource_reference_ids != expected_order:
+            if vm.not_equal(rule.resource_reference_ids, expected_order):
                 _fail(
                     error,
                     f"Rule {rule.rule_id} resource references must follow profile order.",
                 )
             referenced_ids.update(rule.resource_reference_ids)
         if referenced_ids != set(resource_ids):
+            _fail(error, "Profile resources must be referenced by at least one rule.")
+
+
+def _validate_profile_resources_linear(
+    rules: tuple[HardConstraintRuleSpecV2, ...],
+    resource_ids: tuple[str, ...],
+) -> None:
+    error = HardConstraintProfileConfigurationError
+    vm.scan(len(rules))
+    for rule in rules:
+        references = rule.resource_reference_ids
+        vm.scan(len(references))
+        if any(not vm.contains(key, resource_ids) for key in references):
+            vm.diagnostic(rule.rule_id)
+            _fail(error, f"Rule {rule.rule_id} references undeclared profile resources.")
+        vm.sequence(len(resource_ids))
+        ordered = tuple(key for key in resource_ids if vm.contains(key, references))
+        if vm.not_equal(references, ordered):
+            vm.diagnostic(rule.rule_id)
+            _fail(error, f"Rule {rule.rule_id} resource references must follow profile order.")
+    vm.scan(len(resource_ids))
+    for key in resource_ids:
+        vm.scan(len(rules))
+        if not any(vm.contains(key, rule.resource_reference_ids) for rule in rules):
             _fail(error, "Profile resources must be referenced by at least one rule.")
 
 
@@ -412,7 +483,9 @@ class EvidenceReferenceV2:
     source_record_version: str | None = None
     record_version: str = RECORD_VERSION_V2
 
+    @vm.operation
     def __post_init__(self) -> None:
+        vm.start_record(self, EvidenceReferenceV2, "max_evidence")
         error = HardConstraintAuditIntegrityError
         _require_version(self.record_version, error)
         _require_rule_code(
@@ -428,6 +501,7 @@ class EvidenceReferenceV2:
         )
 
 
+@vm.operation
 def _validate_candidate_pair(
     candidate: CandidateRecordV1,
     c0_candidate: CandidateRecordV1,
@@ -437,19 +511,19 @@ def _validate_candidate_pair(
     _revalidate_candidate_v1(c0_candidate, "c0_candidate", error)
     if c0_candidate.role is not CandidateRole.ORIGINAL:
         _fail(error, "c0_candidate must retain the ORIGINAL role.")
-    if c0_candidate.candidate_id != c0_candidate.c0_candidate_id:
+    if vm.not_equal(c0_candidate.candidate_id, c0_candidate.c0_candidate_id):
         _fail(error, "c0_candidate must be self-referential permanent c0.")
     if c0_candidate.limit_status is not CandidateLimitStatus.RETAINED:
         _fail(error, "c0_candidate must be retained.")
     if candidate.limit_status is not CandidateLimitStatus.RETAINED:
         _fail(error, "Only a retained candidate can receive a V2 audit.")
-    if candidate.receipt_id != c0_candidate.receipt_id:
+    if vm.not_equal(candidate.receipt_id, c0_candidate.receipt_id):
         _fail(error, "candidate and c0_candidate receipt identities differ.")
-    if candidate.field_id != c0_candidate.field_id:
+    if vm.not_equal(candidate.field_id, c0_candidate.field_id):
         _fail(error, "candidate and c0_candidate field identities differ.")
-    if candidate.c0_candidate_id != c0_candidate.candidate_id:
+    if vm.not_equal(candidate.c0_candidate_id, c0_candidate.candidate_id):
         _fail(error, "candidate is not bound to the supplied permanent c0.")
-    if candidate.role is CandidateRole.ORIGINAL and candidate != c0_candidate:
+    if candidate.role is CandidateRole.ORIGINAL and vm.not_equal(candidate, c0_candidate):
         _fail(error, "An ORIGINAL candidate must equal the supplied permanent c0.")
 
 
@@ -458,10 +532,11 @@ def _profile_rule(
     rule_spec: HardConstraintRuleSpecV2,
 ) -> HardConstraintRuleSpecV2:
     error = HardConstraintAuditIntegrityError
+    vm.integer(rule_spec.position)
     if rule_spec.position >= len(profile.ordered_rule_specs):
         _fail(error, "rule_spec position is outside the declared profile.")
     expected = profile.ordered_rule_specs[rule_spec.position]
-    if rule_spec != expected:
+    if vm.not_equal(rule_spec, expected):
         _fail(error, "rule_spec does not equal the declared profile rule.")
     return expected
 
@@ -486,21 +561,25 @@ class ConstraintRuleOutcomeV2:
     resource_references: tuple[HardConstraintResourceRefV2, ...] = ()
     record_version: str = RECORD_VERSION_V2
 
+    @vm.operation
     def __post_init__(self) -> None:
+        vm.start_record(self, ConstraintRuleOutcomeV2, "max_outcomes")
         error = HardConstraintAuditIntegrityError
         _require_version(self.record_version, error)
         _require_text(self.rule_outcome_id, "rule_outcome_id", error)
         _require_text(self.receipt_id, "receipt_id", error)
         _require_text(self.field_id, "field_id", error)
         _validate_candidate_pair(self.candidate, self.c0_candidate)
-        if self.receipt_id != self.candidate.receipt_id:
+        if vm.not_equal(self.receipt_id, self.candidate.receipt_id):
             _fail(error, "receipt_id does not match the audited candidate.")
-        if self.field_id != self.candidate.field_id:
+        if vm.not_equal(self.field_id, self.candidate.field_id):
             _fail(error, "field_id does not match the audited candidate.")
 
+        vm.exact(self.rule_profile_reference, HardConstraintProfileRefV2)
         if not isinstance(self.rule_profile_reference, HardConstraintProfileRefV2):
             _fail(error, "rule_profile_reference is invalid.")
         self.rule_profile_reference.__post_init__()
+        vm.exact(self.rule_spec, HardConstraintRuleSpecV2)
         if not isinstance(self.rule_spec, HardConstraintRuleSpecV2):
             _fail(error, "rule_spec is invalid.")
         self.rule_spec.__post_init__()
@@ -511,7 +590,7 @@ class ConstraintRuleOutcomeV2:
             "theta_a_reference",
             error,
         )
-        if self.theta_a_reference != self.rule_profile_reference.theta_a_reference:
+        if vm.not_equal(self.theta_a_reference, self.rule_profile_reference.theta_a_reference):
             _fail(error, "theta_a_reference does not match the rule profile.")
 
         resources = _require_tuple(
@@ -519,19 +598,29 @@ class ConstraintRuleOutcomeV2:
             "resource_references",
             error,
         )
+        selected = vm.selected() is not None
+        if selected:
+            vm.scan(len(resources))
         for resource in resources:
+            vm.exact(resource, HardConstraintResourceRefV2)
             if not isinstance(resource, HardConstraintResourceRefV2):
                 _fail(error, "resource_references contains an invalid record.")
             resource.__post_init__()
-        resource_by_id = {
-            resource.resource_reference_id: resource
-            for resource in self.rule_profile_reference.resource_references
-        }
-        expected_resources = tuple(
-            resource_by_id[reference_id]
-            for reference_id in self.rule_spec.resource_reference_ids
-        )
-        if resources != expected_resources:
+        if selected:
+            expected_resources = vm.project_resources(
+                self.rule_spec.resource_reference_ids,
+                self.rule_profile_reference.resource_references,
+            )
+        else:
+            resource_by_id = {
+                resource.resource_reference_id: resource
+                for resource in self.rule_profile_reference.resource_references
+            }
+            expected_resources = tuple(
+                resource_by_id[reference_id]
+                for reference_id in self.rule_spec.resource_reference_ids
+            )
+        if vm.not_equal(resources, expected_resources):
             _fail(error, "Rule resources do not match the declared profile resources.")
 
         _require_enum(self.state, RuleOutcomeStateV2, "state", error)
@@ -548,7 +637,12 @@ class ConstraintRuleOutcomeV2:
             "evidence_references",
             error,
         )
+        if selected:
+            vm.scan(len(evidence))
+            vm.sequence(len(evidence))
+            vm.reserve(max_temporary_slots=3 * len(evidence), max_work_units=3 * len(evidence))
         for reference in evidence:
+            vm.exact(reference, EvidenceReferenceV2)
             if not isinstance(reference, EvidenceReferenceV2):
                 _fail(error, "evidence_references contains an invalid record.")
             reference.__post_init__()
@@ -560,7 +654,7 @@ class ConstraintRuleOutcomeV2:
             )
             for reference in evidence
         )
-        if len(set(evidence_keys)) != len(evidence_keys):
+        if vm.has_duplicate_ids(evidence_keys, tuple[str, str, str | None]):
             _fail(error, "Evidence references must be unique and ordered.")
 
         if self.outcome_reason_kind is not None:
@@ -628,6 +722,11 @@ def _expected_aggregate(
     profile: HardConstraintProfileRefV2,
     outcomes: tuple[ConstraintRuleOutcomeV2, ...],
 ) -> tuple[ConstraintAggregateStateV2, ConstraintAggregateReasonV2]:
+    if vm.selected() is not None:
+        count = len(profile.ordered_rule_specs)
+        vm.sequence(count)
+        vm.scan(3 * count)
+        vm.reserve(max_temporary_slots=2, max_work_units=2)
     mandatory_states = tuple(
         outcome.state
         for rule, outcome in zip(profile.ordered_rule_specs, outcomes, strict=True)
@@ -654,6 +753,7 @@ def _expected_aggregate(
     )
 
 
+@vm.operation
 def _validate_complete_rule_outcomes(
     *,
     profile: HardConstraintProfileRefV2,
@@ -672,25 +772,36 @@ def _validate_complete_rule_outcomes(
             error,
             "The audit must contain exactly one outcome for every declared rule.",
         )
-    outcome_ids: set[str] = set()
+    selected = vm.selected() is not None
+    if selected:
+        vm.sequence(len(outcomes))
+        outcome_ids = []
+    else:
+        outcome_ids = set()
     for expected_rule, outcome in zip(expected_rules, outcomes, strict=True):
+        vm.exact(outcome, ConstraintRuleOutcomeV2)
         if not isinstance(outcome, ConstraintRuleOutcomeV2):
             _fail(error, "rule_outcomes contains an invalid record.")
         outcome.__post_init__()
-        if outcome.rule_spec != expected_rule:
+        if vm.not_equal(outcome.rule_spec, expected_rule):
             _fail(error, "Rule outcomes must preserve declared profile order.")
-        if outcome.rule_outcome_id in outcome_ids:
+        duplicate = (vm.contains(outcome.rule_outcome_id, outcome_ids) if selected
+                     else outcome.rule_outcome_id in outcome_ids)
+        if duplicate:
             _fail(error, "rule_outcome_id values must be unique.")
-        outcome_ids.add(outcome.rule_outcome_id)
-        if outcome.receipt_id != receipt_id or outcome.field_id != field_id:
+        if selected:
+            outcome_ids.append(outcome.rule_outcome_id)
+        else:
+            outcome_ids.add(outcome.rule_outcome_id)
+        if vm.not_equal(outcome.receipt_id, receipt_id) or vm.not_equal(outcome.field_id, field_id):
             _fail(error, "Rule outcome identity differs from the candidate audit.")
-        if outcome.candidate != candidate:
+        if vm.not_equal(outcome.candidate, candidate):
             _fail(error, "Rule outcome is bound to a different candidate record.")
-        if outcome.c0_candidate != c0_candidate:
+        if vm.not_equal(outcome.c0_candidate, c0_candidate):
             _fail(error, "Rule outcome is bound to a different permanent c0.")
-        if outcome.theta_a_reference != theta_a_reference:
+        if vm.not_equal(outcome.theta_a_reference, theta_a_reference):
             _fail(error, "Rule outcome Theta_A reference differs from the audit.")
-        if outcome.rule_profile_reference != profile:
+        if vm.not_equal(outcome.rule_profile_reference, profile):
             _fail(error, "Rule outcome profile differs from the candidate audit.")
     return outcomes
 
@@ -709,18 +820,21 @@ class ConstraintResultV2:
     aggregate_reason: ConstraintAggregateReasonV2
     record_version: str = RECORD_VERSION_V2
 
+    @vm.operation
     def __post_init__(self) -> None:
+        vm.start_record(self, ConstraintResultV2, "max_result_validations")
         error = HardConstraintAuditIntegrityError
         _require_version(self.record_version, error)
         _require_text(self.constraint_result_id, "constraint_result_id", error)
         _require_text(self.receipt_id, "receipt_id", error)
         _require_text(self.field_id, "field_id", error)
         _validate_candidate_pair(self.candidate, self.c0_candidate)
-        if self.receipt_id != self.candidate.receipt_id:
+        if vm.not_equal(self.receipt_id, self.candidate.receipt_id):
             _fail(error, "receipt_id does not match the audited candidate.")
-        if self.field_id != self.candidate.field_id:
+        if vm.not_equal(self.field_id, self.candidate.field_id):
             _fail(error, "field_id does not match the audited candidate.")
 
+        vm.exact(self.rule_profile_reference, HardConstraintProfileRefV2)
         if not isinstance(self.rule_profile_reference, HardConstraintProfileRefV2):
             _fail(error, "rule_profile_reference is invalid.")
         self.rule_profile_reference.__post_init__()
@@ -730,7 +844,7 @@ class ConstraintResultV2:
             "theta_a_reference",
             error,
         )
-        if self.theta_a_reference != self.rule_profile_reference.theta_a_reference:
+        if vm.not_equal(self.theta_a_reference, self.rule_profile_reference.theta_a_reference):
             _fail(error, "theta_a_reference does not match the rule profile.")
 
         outcomes = _validate_complete_rule_outcomes(
@@ -759,13 +873,12 @@ class ConstraintResultV2:
             self.rule_profile_reference,
             outcomes,
         )
-        if (self.aggregate_state, self.aggregate_reason) != (
-            expected_state,
-            expected_reason,
-        ):
+        vm.reserve(max_temporary_slots=4, max_work_units=4)
+        if vm.not_equal((self.aggregate_state, self.aggregate_reason), (expected_state, expected_reason)):
             _fail(error, "Aggregate state/reason contradicts the mandatory rule outcomes.")
 
 
+@vm.operation
 def build_source_bound_constraint_result_v2(
     *,
     constraint_result_id: str,
@@ -782,6 +895,11 @@ def build_source_bound_constraint_result_v2(
     """
 
     error = HardConstraintSourceBindingError
+    vm.exact(operand_audit, HardConstraintOperandAuditResultV0)
+    vm.exact(candidate_audit, CandidateOperandAuditV0)
+    vm.exact(rule_profile_reference, HardConstraintProfileRefV2)
+    if vm.selected() is not None:
+        vm.admit_parent(operand_audit)
     if not isinstance(operand_audit, HardConstraintOperandAuditResultV0):
         _fail(error, "operand_audit must be HardConstraintOperandAuditResultV0.")
     if not isinstance(candidate_audit, CandidateOperandAuditV0):
@@ -789,18 +907,22 @@ def build_source_bound_constraint_result_v2(
     if not isinstance(rule_profile_reference, HardConstraintProfileRefV2):
         _fail(error, "rule_profile_reference must be HardConstraintProfileRefV2.")
     try:
+        vm.reserve(max_operand_replays=1, max_work_units=1)
         operand_audit.__post_init__()
+        vm.reserve(max_candidate_audit_replays=1, max_work_units=1)
         candidate_audit.__post_init__()
     except (AttributeError, TypeError, ValueError) as exc:
         raise error("Source-bound factory inputs failed upstream validation.") from exc
     rule_profile_reference.__post_init__()
     upstream_theta_a = operand_audit.hard_constraint_input.theta_a_ref
-    if rule_profile_reference.theta_a_reference != upstream_theta_a:
+    if vm.not_equal(rule_profile_reference.theta_a_reference, upstream_theta_a):
         _fail(
             error,
             "The V2 profile Theta_A reference differs from the live D3 context.",
         )
 
+    if vm.selected() is not None:
+        vm.scan(len(operand_audit.candidate_audits))
     exact_audit = next(
         (
             stored
@@ -817,6 +939,8 @@ def build_source_bound_constraint_result_v2(
         _fail(error, "The D3 context has no retained candidates.")
     c0_candidate = retained[0]
     candidate = candidate_audit.candidate
+    if vm.selected() is not None:
+        vm.scan(len(retained))
     if not any(stored is candidate for stored in retained):
         _fail(error, "candidate is not an exact retained D3 candidate reference.")
 
@@ -829,6 +953,8 @@ def build_source_bound_constraint_result_v2(
         c0_candidate=c0_candidate,
         theta_a_reference=rule_profile_reference.theta_a_reference,
     )
+    if vm.selected() is not None:
+        vm.scan(2 * len(outcomes))
     for outcome in outcomes:
         if outcome.candidate is not candidate:
             _fail(error, "Rule outcome candidate is not the exact D3 candidate.")
@@ -836,6 +962,7 @@ def build_source_bound_constraint_result_v2(
             _fail(error, "Rule outcome c0 is not the exact D3 permanent c0.")
 
     state, reason = _expected_aggregate(rule_profile_reference, outcomes)
+    vm.reserve(max_records=1, max_temporary_slots=11, max_work_units=11)
     return ConstraintResultV2(
         constraint_result_id=constraint_result_id,
         receipt_id=candidate.receipt_id,
@@ -851,6 +978,7 @@ def build_source_bound_constraint_result_v2(
 
 
 def _json_value(value: Any) -> Any:
+    sm.helper("encode")
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, Decimal):
@@ -874,12 +1002,19 @@ def _json_value(value: Any) -> Any:
     )
 
 
+@sm._codec("encode")
 def constraint_result_v2_to_json(result: ConstraintResultV2) -> str:
+    meter = sm.helper("encode")
     if not isinstance(result, ConstraintResultV2):
         raise HardConstraintSerializationError(
             "result must be a ConstraintResultV2 record."
         )
+    if meter is not None:
+        if type(result) is not ConstraintResultV2:
+            meter._reject(sm._Code.INVALID_SHAPE)
+        meter._reserve(max_validator_dispatches=1)
     result.__post_init__()
+    sm.preflight_encode(result, ConstraintResultV2)
     try:
         return json.dumps(
             _json_value(result),
@@ -887,6 +1022,7 @@ def constraint_result_v2_to_json(result: ConstraintResultV2) -> str:
             allow_nan=False,
             sort_keys=True,
             separators=(",", ":"),
+            check_circular=meter is None,
         )
     except (TypeError, ValueError) as exc:
         raise HardConstraintSerializationError(
@@ -895,6 +1031,9 @@ def constraint_result_v2_to_json(result: ConstraintResultV2) -> str:
 
 
 def _object(value: Any, expected: tuple[str, ...], name: str) -> dict[str, Any]:
+    meter = sm.helper("decode")
+    if meter is not None:
+        return sm.check_object(meter, value, expected, name)
     if not isinstance(value, dict):
         raise HardConstraintSerializationError(f"{name} must be a JSON object.")
     actual = set(value)
@@ -909,24 +1048,33 @@ def _object(value: Any, expected: tuple[str, ...], name: str) -> dict[str, Any]:
 
 
 def _array(value: Any, name: str) -> list[Any]:
+    meter = sm.helper("decode")
     if not isinstance(value, list):
         raise HardConstraintSerializationError(f"{name} must be a JSON array.")
+    if meter is not None:
+        size = len(value)
+        meter._reserve(max_temporary_slots=4 + 4 * size, max_work_units=2 * size)
     return value
 
 
 def _string(value: Any, name: str) -> str:
+    meter = sm.helper("decode")
     if not isinstance(value, str):
         raise HardConstraintSerializationError(f"{name} must be a JSON string.")
+    if meter is not None:
+        sm.check_string(meter, value)
     return value
 
 
 def _optional_string(value: Any, name: str) -> str | None:
+    sm.helper("decode")
     if value is None:
         return None
     return _string(value, name)
 
 
 def _integer(value: Any, name: str) -> int:
+    sm.helper("decode")
     if isinstance(value, bool) or not isinstance(value, int):
         raise HardConstraintSerializationError(
             f"{name} must be a non-Boolean JSON integer."
@@ -935,13 +1083,17 @@ def _integer(value: Any, name: str) -> int:
 
 
 def _boolean(value: Any, name: str) -> bool:
+    sm.helper("decode")
     if not isinstance(value, bool):
         raise HardConstraintSerializationError(f"{name} must be Boolean.")
     return value
 
 
 def _enum(value: Any, enum_type: type[Enum], name: str) -> Any:
+    meter = sm.helper("decode")
     text = _string(value, name)
+    if meter is not None:
+        return sm.read_enum(meter, text, enum_type, name)
     try:
         return enum_type(text)
     except ValueError as exc:
@@ -951,7 +1103,10 @@ def _enum(value: Any, enum_type: type[Enum], name: str) -> Any:
 
 
 def _decimal(value: Any, name: str) -> Decimal:
+    meter = sm.helper("decode")
     text = _string(value, name)
+    if meter is not None:
+        return sm.read_decimal(meter, text, name)
     try:
         number = Decimal(text)
     except InvalidOperation as exc:
@@ -962,6 +1117,9 @@ def _decimal(value: Any, name: str) -> Decimal:
 
 
 def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    meter = sm.helper("decode")
+    if meter is not None:
+        return sm.unique_object(meter, pairs)
     result: dict[str, Any] = {}
     for key, value in pairs:
         if key in result:
@@ -986,7 +1144,9 @@ def _configuration(value: Any) -> ConfigurationRefV1:
         ),
         "ConfigurationRefV1",
     )
-    return ConfigurationRefV1(
+    sm.reserve_record(ConfigurationRefV1)
+    return sm.construct_record(
+        ConfigurationRefV1,
         kind=_enum(data["kind"], ConfigurationKind, "kind"),
         configuration_id=_string(data["configuration_id"], "configuration_id"),
         configuration_version=_string(
@@ -1005,7 +1165,9 @@ def _source_span(value: Any) -> SourceCharacterSpanV1:
         ("token_id", "start", "end", "text", "record_version"),
         "SourceCharacterSpanV1",
     )
-    return SourceCharacterSpanV1(
+    sm.reserve_record(SourceCharacterSpanV1)
+    return sm.construct_record(
+        SourceCharacterSpanV1,
         token_id=_string(data["token_id"], "token_id"),
         start=_integer(data["start"], "start"),
         end=_integer(data["end"], "end"),
@@ -1035,7 +1197,9 @@ def _provenance(value: Any) -> CandidateProvenanceV1:
         "CandidateProvenanceV1",
     )
     position = data["source_order_position"]
-    return CandidateProvenanceV1(
+    sm.reserve_record(CandidateProvenanceV1)
+    return sm.construct_record(
+        CandidateProvenanceV1,
         provenance_id=_string(data["provenance_id"], "provenance_id"),
         receipt_id=_string(data["receipt_id"], "receipt_id"),
         field_id=_string(data["field_id"], "field_id"),
@@ -1080,7 +1244,9 @@ def _rank(value: Any) -> PreliminaryRankV1:
         ),
         "PreliminaryRankV1",
     )
-    return PreliminaryRankV1(
+    sm.reserve_record(PreliminaryRankV1)
+    return sm.construct_record(
+        PreliminaryRankV1,
         source_priority_rank=_integer(
             data["source_priority_rank"], "source_priority_rank"
         ),
@@ -1119,7 +1285,9 @@ def _candidate(value: Any) -> CandidateRecordV1:
         "CandidateRecordV1",
     )
     rank = data["preliminary_rank"]
-    return CandidateRecordV1(
+    sm.reserve_record(CandidateRecordV1)
+    return sm.construct_record(
+        CandidateRecordV1,
         candidate_id=_string(data["candidate_id"], "candidate_id"),
         receipt_id=_string(data["receipt_id"], "receipt_id"),
         field_id=_string(data["field_id"], "field_id"),
@@ -1156,7 +1324,9 @@ def _resource(value: Any) -> HardConstraintResourceRefV2:
         ),
         "HardConstraintResourceRefV2",
     )
-    return HardConstraintResourceRefV2(
+    sm.reserve_record(HardConstraintResourceRefV2)
+    return sm.construct_record(
+        HardConstraintResourceRefV2,
         resource_reference_id=_string(
             data["resource_reference_id"], "resource_reference_id"
         ),
@@ -1187,7 +1357,9 @@ def _rule_spec(value: Any) -> HardConstraintRuleSpecV2:
         ),
         "HardConstraintRuleSpecV2",
     )
-    return HardConstraintRuleSpecV2(
+    sm.reserve_record(HardConstraintRuleSpecV2)
+    return sm.construct_record(
+        HardConstraintRuleSpecV2,
         rule_id=_string(data["rule_id"], "rule_id"),
         rule_version=_string(data["rule_version"], "rule_version"),
         position=_integer(data["position"], "position"),
@@ -1219,7 +1391,9 @@ def _profile(value: Any) -> HardConstraintProfileRefV2:
         ),
         "HardConstraintProfileRefV2",
     )
-    return HardConstraintProfileRefV2(
+    sm.reserve_record(HardConstraintProfileRefV2)
+    return sm.construct_record(
+        HardConstraintProfileRefV2,
         profile_id=_string(data["profile_id"], "profile_id"),
         profile_version=_string(data["profile_version"], "profile_version"),
         theta_a_reference=_configuration(data["theta_a_reference"]),
@@ -1249,7 +1423,9 @@ def _evidence(value: Any) -> EvidenceReferenceV2:
         ),
         "EvidenceReferenceV2",
     )
-    return EvidenceReferenceV2(
+    sm.reserve_record(EvidenceReferenceV2)
+    return sm.construct_record(
+        EvidenceReferenceV2,
         reference_namespace=_string(
             data["reference_namespace"], "reference_namespace"
         ),
@@ -1286,7 +1462,9 @@ def _rule_outcome(value: Any) -> ConstraintRuleOutcomeV2:
         "ConstraintRuleOutcomeV2",
     )
     reason_kind = data["outcome_reason_kind"]
-    return ConstraintRuleOutcomeV2(
+    sm.reserve_record(ConstraintRuleOutcomeV2)
+    return sm.construct_record(
+        ConstraintRuleOutcomeV2,
         rule_outcome_id=_string(data["rule_outcome_id"], "rule_outcome_id"),
         receipt_id=_string(data["receipt_id"], "receipt_id"),
         field_id=_string(data["field_id"], "field_id"),
@@ -1325,13 +1503,18 @@ def _rule_outcome(value: Any) -> ConstraintRuleOutcomeV2:
     )
 
 
+@sm._codec("decode")
 def constraint_result_v2_from_json(payload: str) -> ConstraintResultV2:
+    meter = sm.helper("decode")
+    if meter is not None and type(payload) is not str:
+        meter._reject(sm._Code.INVALID_SHAPE)
     if not isinstance(payload, str) or not payload:
         raise HardConstraintSerializationError("payload must be a nonempty string.")
     if payload.startswith("\ufeff"):
         raise HardConstraintSerializationError("UTF-8 BOM is not permitted.")
     try:
-        decoded = json.loads(payload, object_pairs_hook=_unique_json_object)
+        decoded = (json.loads(payload, object_pairs_hook=_unique_json_object)
+                   if meter is None else sm.load_json(payload, _unique_json_object))
         data = _object(
             decoded,
             (
@@ -1349,7 +1532,9 @@ def constraint_result_v2_from_json(payload: str) -> ConstraintResultV2:
             ),
             "ConstraintResultV2",
         )
-        return ConstraintResultV2(
+        sm.reserve_record(ConstraintResultV2)
+        return sm.construct_record(
+            ConstraintResultV2,
             constraint_result_id=_string(
                 data["constraint_result_id"], "constraint_result_id"
             ),

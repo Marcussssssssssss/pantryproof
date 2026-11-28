@@ -15,12 +15,22 @@ from pipeline.contracts import (
     FieldStatus,
     OcrSourceToken,
     OutputStage,
+    ReceiptItemRow,
     ReceiptOutput,
     ReceiptSourceEvidence,
     SourceEvidenceDecision,
     SourceEvidenceGateResult,
+    SourceProvenance,
+    StructuredField,
 )
 from pipeline.layout_b2 import B2ExtractionResult
+from pipeline.proposed import hard_constraint_context_replay_meter_v1 as hc
+from pipeline.proposed.candidate_deduplication import CandidateDeduplicationResultV0
+from pipeline.proposed.candidate_identity import CandidateIdentityPreparationResultV0
+from pipeline.proposed.candidate_limiting import CandidateLimitResultV0
+from pipeline.proposed.candidate_provenance import CandidateProvenanceMaterializationResultV0
+from pipeline.proposed.candidate_ranking import PreliminaryCandidateRankingResultV0
+from pipeline.proposed.suspicion import SuspicionResultV0
 from pipeline.proposed.adapter import ProposedAdapterResultV1
 from pipeline.proposed.candidate_finalization import (
     BlockedCandidateFinalizationAuditV0,
@@ -29,7 +39,7 @@ from pipeline.proposed.candidate_finalization import (
     CandidateFinalizationReadinessV0,
     CandidateFinalizationResultV0,
 )
-from pipeline.proposed.candidate_generation import CandidateGenerationResultV0
+from pipeline.proposed.candidate_generation import CandidateGenerationResultV0, OriginalCandidateDraftV0
 from pipeline.proposed.contracts import (
     CandidateLimitStatus,
     CandidateRecordV1,
@@ -78,10 +88,18 @@ def _upstream_generation(
     """Follow the approved stored graph without invoking a pipeline stage."""
 
     try:
-        generation = (
-            finalization_result.limit_result.ranking_result.provenance_result
-            .identity_preparation.deduplication_result.candidate_drafts
-        )
+        limit = finalization_result.limit_result
+        hc.exact(limit, CandidateLimitResultV0)
+        ranking = limit.ranking_result
+        hc.exact(ranking, PreliminaryCandidateRankingResultV0)
+        provenance = ranking.provenance_result
+        hc.exact(provenance, CandidateProvenanceMaterializationResultV0)
+        preparation = provenance.identity_preparation
+        hc.exact(preparation, CandidateIdentityPreparationResultV0)
+        deduplication = preparation.deduplication_result
+        hc.exact(deduplication, CandidateDeduplicationResultV0)
+        generation = deduplication.candidate_drafts
+        hc.exact(generation, CandidateGenerationResultV0)
     except AttributeError as exc:
         raise HardConstraintInputIntegrityError(
             "The finalization result does not expose the approved upstream graph."
@@ -96,11 +114,15 @@ def _upstream_generation(
 def _require_ready_finalization(
     finalization_result: CandidateFinalizationResultV0,
 ) -> None:
+    hc.exact(finalization_result, CandidateFinalizationResultV0)
     if not isinstance(finalization_result, CandidateFinalizationResultV0):
         raise TypeError(
             "finalization_result must be CandidateFinalizationResultV0."
         )
     try:
+        hc.population(finalization_result.retained_records, finalization_result.overflow_records,
+                      finalization_result.blocked_audits)
+        hc.reserve(max_upstream_replays=1, max_work_units=1)
         finalization_result.__post_init__()
     except (TypeError, ValueError) as exc:
         raise HardConstraintInputIntegrityError(
@@ -133,6 +155,13 @@ def _require_ready_finalization(
 
 
 def _receipt_fields(output: ReceiptOutput) -> tuple[object, ...]:
+    if hc.selected() is not None:
+        rows = len(output.items)
+        fields = 3 + 4 * rows
+        hc.sequence(fields)
+        # The starred expression builds a list before converting to a tuple.
+        hc.reserve(max_scan_items=rows, max_temporary_slots=fields + 4 * rows,
+                   max_work_units=fields + 5 * rows)
     return (
         output.store_name,
         output.purchase_date,
@@ -141,6 +170,7 @@ def _receipt_fields(output: ReceiptOutput) -> tuple[object, ...]:
     )
 
 
+@hc.operation
 def _revalidate_stored_receipt(
     adapter_result: ProposedAdapterResultV1,
     method_ready_field: MethodReadyFieldV1,
@@ -148,41 +178,47 @@ def _revalidate_stored_receipt(
     """Validate stored receipt evidence without rerunning gate or extraction."""
 
     try:
-        adapter_result.__post_init__()
-        method_ready_field.__post_init__()
+        hc.validate_adapter(adapter_result)
+        hc.validate_method(method_ready_field)
         b2_result = adapter_result.original_b2_result
         if not isinstance(b2_result, B2ExtractionResult):
             raise TypeError("Adapter original_b2_result has an unsupported type.")
-        b2_result.__post_init__()
+        hc.validate_plain(b2_result, B2ExtractionResult)
         output = b2_result.receipt_output
         if not isinstance(output, ReceiptOutput):
             raise ValueError(
                 "Hard-constraint input preparation requires structured B2 output."
             )
-        output.__post_init__()
+        hc.validate_receipt(output)
         if output.output_stage is not OutputStage.PRE_REVIEW_AUTOMATIC:
             raise ValueError(
                 "Stored B2 output must remain PRE_REVIEW_AUTOMATIC."
             )
-        output.source_evidence.__post_init__()
-        output.source_evidence.provenance.__post_init__()
-        output.source_evidence.gate_result.__post_init__()
-        for token in output.source_evidence.tokens:
-            token.__post_init__()
+        evidence = output.source_evidence
+        hc.validate_evidence(evidence)
+        hc.validate_plain(evidence.provenance, SourceProvenance)
+        hc.validate_gate(evidence.gate_result)
+        if hc.selected() is not None:
+            hc.scan(len(evidence.tokens) + len(output.items))
+        for token in evidence.tokens:
+            hc.validate_plain(token, OcrSourceToken)
         for field in _receipt_fields(output):
-            field.__post_init__()
+            hc.validate_field(field)
         for row in output.items:
-            row.__post_init__()
+            hc.validate_plain(row, ReceiptItemRow)
     except (TypeError, ValueError) as exc:
         raise HardConstraintInputIntegrityError(
             "Stored adapter, method-ready field, or B2 receipt failed revalidation."
         ) from exc
+    hc.reserve(max_temporary_slots=2, max_work_units=2)
     return b2_result, output
 
 
+@hc.operation
 def _validate_method_and_adapter(
     generation: CandidateGenerationResultV0,
 ) -> tuple[MethodReadyFieldV1, ProposedAdapterResultV1, ReceiptOutput]:
+    hc.exact(generation.original, OriginalCandidateDraftV0)
     method = generation.original.method_ready_field
     adapter = generation.adapter_result
     if not isinstance(method, MethodReadyFieldV1):
@@ -193,8 +229,11 @@ def _validate_method_and_adapter(
         raise HardConstraintInputIntegrityError(
             "The generation result lacks its proposed adapter record."
         )
+    hc.exact(generation.suspicion_result, SuspicionResultV0)
     suspicion_method = generation.suspicion_result.method_ready_field
-    if suspicion_method != method:
+    hc.exact(adapter, ProposedAdapterResultV1)
+    hc.admit_method_relationships(method, adapter, suspicion_method)
+    if hc.not_equal(suspicion_method, method):
         raise HardConstraintInputIntegrityError(
             "Suspicion and original-candidate method-ready records differ."
         )
@@ -202,23 +241,24 @@ def _validate_method_and_adapter(
     matches = tuple(
         item
         for item in adapter.method_ready_fields
-        if item.method_field_id == method.method_field_id
+        if hc.equal(item.method_field_id, method.method_field_id)
     )
-    if len(matches) != 1 or matches[0] != method:
+    if len(matches) != 1 or hc.not_equal(matches[0], method):
         raise HardConstraintInputIntegrityError(
             "The adapter must contain one complete matching method-ready field."
         )
-    if method.field_id in adapter.excluded_b2_field_ids:
+    if hc.excluded(method.field_id, adapter.excluded_b2_field_ids):
         raise HardConstraintInputIntegrityError(
             "A method-ready field cannot also be excluded by the adapter."
         )
 
+    hc.preflight_stored_b2(adapter)
     _, output = _revalidate_stored_receipt(adapter, method)
     evidence = output.source_evidence
     gate = adapter.stored_gate_result
     if (
-        gate != method.stored_gate_result
-        or gate != evidence.gate_result
+        hc.not_equal(gate, method.stored_gate_result)
+        or hc.not_equal(gate, evidence.gate_result)
         or gate.decision is not SourceEvidenceDecision.SUFFICIENT
     ):
         raise HardConstraintInputIntegrityError(
@@ -229,10 +269,10 @@ def _validate_method_and_adapter(
             "Structured method input cannot retain a fallback disposition."
         )
     if (
-        adapter.receipt_id != method.receipt_id
-        or output.receipt_id != method.receipt_id
-        or evidence.receipt_id != method.receipt_id
-        or gate.receipt_id != method.receipt_id
+        hc.not_equal(adapter.receipt_id, method.receipt_id)
+        or hc.not_equal(output.receipt_id, method.receipt_id)
+        or hc.not_equal(evidence.receipt_id, method.receipt_id)
+        or hc.not_equal(gate.receipt_id, method.receipt_id)
     ):
         raise HardConstraintInputIntegrityError(
             "Receipt identity differs across method, adapter, output, or gate."
@@ -241,62 +281,79 @@ def _validate_method_and_adapter(
         raise HardConstraintInputIntegrityError(
             "Only an EXTRACTED B2 field can enter hard-constraint preparation."
         )
+    if hc.selected() is not None:
+        hc.sequence(3 + 4 * len(output.items))
     field_matches = tuple(
-        field for field in _receipt_fields(output) if field.field_id == method.field_id
+        field for field in _receipt_fields(output) if hc.equal(field.field_id, method.field_id)
     )
-    if len(field_matches) != 1 or field_matches[0] != method.original_b2_field:
+    if len(field_matches) != 1 or hc.not_equal(field_matches[0], method.original_b2_field):
         raise HardConstraintInputIntegrityError(
             "The method-ready original field differs from the stored B2 output."
         )
     if (
-        method.original_b2_field.value != method.original_value
-        or method.original_value != method.c0_value
+        hc.not_equal(method.original_b2_field.value, method.original_value)
+        or hc.not_equal(method.original_value, method.c0_value)
     ):
         raise HardConstraintInputIntegrityError(
             "Permanent c0 must equal the exact original B2 field value."
         )
     if (
-        method.source_image_id != evidence.image_id
-        or method.source_processing_status != evidence.processing_status
-        or method.b2_extraction_status != output.extraction_status
-        or adapter.b2_extraction_status != output.extraction_status
-        or method.b2_extractor_version != output.extractor_version
+        hc.not_equal(method.source_image_id, evidence.image_id)
+        or hc.not_equal(method.source_processing_status, evidence.processing_status)
+        or hc.not_equal(method.b2_extraction_status, output.extraction_status)
+        or hc.not_equal(adapter.b2_extraction_status, output.extraction_status)
+        or hc.not_equal(method.b2_extractor_version, output.extractor_version)
     ):
         raise HardConstraintInputIntegrityError(
             "Stored image, processing, extraction, or extractor metadata differs."
         )
 
-    token_by_id = {token.token_id: token for token in evidence.tokens}
-    if len(token_by_id) != len(evidence.tokens):
+    selected = hc.selected() is not None
+    if selected:
+        hc.sequence(len(evidence.tokens))
+        duplicate = hc.has_duplicate_ids(tuple(token.token_id for token in evidence.tokens))
+    else:
+        token_by_id = {token.token_id: token for token in evidence.tokens}
+        duplicate = len(token_by_id) != len(evidence.tokens)
+    if duplicate:
         raise HardConstraintInputIntegrityError(
             "Original receipt OCR token identities are not unique."
         )
-    if method.original_b2_field.source_token_ids != method.source_token_ids:
+    if hc.not_equal(method.original_b2_field.source_token_ids, method.source_token_ids):
         raise HardConstraintInputIntegrityError(
             "Method-ready source references differ from the original B2 field."
         )
-    if tuple(token.token_id for token in method.source_tokens) != method.source_token_ids:
+    if selected:
+        hc.sequence(len(method.source_tokens))
+    if hc.not_equal(tuple(token.token_id for token in method.source_tokens), method.source_token_ids):
         raise HardConstraintInputIntegrityError(
             "Method-ready source-token order differs from its token IDs."
         )
+    if selected:
+        hc.scan(len(method.source_tokens))
     for token_id, token in zip(
         method.source_token_ids, method.source_tokens, strict=True
     ):
-        if token_by_id.get(token_id) != token:
+        observed = hc.token_lookup(evidence.tokens, token_id) if selected else token_by_id.get(token_id)
+        if hc.not_equal(observed, token):
             raise HardConstraintInputIntegrityError(
                 "Method-ready source tokens differ from stored receipt OCR evidence."
             )
+    hc.reserve(max_temporary_slots=3, max_work_units=3)
     return method, adapter, output
 
 
+@hc.operation
 def _validate_original_candidate(
     original: CandidateRecordV1,
     method: MethodReadyFieldV1,
 ) -> None:
     try:
-        original.__post_init__()
+        hc.validate_candidate(original)
+        if hc.selected() is not None:
+            hc.scan(len(original.provenance))
         for provenance in original.provenance:
-            provenance.__post_init__()
+            hc.validate_provenance(provenance)
     except (TypeError, ValueError) as exc:
         raise HardConstraintInputIntegrityError(
             "Permanent c0 failed shared candidate revalidation."
@@ -304,11 +361,11 @@ def _validate_original_candidate(
     if (
         original.role is not CandidateRole.ORIGINAL
         or original.limit_status is not CandidateLimitStatus.RETAINED
-        or original.candidate_id != method.c0_candidate_id
-        or original.c0_candidate_id != method.c0_candidate_id
-        or original.receipt_id != method.receipt_id
-        or original.field_id != method.field_id
-        or original.value != method.c0_value
+        or hc.not_equal(original.candidate_id, method.c0_candidate_id)
+        or hc.not_equal(original.c0_candidate_id, method.c0_candidate_id)
+        or hc.not_equal(original.receipt_id, method.receipt_id)
+        or hc.not_equal(original.field_id, method.field_id)
+        or hc.not_equal(original.value, method.c0_value)
     ):
         raise HardConstraintInputIntegrityError(
             "Permanent c0 contradicts the method-ready original."
@@ -320,14 +377,15 @@ def _validate_original_candidate(
     provenance = original.provenance[0]
     if (
         provenance.source_kind is not CandidateSourceKind.ORIGINAL
-        or provenance.original_observed_value != method.c0_value
-        or provenance.source_token_ids != method.source_token_ids
+        or hc.not_equal(provenance.original_observed_value, method.c0_value)
+        or hc.not_equal(provenance.source_token_ids, method.source_token_ids)
     ):
         raise HardConstraintInputIntegrityError(
             "Permanent c0 provenance differs from original B2 source evidence."
         )
 
 
+@hc.operation
 def _validate_theta_chain(
     finalization_result: CandidateFinalizationResultV0,
     generation: CandidateGenerationResultV0,
@@ -336,19 +394,22 @@ def _validate_theta_chain(
     ranking = finalization_result.limit_result.ranking_result.configuration
     suspicion = generation.suspicion_result.theta_a_ref
     try:
+        hc.reserve(max_work_units=2)
         limiting.__post_init__()
         ranking.__post_init__()
-        suspicion.__post_init__()
+        hc.validate_plain(suspicion, ConfigurationRefV1)
     except (TypeError, ValueError) as exc:
         raise HardConstraintInputIntegrityError(
             "Inherited synthetic Theta_A configuration failed revalidation."
         ) from exc
-    if limiting.theta_a_ref != ranking.theta_a_ref or ranking.theta_a_ref != suspicion:
+    if (hc.not_equal(limiting.theta_a_ref, ranking.theta_a_ref)
+            or hc.not_equal(ranking.theta_a_ref, suspicion)):
         raise HardConstraintInputIntegrityError(
             "The stored pipeline stages do not share one Theta_A reference."
         )
 
 
+@hc.operation
 def _expected_context(
     finalization_result: CandidateFinalizationResultV0,
 ) -> tuple[
@@ -363,15 +424,24 @@ def _expected_context(
     original = finalization_result.original_candidate
     _validate_original_candidate(original, method)
 
+    selected = hc.selected() is not None
+    if selected:
+        count = len(finalization_result.retained_records)
+        hc.sequence(1 + count)
+        hc.sequence(1 + count)
+        hc.reserve(max_temporary_slots=1 + count, max_work_units=1 + count)
     candidates = (original, *finalization_result.retained_records)
     candidate_ids = tuple(candidate.candidate_id for candidate in candidates)
-    if len(candidate_ids) != len(set(candidate_ids)):
+    if hc.has_duplicate_ids(candidate_ids):
         raise HardConstraintInputIntegrityError(
             "Prepared candidates cannot contain duplicate candidate identities."
         )
+    if selected:
+        hc.sequence(len(candidates) - 1)
+        hc.scan(len(candidates) - 1)
     for candidate in candidates[1:]:
         try:
-            candidate.__post_init__()
+            hc.validate_candidate(candidate)
         except (TypeError, ValueError) as exc:
             raise HardConstraintInputIntegrityError(
                 "A retained altered candidate failed shared-record revalidation."
@@ -379,20 +449,18 @@ def _expected_context(
         if (
             candidate.role is not CandidateRole.ALTERED
             or candidate.limit_status is not CandidateLimitStatus.RETAINED
-            or candidate.receipt_id != method.receipt_id
-            or candidate.field_id != method.field_id
-            or candidate.c0_candidate_id != method.c0_candidate_id
+            or hc.not_equal(candidate.receipt_id, method.receipt_id)
+            or hc.not_equal(candidate.field_id, method.field_id)
+            or hc.not_equal(candidate.c0_candidate_id, method.c0_candidate_id)
         ):
             raise HardConstraintInputIntegrityError(
                 "A retained altered candidate contradicts the method-ready field."
             )
-    overflow_ids = {
-        candidate.candidate_id for candidate in finalization_result.overflow_records
-    }
-    if overflow_ids.intersection(candidate_ids):
+    if hc.has_overlap(finalization_result.overflow_records, candidate_ids):
         raise HardConstraintInputIntegrityError(
             "Overflow candidates cannot enter the prepared candidate tuple."
         )
+    hc.reserve(max_temporary_slots=3, max_work_units=3)
     return method, adapter, candidates
 
 
@@ -407,7 +475,17 @@ class HardConstraintInputResultV0:
     component_version: str = HARD_CONSTRAINT_CONTEXT_COMPONENT_VERSION
     record_version: str = HARD_CONSTRAINT_CONTEXT_RECORD_VERSION
 
+    @hc.operation
     def __post_init__(self) -> None:
+        hc.exact(self, HardConstraintInputResultV0)
+        hc.exact(self.finalization_result, CandidateFinalizationResultV0)
+        hc.exact(self.method_ready_field, MethodReadyFieldV1)
+        hc.exact(self.adapter_result, ProposedAdapterResultV1)
+        if hc.selected() is not None:
+            hc.population(self.candidates)
+            hc.scan(len(self.candidates))
+            for candidate in self.candidates:
+                hc.exact(candidate, CandidateRecordV1)
         if not isinstance(self.finalization_result, CandidateFinalizationResultV0):
             raise TypeError(
                 "finalization_result must be CandidateFinalizationResultV0."
@@ -416,14 +494,14 @@ class HardConstraintInputResultV0:
             raise TypeError("method_ready_field must be MethodReadyFieldV1.")
         if not isinstance(self.adapter_result, ProposedAdapterResultV1):
             raise TypeError("adapter_result must be ProposedAdapterResultV1.")
-        if not isinstance(self.candidates, tuple) or any(
+        if hc.selected() is None and (not isinstance(self.candidates, tuple) or any(
             not isinstance(candidate, CandidateRecordV1)
             for candidate in self.candidates
-        ):
+        )):
             raise TypeError("candidates must be a tuple of CandidateRecordV1.")
-        if self.component_version != HARD_CONSTRAINT_CONTEXT_COMPONENT_VERSION:
+        if hc.not_equal(self.component_version, HARD_CONSTRAINT_CONTEXT_COMPONENT_VERSION):
             raise ValueError("Unsupported hard-constraint context component version.")
-        if self.record_version != HARD_CONSTRAINT_CONTEXT_RECORD_VERSION:
+        if hc.not_equal(self.record_version, HARD_CONSTRAINT_CONTEXT_RECORD_VERSION):
             raise ValueError("Unsupported hard-constraint context record version.")
 
         try:
@@ -443,6 +521,8 @@ class HardConstraintInputResultV0:
             raise HardConstraintInputIntegrityError(
                 "Prepared adapter must be the exact upstream graph object."
             )
+        if hc.selected() is not None:
+            hc.scan(len(self.candidates))
         if len(self.candidates) != len(expected_candidates) or any(
             observed is not expected
             for observed, expected in zip(
@@ -507,6 +587,7 @@ class HardConstraintInputResultV0:
         return self.finalization_result.limiting_configuration.theta_a_ref
 
 
+@hc.operation
 def prepare_hard_constraint_inputs(
     *,
     finalization_result: CandidateFinalizationResultV0,
@@ -514,6 +595,7 @@ def prepare_hard_constraint_inputs(
     """Prepare exact c0-first retained inputs without evaluating constraints."""
 
     method, adapter, candidates = _expected_context(finalization_result)
+    hc.reserve(max_records=1, max_temporary_slots=6, max_work_units=6)
     return HardConstraintInputResultV0(
         finalization_result=finalization_result,
         method_ready_field=method,

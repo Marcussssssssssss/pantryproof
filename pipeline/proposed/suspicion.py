@@ -13,6 +13,8 @@ from decimal import Decimal
 from enum import Enum
 from math import isfinite
 
+from pipeline.proposed.owned_numeric_producer_v1 import current_owned_numeric_scope_v1
+
 from pipeline.contracts import FieldStatus, SourceEvidenceDecision
 from pipeline.proposed.contracts import (
     ConfigurationKind,
@@ -87,6 +89,9 @@ def _require_unique(values: tuple[str, ...], name: str) -> None:
 
 
 def _require_finite_decimal(value: Decimal, name: str) -> None:
+    owned = current_owned_numeric_scope_v1()
+    if owned is not None:
+        owned.require_owned(value)
     if not isinstance(value, Decimal) or not value.is_finite():
         raise ValueError(f"{name} must be a finite Decimal.")
 
@@ -450,6 +455,11 @@ def detect_suspicion(
     if not isinstance(configuration, SuspicionConfigurationV0):
         raise TypeError("configuration must be SuspicionConfigurationV0.")
 
+    owned = current_owned_numeric_scope_v1()
+    if owned is not None:
+        for rule in (configuration.ocr_confidence_rule, configuration.extractor_confidence_rule):
+            for value in (rule.threshold, rule.domain_minimum, rule.domain_maximum):
+                owned.require_owned(value)
     _validate_identity(method_field, context, configuration)
     ocr_confidence = _confidence_observation(
         configuration.ocr_confidence_rule,
@@ -547,6 +557,9 @@ def _confidence_observation(
         if raw_value is not None:
             value = _decimal_from_number(raw_value, evidence_id)
             if not rule.domain_minimum <= value <= rule.domain_maximum:
+                owned = current_owned_numeric_scope_v1()
+                if owned is not None:
+                    owned._reject_numeric_value()
                 raise SuspicionIntegrityError(
                     f"Confidence {evidence_id!r} lies outside its declared domain."
                 )
@@ -578,6 +591,9 @@ def _confidence_observation(
 
 
 def _decimal_from_number(value: object, name: str) -> Decimal:
+    owned = current_owned_numeric_scope_v1()
+    if owned is not None:
+        return owned.confidence(value=value, source_id=name)
     if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
         raise SuspicionIntegrityError(f"Confidence {name!r} must be a non-Boolean number.")
     if isinstance(value, float) and not isfinite(value):

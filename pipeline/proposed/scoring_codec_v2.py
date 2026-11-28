@@ -222,9 +222,14 @@ def canonical_decimal_string(
         _fail("raw_score must be a finite Decimal.")
     if value.is_zero() and value.is_signed():
         _fail("negative zero is not permitted.")
+    representation = value.as_tuple()
+    if representation.exponent != -scale:
+        _fail("raw_score has an incorrect Decimal scale.")
+    if len(representation.digits) > precision:
+        _fail("raw_score exceeds the manifest precision.")
     text = format(value, "f")
     parsed = parse_canonical_decimal(text, precision=precision, scale=scale)
-    if parsed.as_tuple() != value.as_tuple():
+    if parsed.as_tuple() != representation:
         _fail("raw_score would require normalization or silent rounding.")
     return text
 

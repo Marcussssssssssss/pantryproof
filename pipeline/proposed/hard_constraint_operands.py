@@ -18,6 +18,7 @@ from pipeline.contracts import (
     ReceiptOutput,
     StructuredField,
 )
+from pipeline.proposed import hard_constraint_operand_replay_meter_v1 as op
 from pipeline.proposed.candidate_finalization import (
     BlockedCandidateFinalizationAuditV0,
     CandidateFinalizationCoverageStatusV0,
@@ -79,6 +80,12 @@ def _availability(field: StructuredField) -> OperandAvailabilityV0:
 
 
 def _receipt_fields(output: ReceiptOutput) -> tuple[StructuredField, ...]:
+    if op.selected() is not None:
+        op.exact(output, ReceiptOutput)
+        rows = op.admit_items(output.items, ReceiptItemRow)
+        fields = 3 + 4 * rows
+        op.sequence(fields)
+        op.reserve(max_temporary_slots=fields + 4 * rows, max_work_units=fields + 4 * rows)
     return (
         output.store_name,
         output.purchase_date,
@@ -87,9 +94,11 @@ def _receipt_fields(output: ReceiptOutput) -> tuple[StructuredField, ...]:
     )
 
 
+@op.operation
 def _number_fingerprint(value: object) -> tuple[str, str, str]:
     """Retain type and literal representation without numeric interpretation."""
 
+    op.reserve_fingerprint(value)
     value_type = type(value)
     return (value_type.__module__, value_type.__qualname__, repr(value))
 
@@ -110,7 +119,9 @@ class _StructuredFieldObservationV0:
     unresolved_reason: str | None
 
     @classmethod
+    @op.operation
     def capture(cls, field_value: StructuredField) -> _StructuredFieldObservationV0:
+        op.reserve_field_observation(field_value)
         confidence = field_value.confidence
         return cls(
             field_id=field_value.field_id,
@@ -141,7 +152,9 @@ class _SourceTokenObservationV0:
     raw_confidence_fingerprint: tuple[str, str, str] | None
 
     @classmethod
+    @op.operation
     def capture(cls, token: OcrSourceToken) -> _SourceTokenObservationV0:
+        op.reserve_token_observation(token)
         return cls(
             token_id=token.token_id,
             receipt_id=token.receipt_id,
@@ -158,6 +171,7 @@ class _SourceTokenObservationV0:
         )
 
 
+@op.operation
 def _capture_field_observation(
     owner: object,
     field_value: StructuredField,
@@ -168,7 +182,8 @@ def _capture_field_observation(
     except AttributeError:
         object.__setattr__(owner, "_field_observation", current)
         return current
-    if observed != current:
+    op.exact(observed, _StructuredFieldObservationV0)
+    if op.not_equal(observed, current):
         raise HardConstraintOperandIntegrityError(
             "Stored B2 field changed after its raw operand observation."
         )
@@ -186,18 +201,21 @@ class OperandEvidenceV0:
         repr=False,
     )
 
+    @op.operation
     def __post_init__(self) -> None:
+        op.exact(self, OperandEvidenceV0)
+        op.reserve(max_operand_validations=1, max_work_units=1)
         if not isinstance(self.b2_field, StructuredField):
             raise TypeError("b2_field must be StructuredField.")
         try:
-            self.b2_field.__post_init__()
+            op.validate_field(self.b2_field)
             _availability(self.b2_field)
         except (TypeError, ValueError) as exc:
             raise HardConstraintOperandIntegrityError(
                 "Stored B2 operand failed shared-field revalidation."
             ) from exc
         _capture_field_observation(self, self.b2_field)
-        if self.record_version != HARD_CONSTRAINT_OPERANDS_RECORD_VERSION:
+        if op.not_equal(self.record_version, HARD_CONSTRAINT_OPERANDS_RECORD_VERSION):
             raise ValueError("Unsupported hard-constraint operand record version.")
 
     @property
@@ -258,21 +276,31 @@ class ItemRowOperandEvidenceV0:
     operands: tuple[OperandEvidenceV0, ...]
     record_version: str = HARD_CONSTRAINT_OPERANDS_RECORD_VERSION
 
+    @op.operation
     def __post_init__(self) -> None:
+        op.exact(self, ItemRowOperandEvidenceV0)
+        op.reserve(max_operand_validations=1, max_work_units=1)
+        op.exact(self.b2_row, ReceiptItemRow)
         if not isinstance(self.b2_row, ReceiptItemRow):
             raise TypeError("b2_row must be ReceiptItemRow.")
-        if not isinstance(self.operands, tuple) or any(
+        selected = op.selected() is not None
+        if selected:
+            count = op.admit_items(self.operands, OperandEvidenceV0)
+            op.scan(count)
+        elif not isinstance(self.operands, tuple) or any(
             not isinstance(operand, OperandEvidenceV0) for operand in self.operands
         ):
             raise TypeError("operands must be a tuple of OperandEvidenceV0.")
         try:
-            self.b2_row.__post_init__()
+            op.validate_row(self.b2_row)
             for operand in self.operands:
                 operand.__post_init__()
         except (TypeError, ValueError) as exc:
             raise HardConstraintOperandIntegrityError(
                 "Stored item-row operand evidence failed revalidation."
             ) from exc
+        if selected:
+            op.reserve(max_scan_items=4, max_temporary_slots=8, max_work_units=12)
         if len(self.operands) != len(self.b2_row.fields) or any(
             operand.b2_field is not field
             for operand, field in zip(
@@ -282,7 +310,7 @@ class ItemRowOperandEvidenceV0:
             raise HardConstraintOperandIntegrityError(
                 "Item operands must preserve exact B2 row field references and order."
             )
-        if self.record_version != HARD_CONSTRAINT_OPERANDS_RECORD_VERSION:
+        if op.not_equal(self.record_version, HARD_CONSTRAINT_OPERANDS_RECORD_VERSION):
             raise ValueError("Unsupported hard-constraint operand record version.")
 
     @property
@@ -309,13 +337,17 @@ class CandidateSubstitutionPositionV0:
         repr=False,
     )
 
+    @op.operation
     def __post_init__(self) -> None:
+        op.exact(self, CandidateSubstitutionPositionV0)
+        op.reserve(max_operand_validations=1, max_work_units=1)
         if not isinstance(self.target_field, StructuredField):
             raise TypeError("target_field must be StructuredField.")
+        op.exact(self.scope, CandidateSubstitutionScopeV0)
         if not isinstance(self.scope, CandidateSubstitutionScopeV0):
             raise TypeError("scope must be CandidateSubstitutionScopeV0.")
         try:
-            self.target_field.__post_init__()
+            op.validate_field(self.target_field)
         except (TypeError, ValueError) as exc:
             raise HardConstraintOperandIntegrityError(
                 "Candidate target field failed shared-field revalidation."
@@ -347,10 +379,14 @@ class CandidateSubstitutionPositionV0:
                 raise HardConstraintOperandIntegrityError(
                     "An item-row substitution requires an item field."
                 )
+            op.exact(self.item_row, ReceiptItemRow)
             if not isinstance(self.item_row, ReceiptItemRow):
                 raise HardConstraintOperandIntegrityError(
                     "An item-row substitution requires its exact stored row."
                 )
+            op.admit(self.item_row_index, int)
+            op.admit(self.item_field_index, int)
+            op.reserve(max_temporary_slots=8, max_work_units=8)
             if type(self.item_row_index) is not int or self.item_row_index < 0:
                 raise HardConstraintOperandIntegrityError(
                     "item_row_index must be a non-Boolean non-negative integer."
@@ -365,11 +401,11 @@ class CandidateSubstitutionPositionV0:
                 raise HardConstraintOperandIntegrityError(
                     "The substitution position does not reference its target field."
                 )
-            if self.target_field.item_row_id != self.item_row.row_id:
+            if op.not_equal(self.target_field.item_row_id, self.item_row.row_id):
                 raise HardConstraintOperandIntegrityError(
                     "The target field and substitution row identities differ."
                 )
-        if self.record_version != HARD_CONSTRAINT_OPERANDS_RECORD_VERSION:
+        if op.not_equal(self.record_version, HARD_CONSTRAINT_OPERANDS_RECORD_VERSION):
             raise ValueError("Unsupported hard-constraint operand record version.")
 
 
@@ -385,7 +421,14 @@ class CandidateOperandAuditV0:
     receipt_total_operand: OperandEvidenceV0
     record_version: str = HARD_CONSTRAINT_OPERANDS_RECORD_VERSION
 
+    @op.operation
     def __post_init__(self) -> None:
+        op.exact(self, CandidateOperandAuditV0)
+        op.reserve(max_operand_validations=1, max_work_units=1)
+        op.exact(self.candidate, CandidateRecordV1)
+        op.exact(self.substitution_position, CandidateSubstitutionPositionV0)
+        op.exact(self.target_source_relationship, RelationshipAvailabilityV0)
+        op.exact(self.item_row_relationship, RelationshipAvailabilityV0)
         if not isinstance(self.candidate, CandidateRecordV1):
             raise TypeError("candidate must be CandidateRecordV1.")
         if not isinstance(
@@ -404,14 +447,19 @@ class CandidateOperandAuditV0:
             raise TypeError(
                 "item_row_relationship must be RelationshipAvailabilityV0."
             )
-        if not isinstance(self.item_rows, tuple) or any(
+        selected = op.selected() is not None
+        if selected:
+            count = op.admit_items(self.item_rows, ItemRowOperandEvidenceV0)
+            op.scan(count)
+        elif not isinstance(self.item_rows, tuple) or any(
             not isinstance(row, ItemRowOperandEvidenceV0) for row in self.item_rows
         ):
             raise TypeError("item_rows must be ItemRowOperandEvidenceV0 records.")
+        op.exact(self.receipt_total_operand, OperandEvidenceV0)
         if not isinstance(self.receipt_total_operand, OperandEvidenceV0):
             raise TypeError("receipt_total_operand must be OperandEvidenceV0.")
         try:
-            self.candidate.__post_init__()
+            op.validate_candidate(self.candidate)
             self.substitution_position.__post_init__()
             for row in self.item_rows:
                 row.__post_init__()
@@ -423,8 +471,8 @@ class CandidateOperandAuditV0:
 
         target = self.substitution_position.target_field
         if (
-            self.candidate.receipt_id != target.receipt_id
-            or self.candidate.field_id != target.field_id
+            op.not_equal(self.candidate.receipt_id, target.receipt_id)
+            or op.not_equal(self.candidate.field_id, target.field_id)
         ):
             raise HardConstraintOperandIntegrityError(
                 "Candidate identity differs from its original B2 target field."
@@ -454,9 +502,12 @@ class CandidateOperandAuditV0:
                 raise HardConstraintOperandIntegrityError(
                     "The substitution row index does not identify its exact row evidence."
                 )
+        if selected:
+            op.sequence(count)
+            op.scan(count)
         row_ids = tuple(row.row_id for row in self.item_rows)
-        if len(row_ids) != len(set(row_ids)) or any(
-            row.receipt_id != self.candidate.receipt_id for row in self.item_rows
+        if op.has_duplicate_ids(row_ids) or any(
+            op.not_equal(row.receipt_id, self.candidate.receipt_id) for row in self.item_rows
         ):
             raise HardConstraintOperandIntegrityError(
                 "Receipt item-row evidence has duplicate or contradictory identity."
@@ -464,13 +515,12 @@ class CandidateOperandAuditV0:
         if (
             self.receipt_total_operand.field_name
             is not ReceiptFieldName.RECEIPT_TOTAL
-            or self.receipt_total_operand.b2_field.receipt_id
-            != self.candidate.receipt_id
+            or op.not_equal(self.receipt_total_operand.b2_field.receipt_id, self.candidate.receipt_id)
         ):
             raise HardConstraintOperandIntegrityError(
                 "Receipt-total operand identity contradicts the candidate receipt."
             )
-        if self.record_version != HARD_CONSTRAINT_OPERANDS_RECORD_VERSION:
+        if op.not_equal(self.record_version, HARD_CONSTRAINT_OPERANDS_RECORD_VERSION):
             raise ValueError("Unsupported hard-constraint operand record version.")
 
     @property
@@ -522,12 +572,17 @@ class CandidateOperandAuditV0:
         )
 
 
+@op.operation
 def _revalidate_input(hard_constraint_input: HardConstraintInputResultV0) -> None:
+    op.exact(hard_constraint_input, HardConstraintInputResultV0)
     if not isinstance(hard_constraint_input, HardConstraintInputResultV0):
         raise TypeError(
             "hard_constraint_input must be HardConstraintInputResultV0."
         )
     try:
+        if op.selected() is not None:
+            op.population(hard_constraint_input.candidates)
+            op.reserve(max_upstream_replays=1, max_work_units=1)
         hard_constraint_input.__post_init__()
     except (TypeError, ValueError) as exc:
         raise HardConstraintOperandIntegrityError(
@@ -535,19 +590,31 @@ def _revalidate_input(hard_constraint_input: HardConstraintInputResultV0) -> Non
         ) from exc
 
 
+def _field_operand(field: StructuredField) -> OperandEvidenceV0:
+    op.construct(3)
+    return OperandEvidenceV0(field)
+
+
+def _one_row_evidence(row: ReceiptItemRow) -> ItemRowOperandEvidenceV0:
+    if op.selected() is not None:
+        op.sequence(4)
+        op.reserve(max_temporary_slots=4, max_work_units=4)
+    evidence = tuple(_field_operand(field) for field in row.fields)
+    op.construct(3)
+    return ItemRowOperandEvidenceV0(b2_row=row, operands=evidence)
+
+
 def _item_row_evidence(output: ReceiptOutput) -> tuple[ItemRowOperandEvidenceV0, ...]:
-    return tuple(
-        ItemRowOperandEvidenceV0(
-            b2_row=row,
-            operands=tuple(OperandEvidenceV0(field) for field in row.fields),
-        )
-        for row in output.items
-    )
+    if op.selected() is not None:
+        op.sequence(len(output.items))
+    return tuple(_one_row_evidence(row) for row in output.items)
 
 
 def _target_field(output: ReceiptOutput, field_id: str) -> StructuredField:
+    if op.selected() is not None:
+        op.sequence(3 + 4 * len(output.items))
     matches = tuple(
-        field for field in _receipt_fields(output) if field.field_id == field_id
+        field for field in _receipt_fields(output) if op.equal(field.field_id, field_id)
     )
     if len(matches) != 1:
         raise HardConstraintOperandIntegrityError(
@@ -561,6 +628,7 @@ def _substitution_position(
     target: StructuredField,
 ) -> CandidateSubstitutionPositionV0:
     if target.field_name not in _ITEM_FIELD_NAMES:
+        op.construct(7)
         return CandidateSubstitutionPositionV0(
             target_field=target,
             scope=CandidateSubstitutionScopeV0.RECEIPT_FIELD,
@@ -569,16 +637,23 @@ def _substitution_position(
             item_field_index=None,
         )
 
+    if op.selected() is not None:
+        count = len(output.items)
+        op.sequence(count)
+        op.reserve(max_temporary_slots=2 * count, max_work_units=2 * count)
     matches = tuple(
         (row_index, row)
         for row_index, row in enumerate(output.items)
-        if row.row_id == target.item_row_id
+        if op.equal(row.row_id, target.item_row_id)
     )
     if len(matches) != 1:
         raise HardConstraintOperandIntegrityError(
             "The item target does not have one unique stored B2 row relationship."
         )
     row_index, row = matches[0]
+    if op.selected() is not None:
+        op.sequence(4)
+        op.reserve(max_temporary_slots=4, max_work_units=4)
     field_matches = tuple(
         index for index, field in enumerate(row.fields) if field is target
     )
@@ -586,6 +661,7 @@ def _substitution_position(
         raise HardConstraintOperandIntegrityError(
             "The item target is not one exact field in its declared B2 row."
         )
+    op.construct(7)
     return CandidateSubstitutionPositionV0(
         target_field=target,
         scope=CandidateSubstitutionScopeV0.ITEM_ROW_FIELD,
@@ -595,22 +671,28 @@ def _substitution_position(
     )
 
 
+@op.operation
 def _expected_candidate_audits(
     hard_constraint_input: HardConstraintInputResultV0,
 ) -> tuple[CandidateOperandAuditV0, ...]:
     _revalidate_input(hard_constraint_input)
     output = hard_constraint_input.receipt_output
+    op.receipt_population(output)
     target = _target_field(output, hard_constraint_input.field_id)
     position = _substitution_position(output, target)
     rows = _item_row_evidence(output)
-    receipt_total = OperandEvidenceV0(output.receipt_total)
+    receipt_total = _field_operand(output.receipt_total)
     relationship = (
         RelationshipAvailabilityV0.AVAILABLE
         if position.scope is CandidateSubstitutionScopeV0.ITEM_ROW_FIELD
         else RelationshipAvailabilityV0.NOT_APPLICABLE
     )
-    return tuple(
-        CandidateOperandAuditV0(
+    if op.selected() is not None:
+        op.sequence(len(hard_constraint_input.candidates))
+
+    def audit_candidate(candidate: CandidateRecordV1) -> CandidateOperandAuditV0:
+        op.construct(7)
+        return CandidateOperandAuditV0(
             candidate=candidate,
             substitution_position=position,
             target_source_relationship=RelationshipAvailabilityV0.AVAILABLE,
@@ -618,14 +700,17 @@ def _expected_candidate_audits(
             item_rows=rows,
             receipt_total_operand=receipt_total,
         )
-        for candidate in hard_constraint_input.candidates
-    )
+
+    return tuple(audit_candidate(candidate) for candidate in hard_constraint_input.candidates)
 
 
+@op.operation
 def _require_exact_audit(
     observed: CandidateOperandAuditV0,
     expected: CandidateOperandAuditV0,
 ) -> None:
+    op.exact(observed, CandidateOperandAuditV0)
+    op.exact(expected, CandidateOperandAuditV0)
     try:
         observed.__post_init__()
     except (TypeError, ValueError) as exc:
@@ -645,8 +730,8 @@ def _require_exact_audit(
     if (
         observed_position.scope is not expected_position.scope
         or observed_position.item_row is not expected_position.item_row
-        or observed_position.item_row_index != expected_position.item_row_index
-        or observed_position.item_field_index != expected_position.item_field_index
+        or op.not_equal(observed_position.item_row_index, expected_position.item_row_index)
+        or op.not_equal(observed_position.item_field_index, expected_position.item_field_index)
         or observed.target_source_relationship
         is not expected.target_source_relationship
         or observed.item_row_relationship is not expected.item_row_relationship
@@ -658,6 +743,8 @@ def _require_exact_audit(
         raise HardConstraintOperandIntegrityError(
             "Candidate audit changed the detected B2 row population."
         )
+    if op.selected() is not None:
+        op.scan(len(observed.item_rows))
     for observed_row, expected_row in zip(
         observed.item_rows, expected.item_rows, strict=True
     ):
@@ -665,6 +752,8 @@ def _require_exact_audit(
             raise HardConstraintOperandIntegrityError(
                 "Candidate audit changed a stored B2 row reference or order."
             )
+        if op.selected() is not None:
+            op.scan(len(observed_row.operands))
         if len(observed_row.operands) != len(expected_row.operands) or any(
             left.b2_field is not right.b2_field
             for left, right in zip(
@@ -681,7 +770,7 @@ def _require_exact_audit(
         raise HardConstraintOperandIntegrityError(
             "Candidate audit changed the stored receipt-total operand."
         )
-    if observed != expected:
+    if op.not_equal(observed, expected):
         raise HardConstraintOperandIntegrityError(
             "Candidate audit differs from deterministic reconstruction."
         )
@@ -700,28 +789,35 @@ class HardConstraintOperandAuditResultV0:
         repr=False,
     )
 
+    @op.operation
     def __post_init__(self) -> None:
+        op.exact(self, HardConstraintOperandAuditResultV0)
+        op.reserve(max_operand_validations=1, max_work_units=1)
+        op.exact(self.hard_constraint_input, HardConstraintInputResultV0)
         if not isinstance(self.hard_constraint_input, HardConstraintInputResultV0):
             raise TypeError(
                 "hard_constraint_input must be HardConstraintInputResultV0."
             )
-        if not isinstance(self.candidate_audits, tuple) or any(
+        selected = op.selected() is not None
+        if selected:
+            op.population(self.candidate_audits)
+            op.admit_items(self.candidate_audits, CandidateOperandAuditV0)
+        elif not isinstance(self.candidate_audits, tuple) or any(
             not isinstance(audit, CandidateOperandAuditV0)
             for audit in self.candidate_audits
         ):
             raise TypeError(
                 "candidate_audits must be a tuple of CandidateOperandAuditV0."
             )
-        if self.component_version != HARD_CONSTRAINT_OPERANDS_COMPONENT_VERSION:
+        if op.not_equal(self.component_version, HARD_CONSTRAINT_OPERANDS_COMPONENT_VERSION):
             raise ValueError("Unsupported hard-constraint operand component version.")
-        if self.record_version != HARD_CONSTRAINT_OPERANDS_RECORD_VERSION:
+        if op.not_equal(self.record_version, HARD_CONSTRAINT_OPERANDS_RECORD_VERSION):
             raise ValueError("Unsupported hard-constraint operand record version.")
 
         expected = _expected_candidate_audits(self.hard_constraint_input)
-        current_token_observations = tuple(
-            _SourceTokenObservationV0.capture(token)
-            for token in self.hard_constraint_input.source_evidence.tokens
-        )
+        tokens = self.hard_constraint_input.source_evidence.tokens
+        op.source_token_population(tokens)
+        current_token_observations = tuple(_SourceTokenObservationV0.capture(token) for token in tokens)
         try:
             original_token_observations = self._source_token_observations
         except AttributeError:
@@ -731,7 +827,9 @@ class HardConstraintOperandAuditResultV0:
                 current_token_observations,
             )
         else:
-            if original_token_observations != current_token_observations:
+            if selected:
+                op.admit_items(original_token_observations, _SourceTokenObservationV0)
+            if op.not_equal(original_token_observations, current_token_observations):
                 raise HardConstraintOperandIntegrityError(
                     "Stored OCR token payload changed after operand observation."
                 )
@@ -739,6 +837,8 @@ class HardConstraintOperandAuditResultV0:
             raise HardConstraintOperandIntegrityError(
                 "Exactly one operand audit is required per prepared candidate."
             )
+        if selected:
+            op.scan(len(expected))
         for observed, reconstructed in zip(
             self.candidate_audits, expected, strict=True
         ):
@@ -757,6 +857,7 @@ class HardConstraintOperandAuditResultV0:
         return self.hard_constraint_input.full_ledger_coverage_status
 
 
+@op.operation
 def audit_hard_constraint_operands(
     *,
     hard_constraint_input: HardConstraintInputResultV0,
@@ -764,6 +865,7 @@ def audit_hard_constraint_operands(
     """Inventory exact stored B2 operands without making eligibility decisions."""
 
     audits = _expected_candidate_audits(hard_constraint_input)
+    op.construct(5)
     return HardConstraintOperandAuditResultV0(
         hard_constraint_input=hard_constraint_input,
         candidate_audits=audits,

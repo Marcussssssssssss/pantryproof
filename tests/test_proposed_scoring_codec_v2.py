@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from decimal import Decimal
+from decimal import Decimal, localcontext
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from pipeline.proposed.scoring_codec_v2 import (
     SCORING_CODEC_SCHEMA_VERSION,
@@ -213,6 +214,22 @@ class ProposedScoringCodecV2Tests(unittest.TestCase):
         )
         with self.assertRaises(ScoringCodecError):
             parse_canonical_decimal("12.3400", precision=5, scale=4)
+
+    def test_invalid_decimal_scale_or_precision_is_refused_before_formatting(self) -> None:
+        with patch("pipeline.proposed.scoring_codec_v2.format", create=True) as render:
+            with self.assertRaisesRegex(ScoringCodecError, "scale"):
+                canonical_decimal_string(Decimal("1E+12"), precision=16, scale=4)
+            with self.assertRaisesRegex(ScoringCodecError, "precision"):
+                canonical_decimal_string(Decimal("12.3400"), precision=5, scale=4)
+        render.assert_not_called()
+
+    def test_decimal_encoding_uses_declared_policy_not_ambient_precision(self) -> None:
+        with localcontext() as context:
+            context.prec = 1
+            self.assertEqual(
+                "12.3400",
+                canonical_decimal_string(Decimal("12.3400"), precision=6, scale=4),
+            )
 
     def test_complete_audit_round_trip_preserves_exact_live_sources(self) -> None:
         original = _canonical_operation()
