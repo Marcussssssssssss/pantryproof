@@ -6,12 +6,12 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import com.pantryproof.prototype.R
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -121,7 +121,6 @@ internal class ReceiptCropView(
 
     private val image = RectF()
     private val selection = RectF()
-    private val shade = Path()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val density = resources.displayMetrics.density
     private var drag: Drag? = null
@@ -162,16 +161,23 @@ internal class ReceiptCropView(
         paint.style = Paint.Style.FILL
         paint.color = Color.WHITE
         canvas.drawBitmap(bitmap, null, image, paint)
-        shade.reset()
-        shade.fillType = Path.FillType.EVEN_ODD
-        shade.addRect(image, Path.Direction.CW)
-        shade.addRect(selection, Path.Direction.CW)
         paint.color = 0xA6000000.toInt()
-        canvas.drawPath(shade, paint)
+        canvas.drawRect(image.left, image.top, image.right, selection.top, paint)
+        canvas.drawRect(image.left, selection.bottom, image.right, image.bottom, paint)
+        canvas.drawRect(image.left, selection.top, selection.left, selection.bottom, paint)
+        canvas.drawRect(selection.right, selection.top, image.right, selection.bottom, paint)
         paint.color = Color.WHITE
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 2f * density
         canvas.drawRect(selection, paint)
+        paint.color = 0xA6FFFFFF.toInt()
+        paint.strokeWidth = density
+        for (third in 1..2) {
+            val x = selection.left + selection.width() * third / 3f
+            val y = selection.top + selection.height() * third / 3f
+            canvas.drawLine(x, selection.top, x, selection.bottom, paint)
+            canvas.drawLine(selection.left, y, selection.right, y, paint)
+        }
         paint.style = Paint.Style.FILL
         for ((x, y) in listOf(
             selection.left to selection.top, selection.right to selection.top,
@@ -179,7 +185,7 @@ internal class ReceiptCropView(
         )) {
             paint.color = Color.WHITE
             canvas.drawCircle(x, y, 6f * density, paint)
-            paint.color = 0xFF176B52.toInt()
+            paint.color = context.getColor(R.color.pantry_primary)
             canvas.drawCircle(x, y, 4f * density, paint)
         }
     }

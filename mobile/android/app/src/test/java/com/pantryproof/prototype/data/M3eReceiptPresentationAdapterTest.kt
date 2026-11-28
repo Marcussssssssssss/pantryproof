@@ -3,6 +3,7 @@ package com.pantryproof.prototype.data
 import com.fasterxml.jackson.core.JsonFactory
 import com.fasterxml.jackson.core.JsonToken
 import com.fasterxml.jackson.core.StreamReadFeature
+import com.pantryproof.prototype.contract.v1.AutomaticExtractionStatus
 import com.pantryproof.prototype.contract.v1.PresentationConsumerContext
 import com.pantryproof.prototype.contract.v1.PresentationConsumerMode
 import com.pantryproof.prototype.contract.v1.PresentationFailureStage
@@ -171,6 +172,91 @@ class M3eReceiptPresentationAdapterTest {
             ReceiptPresentationIssueCodes.SOURCE_MODE_MISMATCH,
             (modeMismatch as ReceiptPresentationUiResult.Rejected).issue.code,
         )
+    }
+
+    @Test
+    fun canonicalAvailableResultsPreserveExtractedAndPartialStatuses() {
+        val extracted = loadCanonical("01-complete-extracted-receipt.json")
+            as ReceiptPresentationUiResult.Available
+        val partial = loadCanonical("02-missing-optional-unit-price.json")
+            as ReceiptPresentationUiResult.Available
+
+        assertEquals(AutomaticExtractionStatus.EXTRACTED, extracted.receipt.automaticExtractionStatus)
+        assertEquals(AutomaticExtractionStatus.PARTIAL, partial.receipt.automaticExtractionStatus)
+        assertTrue(extracted.canReview)
+        assertTrue(partial.canReview)
+        assertEquals(PresentedFieldStatus.MISSING, partial.receipt.items.single().unitPrice.status)
+        assertNull(partial.receipt.items.single().unitPrice.value)
+    }
+
+    @Test
+    fun canonicalFailedExtractionRemainsReviewableWithExactAbsentFieldsAndNoItems() {
+        val result = loadCanonical("15-result-available-extraction-failed.json")
+
+        assertTrue(result is ReceiptPresentationUiResult.Available)
+        assertTrue(result.canReview)
+        val receipt = (result as ReceiptPresentationUiResult.Available).receipt
+        assertEquals(AutomaticExtractionStatus.FAILED, receipt.automaticExtractionStatus)
+        assertEquals("receipt-extraction-failed-001", receipt.receiptId)
+        assertEquals("MYR", receipt.currencyCode)
+        assertEquals(
+            PresentedField(
+                "field-extraction-failed-001-store",
+                PresentedFieldStatus.MISSING,
+                null,
+                null,
+                "STORE_NAME_NOT_OBSERVED",
+            ),
+            receipt.storeName,
+        )
+        assertEquals(
+            PresentedField(
+                "field-extraction-failed-001-date",
+                PresentedFieldStatus.UNRESOLVED,
+                null,
+                null,
+                "PURCHASE_DATE_NOT_RESOLVED",
+            ),
+            receipt.purchaseDate,
+        )
+        assertEquals(
+            PresentedField(
+                "field-extraction-failed-001-receipt-total",
+                PresentedFieldStatus.MISSING,
+                null,
+                null,
+                "RECEIPT_TOTAL_NOT_OBSERVED",
+            ),
+            receipt.receiptTotal,
+        )
+        assertTrue(receipt.items.isEmpty())
+        assertNull(receipt.toInventoryCompatibleReceiptOrNull())
+    }
+
+    @Test
+    fun legacyConstructorDefaultsToNullAndStatusDoesNotAlterInventoryConversion() {
+        val mapped = (loadCanonical("01-complete-extracted-receipt.json")
+            as ReceiptPresentationUiResult.Available).receipt
+        val legacy = PresentedReceipt(
+            mapped.receiptId,
+            mapped.currencyCode,
+            mapped.storeName,
+            mapped.purchaseDate,
+            mapped.receiptTotal,
+            mapped.items,
+        )
+
+        assertNull(legacy.automaticExtractionStatus)
+        assertEquals(mapped.copy(automaticExtractionStatus = null), legacy)
+        val expected = legacy.toInventoryCompatibleReceiptOrNull()
+        assertTrue(expected != null)
+        assertEquals(expected, mapped.toInventoryCompatibleReceiptOrNull())
+        for (status in AutomaticExtractionStatus.values()) {
+            assertEquals(
+                expected,
+                legacy.copy(automaticExtractionStatus = status).toInventoryCompatibleReceiptOrNull(),
+            )
+        }
     }
 
     private fun loadCanonical(name: String): ReceiptPresentationUiResult {

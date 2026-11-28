@@ -113,9 +113,29 @@ data class ManualArithmeticWarnings(
 
 object ReceiptValidator {
     const val MAX_MANUAL_ITEMS = 30
+    internal const val FUTURE_PURCHASE_DATE_ERROR = "Purchase date cannot be in the future."
+
+    internal enum class PurchaseDateProblem { INVALID, FUTURE }
 
     private val manualAmount = Regex("[0-9]+(?:\\.[0-9]{1,2})?")
     private val manualDate = Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+    internal fun parsePurchaseDate(value: String): LocalDate? {
+        val trimmed = value.trim()
+        if (!manualDate.matches(trimmed)) return null
+        return try {
+            LocalDate.parse(trimmed)
+        } catch (_: DateTimeParseException) {
+            null
+        }
+    }
+
+    internal fun purchaseDateProblem(date: LocalDate?, today: LocalDate = LocalDate.now()): PurchaseDateProblem? =
+        when {
+            date == null -> PurchaseDateProblem.INVALID
+            date.isAfter(today) -> PurchaseDateProblem.FUTURE
+            else -> null
+        }
 
     fun manualArithmeticWarnings(validatedReceipt: Receipt): ManualArithmeticWarnings {
         var lineSum = BigDecimal.ZERO
@@ -137,7 +157,7 @@ object ReceiptValidator {
         )
     }
 
-    fun validateManual(draft: EditableReceipt): ReceiptValidationResult {
+    fun validateManual(draft: EditableReceipt, today: LocalDate = LocalDate.now()): ReceiptValidationResult {
         if (draft.items.size > MAX_MANUAL_ITEMS) {
             return ReceiptValidationResult(
                 null,
@@ -146,8 +166,10 @@ object ReceiptValidator {
         }
         val validated = validate(draft)
         val errors = validated.errors.toMutableMap()
-        if (!manualDate.matches(draft.purchaseDate.trim())) {
-            errors.putIfAbsent("purchaseDate", "Use a valid date in YYYY-MM-DD format.")
+        when (purchaseDateProblem(parsePurchaseDate(draft.purchaseDate), today)) {
+            PurchaseDateProblem.INVALID -> errors.putIfAbsent("purchaseDate", "Use a valid date in YYYY-MM-DD format.")
+            PurchaseDateProblem.FUTURE -> errors["purchaseDate"] = FUTURE_PURCHASE_DATE_ERROR
+            null -> Unit
         }
         if (draft.items.isEmpty()) errors["items"] = "Add at least one item."
 
@@ -158,9 +180,6 @@ object ReceiptValidator {
         }
         draft.items.forEachIndexed { index, item ->
             val prefix = "item.$index"
-            if ((item.quantity.trim().toIntOrNull() ?: 0) > PantryUiState.MAX_INVENTORY_QUANTITY) {
-                errors["$prefix.quantity"] = "Quantity must be 99 or less."
-            }
             if (item.unitPrice.isNotBlank()) checkAmount("$prefix.unitPrice", item.unitPrice)
             checkAmount("$prefix.lineTotal", item.lineTotal)
         }
@@ -190,6 +209,8 @@ object ReceiptValidator {
             val quantity = item.quantity.trim().toIntOrNull()
             if (quantity == null || quantity <= 0) {
                 errors["$prefix.quantity"] = "Quantity must be a whole number above zero."
+            } else if (quantity > PantryUiState.MAX_INVENTORY_QUANTITY) {
+                errors["$prefix.quantity"] = "Quantity must be ${PantryUiState.MAX_INVENTORY_QUANTITY} or less."
             }
 
             val unitPrice = if (item.unitPrice.isBlank()) {

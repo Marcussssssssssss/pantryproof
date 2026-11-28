@@ -43,6 +43,7 @@
     <item name="details_item_2" type="id" />
 
     <item name="review_error_summary" type="id" />
+    <item name="review_extraction_failed_annotation" type="id" />
     <item name="review_status" type="id" />
     <item name="review_store_name" type="id" />
     <item name="review_purchase_date" type="id" />
@@ -72,4 +73,65 @@
     <item name="inventory_stock_rice_decrease" type="id" />
     <item name="inventory_stock_rice_value" type="id" />
     <item name="inventory_stock_rice_increase" type="id" />
+    <item name="screen_processing_demo" type="id" />
+    <item name="home_processing_demo" type="id" />
+    <item name="processing_scenario" type="id" />
+    <item name="processing_status" type="id" />
+    <item name="processing_progress" type="id" />
+    <item name="processing_start" type="id" />
+    <item name="processing_cancel" type="id" />
+    <item name="processing_new_input" type="id" />
+    <item name="processing_receipt" type="id" />
+    <item name="processing_receipt_heading" type="id" />
+    <item name="preview_process_selected" type="id" />
+    <item name="screen_selected_processing" type="id" />
+    <item name="selected_processing_status" type="id" />
+    <item name="selected_processing_progress" type="id" />
+    <item name="selected_processing_start" type="id" />
+    <item name="selected_processing_cancel" type="id" />
+    <item name="selected_processing_prepare_again" type="id" />
+    <item name="inventory_search" type="id" />
+    <item name="inventory_clear_search" type="id" />
+    <item name="inventory_sort" type="id" />
+    <item name="inventory_filter" type="id" />
+    <item name="inventory_browse_count" type="id" />
+    <item name="inventory_browse_results" type="id" />
+    <item name="inventory_no_matches" type="id" />
+    <item name="inventory_empty_state" type="id" />
+    <item name="inventory_add_item" type="id" />
+    <item name="inventory_item_name" type="id" />
+    <item name="inventory_item_quantity" type="id" />
+    <item name="sage_nav_home" type="id" />
+    <item name="sage_nav_add" type="id" />
+    <item name="sage_nav_inventory" type="id" />
+    <item name="sage_development_tools" type="id" />
+    <item name="sage_inventory_groups" type="id" />
+    <item name="sage_inventory_details" type="id" />
+    <item name="sage_inventory_editor" type="id" />
+    <item name="sage_receipt_image" type="id" />
+    <item name="sage_result_sheet" type="id" />
+    <item name="sage_expand_all" type="id" />
+    <item name="inventory_sort_choices" type="id" />
+    <item name="crop_workspace" type="id" />
+    <item name="crop_precise_toggle" type="id" />
+    <item name="crop_close" type="id" />
+    <item name="crop_reset_action" type="id" />
+    <item name="crop_apply_action" type="id" />
+    <item name="inventory_pinned_controls" type="id" />
+    <item name="inventory_filter_choices" type="id" />
+    <item name="screen_development" type="id" />
+    <item name="v5_development_image" type="id" />
+    <item name="screen_manual_review" type="id" />
+    <item name="manual_confirm" type="id" />
+    <item name="manual_review_error" type="id" />
+    <item name="manual_calendar" type="id" />
+    <item name="sage_action_title" type="id" />
+    <item name="sage_action_subtitle" type="id" />
+    <item name="inventory_success" type="id" />
+    <item name="inventory_success_dismiss" type="id" />
+    <item name="inventory_success_host" type="id" />
+    <item name="pantry_brand_logo" type="id" />
+    <item name="receipt_history" type="id" />
+    <item name="receipt_history_search" type="id" />
+    <item name="keep_receipt_original" type="id" />
 </resources>

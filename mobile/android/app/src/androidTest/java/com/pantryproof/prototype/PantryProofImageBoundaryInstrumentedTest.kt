@@ -1,6 +1,8 @@
 package com.pantryproof.prototype
 
 import android.app.Activity
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.app.Instrumentation.ActivityResult
 import android.content.Intent
 import android.graphics.Bitmap
@@ -22,6 +24,7 @@ import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.UiController
 import androidx.test.espresso.ViewAction
 import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.action.ViewActions.closeSoftKeyboard
 import androidx.test.espresso.action.ViewActions.replaceText
 import androidx.test.espresso.action.ViewActions.scrollTo
 import androidx.test.espresso.assertion.ViewAssertions.doesNotExist
@@ -35,6 +38,7 @@ import androidx.test.espresso.intent.matcher.IntentMatchers.hasFlag
 import androidx.test.espresso.intent.matcher.IntentMatchers.anyIntent
 import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.espresso.matcher.ViewMatchers.isCompletelyDisplayed
+import androidx.test.espresso.matcher.ViewMatchers.isEnabled
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom
 import androidx.test.espresso.matcher.ViewMatchers.isDescendantOfA
@@ -75,22 +79,24 @@ class PantryProofImageBoundaryInstrumentedTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test
-    fun pickerCancellationKeepsSourceScreenAndSyntheticState() = withIntents {
+    fun pickerCancellationReturnsToInventoryAndKeepsSyntheticState() = withIntents {
         intending(anyIntent()).respondWith(ActivityResult(Activity.RESULT_CANCELED, null))
 
         onView(withId(R.id.home_add_receipt)).perform(click())
         onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
 
         intended(hasAction(expectedPickerAction()))
-        onView(withId(R.id.screen_add_receipt)).check(matches(isDisplayed()))
+        onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
+        onView(withId(R.id.screen_add_receipt)).check(doesNotExist())
         onView(withId(R.id.screen_preview)).check(doesNotExist())
 
+        onView(withId(R.id.home_add_receipt)).perform(click())
         onView(withId(R.id.add_use_demo)).perform(scrollTo(), click())
         onView(withText(R.string.preview_synthetic_status)).check(matches(isDisplayed()))
     }
 
     @Test
-    fun cameraCancellationStaysOnAddReceiptAndCleansTemporaryOutput() = withIntents {
+    fun cameraCancellationReturnsToInventoryAndCleansTemporaryOutput() = withIntents {
         clearCameraFixtures()
         intending(hasAction(MediaStore.ACTION_IMAGE_CAPTURE)).respondWith(
             ActivityResult(Activity.RESULT_CANCELED, null),
@@ -105,7 +111,8 @@ class PantryProofImageBoundaryInstrumentedTest {
             hasFlag(Intent.FLAG_GRANT_READ_URI_PERMISSION),
             hasFlag(Intent.FLAG_GRANT_WRITE_URI_PERMISSION),
         ))
-        onView(withId(R.id.screen_add_receipt)).check(matches(isDisplayed()))
+        onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
+        onView(withId(R.id.screen_add_receipt)).check(doesNotExist())
         onView(withText(R.string.camera_capture_cancelled_title)).check(matches(isDisplayed()))
         onView(withId(R.id.screen_preview)).check(doesNotExist())
         assertTrue(cameraFixtures().isEmpty())
@@ -121,7 +128,8 @@ class PantryProofImageBoundaryInstrumentedTest {
         onView(withId(R.id.home_add_receipt)).perform(click())
         onView(withId(R.id.add_capture_image)).perform(scrollTo(), click())
 
-        onView(withId(R.id.screen_add_receipt)).check(matches(isDisplayed()))
+        onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
+        onView(withId(R.id.screen_add_receipt)).check(doesNotExist())
         onView(withText(R.string.camera_capture_invalid_title)).check(matches(isDisplayed()))
         onView(withId(R.id.screen_preview)).check(doesNotExist())
         onView(withText("Demo Grocery Store (Synthetic)")).check(doesNotExist())
@@ -156,9 +164,9 @@ class PantryProofImageBoundaryInstrumentedTest {
             onView(withText(R.string.preview_camera_status)).check(matches(isDisplayed()))
             onView(withId(R.id.preview_selected_image)).check(matches(isDisplayed()))
 
-            onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
+            onView(withId(R.id.preview_continue)).perform(sageScrollTo(), click())
             onView(withId(R.id.screen_manual)).check(matches(isDisplayed()))
-            onView(withText(R.string.manual_source_title)).check(matches(isDisplayed()))
+            onView(withText(R.string.v51_manual_source)).check(matches(isDisplayed()))
             onView(withText("Demo Grocery Store (Synthetic)")).check(doesNotExist())
 
             onView(withId(R.id.app_bar_back)).perform(click())
@@ -179,7 +187,6 @@ class PantryProofImageBoundaryInstrumentedTest {
         onView(withText(R.string.preview_camera_status)).check(matches(isDisplayed()))
         assertEquals(1, cameraFixtures().size)
 
-        onView(withId(R.id.app_bar_back)).perform(click())
         val unavailableUri = Uri.parse("content://com.pantryproof.prototype.test/revoked-image.png")
         intending(hasAction(expectedPickerAction())).respondWith(ActivityResult(
             Activity.RESULT_OK,
@@ -188,12 +195,12 @@ class PantryProofImageBoundaryInstrumentedTest {
                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
             ),
         ))
-        onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
+        onView(withId(R.id.preview_choose_another)).perform(sageScrollTo(), click())
 
         onView(withId(R.id.screen_preview)).check(matches(isDisplayed()))
         onView(withText(R.string.preview_image_unavailable_title)).check(matches(isDisplayed()))
-        onView(withText(R.string.preview_camera_status)).check(matches(isDisplayed()))
-        onView(withId(R.id.preview_selected_image)).check(matches(isDisplayed()))
+        onView(withText(R.string.preview_camera_status)).perform(sageScrollTo()).check(matches(isDisplayed()))
+        onView(withId(R.id.preview_selected_image)).perform(sageScrollTo()).check(matches(isDisplayed()))
         assertEquals(1, cameraFixtures().size)
         assertTrue(context.contentResolver.persistedUriPermissions.none {
             it.uri == unavailableUri
@@ -254,13 +261,13 @@ class PantryProofImageBoundaryInstrumentedTest {
             onView(withId(R.id.preview_selected_image)).check(matches(isDisplayed()))
 
             pickerUri.set(invalidUri)
-            onView(withId(R.id.preview_choose_another)).perform(scrollTo(), click())
+            onView(withId(R.id.preview_choose_another)).perform(sageScrollTo(), click())
             onView(withText(R.string.preview_image_unavailable_title)).check(matches(isDisplayed()))
             onView(withText(R.string.preview_local_status)).check(matches(isDisplayed()))
             onView(withId(R.id.preview_selected_image)).check(matches(isDisplayed()))
             assertTrue(context.contentResolver.persistedUriPermissions.none { it.uri == invalidUri })
 
-            onView(withText(R.string.preview_cancel)).perform(scrollTo(), click())
+            onView(withId(R.id.app_bar_back)).perform(click())
             onView(withId(R.id.home_add_receipt)).check(matches(isDisplayed()))
             onView(withId(R.id.home_add_receipt)).perform(click())
             onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
@@ -276,7 +283,7 @@ class PantryProofImageBoundaryInstrumentedTest {
     @Test
     fun galleryManualEntryValidatesRestoresAndConfirmsOnlyReviewedRows() = withIntents {
         fun enterGalleryField(id: Int, value: String) {
-            onView(withId(id)).perform(scrollTo(), replaceText(value))
+            onView(withId(id)).perform(sageScrollTo(), click(), replaceText(value), closeSoftKeyboard())
             onView(withId(id)).check(matches(withText(value)))
         }
 
@@ -299,10 +306,10 @@ class PantryProofImageBoundaryInstrumentedTest {
             onView(withId(R.id.screen_preview)).check(matches(isDisplayed()))
             onView(withText(R.string.preview_local_status)).check(matches(isDisplayed()))
 
-            onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
-            onView(withText(R.string.manual_source_title)).check(matches(isDisplayed()))
+            onView(withId(R.id.preview_continue)).perform(sageScrollTo(), click())
+            onView(withText(R.string.v51_manual_source)).check(matches(isDisplayed()))
             onView(withText("Demo Grocery Store (Synthetic)")).check(doesNotExist())
-            onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
+            onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
             onView(withId(R.id.review_error_summary)).check(doesNotExist())
             onView(allOf(
                 withText("Store name is required."),
@@ -312,16 +319,18 @@ class PantryProofImageBoundaryInstrumentedTest {
 
             enterGalleryField(R.id.review_store_name, "Fictional Kedai")
             onView(allOf(
-                withText("Use a valid date in YYYY-MM-DD format."),
+                withText(R.string.v51_date_incomplete),
                 isDescendantOfA(withId(R.id.screen_manual)),
             )).perform(scrollTo()).check(matches(isDisplayed()))
             chooseManualDate()
             enterGalleryField(R.id.review_item_0_description, "Synthetic oats")
             enterGalleryField(R.id.review_item_0_quantity, "2")
             enterGalleryField(R.id.review_item_0_line_total, "8.00")
-            onView(withId(R.id.manual_add_item)).perform(scrollTo(), click())
+            onView(withId(R.id.review_item_0_line_total)).perform(closeSoftKeyboard())
+            onView(withId(R.id.manual_add_item)).perform(sageScrollTo()).check(matches(isEnabled())).perform(click())
+            onView(withText("Items (2)")).check(matches(withText("Items (2)")))
             onView(withId(R.id.review_item_1_description))
-                .perform(scrollTo(), replaceText("Discarded row"))
+                .perform(sageScrollTo(), replaceText("Discarded row"))
             onView(withId(R.id.review_item_1_description))
                 .check(matches(withText("Discarded row")))
             activityRule.scenario.recreate()
@@ -330,36 +339,34 @@ class PantryProofImageBoundaryInstrumentedTest {
             onView(withText(R.string.manual_remove_confirm_action)).perform(click())
             enterGalleryField(R.id.review_receipt_total, "8.00")
             enterGalleryField(R.id.review_item_0_unit_price, "4.01")
-            onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
+            onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
             onView(withText(R.string.manual_review_title)).check(matches(isDisplayed()))
-            onView(withId(android.R.id.message)).check(matches(withText(
-                containsString(context.getString(R.string.manual_line_difference, 1)),
-            )))
-            onView(withText(R.string.review_keep_editing)).perform(click())
+            onView(withText(containsString("Calculated RM 8.02"))).perform(sageScrollTo()).check(matches(isDisplayed()))
+            onView(withId(R.id.app_bar_back)).perform(click())
             onView(withId(R.id.screen_manual)).check(matches(isDisplayed()))
             enterGalleryField(R.id.review_item_0_unit_price, "4.00")
-            onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
-            onView(withId(android.R.id.message)).check(matches(withText(not(
-                containsString(context.getString(R.string.manual_arithmetic_warning)),
-            ))))
-            // Exercise the defensive guard by changing the live draft behind the modal.
+            onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
+            onView(withText(R.string.manual_arithmetic_warning)).check(doesNotExist())
+            // Exercise the defensive guard by changing the live draft behind the review page.
             activityRule.scenario.onActivity { activity ->
-                activity.findViewById<EditText>(R.id.review_receipt_total).setText("8.01")
+                val field = MainActivity::class.java.getDeclaredField("manualDraft").apply { isAccessible = true }
+                (field.get(activity) as EditableReceipt).receiptTotal = "8.01"
             }
-            onView(withText(R.string.manual_confirm_action)).perform(click())
+            onView(withId(R.id.manual_confirm)).perform(click())
             onView(withText(R.string.manual_review_changed)).check(matches(isDisplayed()))
             onView(withId(R.id.screen_inventory)).check(doesNotExist())
+            onView(withId(R.id.manual_confirm)).check(matches(not(isEnabled())))
+            onView(withId(R.id.app_bar_back)).perform(click())
             onView(withId(R.id.review_receipt_total)).check(matches(withText("8.01")))
-            onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
-            onView(withId(android.R.id.message)).check(matches(withText(
-                containsString(context.getString(R.string.manual_total_difference)),
-            )))
-            onView(withText(R.string.manual_confirm_action)).perform(click())
+            onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
+            onView(withText(R.string.manual_total_difference)).perform(sageScrollTo()).check(matches(isDisplayed()))
+            onView(withId(R.id.manual_confirm)).perform(click())
             onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
-            onView(withText("Synthetic oats")).perform(scrollTo()).check(matches(isDisplayed()))
+            onView(withId(R.id.sage_expand_all)).perform(sageScrollTo(), click())
+            onView(withText("Synthetic oats")).perform(sageScrollTo()).check(matches(isDisplayed()))
             onView(withText("Discarded row")).check(doesNotExist())
             activityRule.scenario.recreate()
-            onView(withText("Synthetic oats")).perform(scrollTo()).check(matches(isDisplayed()))
+            onView(withText("Synthetic oats")).perform(sageScrollTo()).check(matches(isDisplayed()))
             assertTrue(imageFile.isFile)
             assertTrue(context.contentResolver.persistedUriPermissions.none {
                 it.uri == imageUri
@@ -376,7 +383,7 @@ class PantryProofImageBoundaryInstrumentedTest {
         onView(withId(R.id.home_add_receipt)).perform(click())
         onView(withId(R.id.add_capture_image)).perform(scrollTo(), click())
         assertEquals(1, cameraFixtures().size)
-        onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
+        onView(withId(R.id.preview_continue)).perform(sageScrollTo(), click())
         enterManualField(R.id.review_store_name, "Fictional Mart")
         chooseManualDate()
         enterManualField(R.id.review_item_0_description, "Synthetic tea")
@@ -384,12 +391,11 @@ class PantryProofImageBoundaryInstrumentedTest {
         enterManualField(R.id.review_item_0_unit_price, "4.00")
         enterManualField(R.id.review_item_0_line_total, "7.50")
         enterManualField(R.id.review_receipt_total, "7.50")
-        onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
-        onView(withId(android.R.id.message)).check(matches(withText(
-            containsString(context.getString(R.string.manual_arithmetic_warning)),
-        )))
-        onView(withText(R.string.manual_confirm_action)).perform(click())
-        onView(withText("Synthetic tea")).perform(scrollTo()).check(matches(isDisplayed()))
+        onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
+        onView(withText(R.string.manual_arithmetic_warning)).perform(sageScrollTo()).check(matches(isDisplayed()))
+        onView(withId(R.id.manual_confirm)).perform(click())
+        onView(withId(R.id.sage_expand_all)).perform(sageScrollTo(), click())
+        onView(withText("Synthetic tea")).perform(sageScrollTo()).check(matches(isDisplayed()))
         assertTrue(cameraFixtures().isEmpty())
     }
 
@@ -402,8 +408,8 @@ class PantryProofImageBoundaryInstrumentedTest {
             )
             onView(withId(R.id.home_add_receipt)).perform(click())
             onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
-            onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
-            onView(withId(R.id.manual_add_item)).perform(scrollTo(), click())
+            onView(withId(R.id.preview_continue)).perform(sageScrollTo(), click())
+            onView(withId(R.id.manual_add_item)).perform(closeSoftKeyboard(), sageScrollTo(), click())
             chooseManualDate()
 
             // Inject an impossible-by-normal-entry ID collision before review. Production still
@@ -412,7 +418,7 @@ class PantryProofImageBoundaryInstrumentedTest {
             val stateField = MainActivity::class.java.getDeclaredField("state").apply { isAccessible = true }
             val values = mapOf(
                 R.id.review_store_name to "Fictional Kedai",
-                R.id.review_purchase_date to "2026-11-10",
+                R.id.review_purchase_date to "10-11-2026",
                 R.id.review_item_0_description to "Synthetic oats",
                 R.id.review_item_0_quantity to "2",
                 R.id.review_item_0_unit_price to "4.00",
@@ -436,20 +442,21 @@ class PantryProofImageBoundaryInstrumentedTest {
                 inventoryBefore = (stateField.get(activity) as PantryUiState).inventory.toList()
             }
 
-            onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
+            onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
             onView(withText(R.string.manual_review_title)).check(matches(isDisplayed()))
             activityRule.scenario.onActivity { activity ->
                 assertEquals(reviewedDraft, draftField.get(activity))
             }
-            onView(withText(R.string.manual_confirm_action)).perform(click())
-            onView(withText(R.string.manual_confirmation_failed)).check(matches(isDisplayed()))
+            onView(withId(R.id.manual_confirm)).perform(click())
+            onView(withText(R.string.manual_confirmation_failed)).perform(sageScrollTo()).check(matches(isDisplayed()))
             onView(withText(R.string.manual_review_changed)).check(doesNotExist())
-            onView(withId(R.id.screen_manual)).check(matches(isDisplayed()))
+            onView(withId(R.id.screen_manual_review)).check(matches(isDisplayed()))
             onView(withId(R.id.screen_inventory)).check(doesNotExist())
             activityRule.scenario.onActivity { activity ->
                 assertEquals(reviewedDraft, draftField.get(activity))
                 assertEquals(inventoryBefore, (stateField.get(activity) as PantryUiState).inventory.toList())
             }
+            onView(withId(R.id.app_bar_back)).perform(click())
             values.forEach { (id, value) -> onView(withId(id)).check(matches(withText(value))) }
         } finally {
             image.delete()
@@ -457,7 +464,7 @@ class PantryProofImageBoundaryInstrumentedTest {
     }
 
     private fun chooseManualDate(date: LocalDate = LocalDate.of(2026, 11, 10)) {
-        onView(withId(R.id.review_purchase_date)).perform(scrollTo(), click())
+        onView(withId(R.id.manual_calendar)).perform(sageScrollTo(), click())
         onView(isAssignableFrom(DatePicker::class.java)).perform(object : ViewAction {
             override fun getConstraints(): Matcher<View> = isAssignableFrom(DatePicker::class.java)
             override fun getDescription() = "select a synthetic date using the native picker"
@@ -471,7 +478,7 @@ class PantryProofImageBoundaryInstrumentedTest {
             }
         })
         onView(withId(android.R.id.button1)).perform(click())
-        onView(withId(R.id.review_purchase_date)).check(matches(withText(date.toString())))
+        onView(withId(R.id.review_purchase_date)).check(matches(withText(com.pantryproof.prototype.ui.PurchaseDateInput.display(date))))
     }
 
     @Test
@@ -479,43 +486,29 @@ class PantryProofImageBoundaryInstrumentedTest {
         val image = createSyntheticImageFixture()
         try {
             openGalleryPreview(image)
-            onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
+            onView(withId(R.id.preview_continue)).perform(sageScrollTo(), click())
             enterManualField(R.id.review_store_name, "Fictional Kedai")
             chooseManualDate(LocalDate.of(1899, 12, 31))
-            chooseManualDate(LocalDate.of(2101, 1, 1))
+            chooseManualDate(LocalDate.now())
 
             val date = onView(withId(R.id.review_purchase_date))
-            val manualInput = onView(isAssignableFrom(EditText::class.java)).inRoot(isDialog())
-            date.perform(scrollTo(), click())
-            onView(withId(android.R.id.button3)).perform(click())
-            manualInput.perform(replaceText("2101-02-29"))
-            onView(withId(android.R.id.button1)).perform(click())
-            date.check(matches(withText("2101-02-29")))
-            onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
-            val dateError = onView(allOf(
-                withText("Use a valid date in YYYY-MM-DD format."),
-                isDescendantOfA(withId(R.id.screen_manual)),
-            ))
+            date.perform(sageScrollTo(), replaceText("29-02-2101"))
+            date.check(matches(withText("29-02-2101")))
+            onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
+            val dateError = onView(withText(R.string.v51_date_invalid))
             dateError.check(matches(isDisplayed()))
-            onView(withText(R.string.manual_confirm_action)).check(doesNotExist())
+            onView(withId(R.id.manual_confirm)).check(doesNotExist())
             chooseManualDate()
             dateError.check(doesNotExist())
-
-            date.perform(scrollTo(), click())
-            onView(withId(android.R.id.button3)).perform(click())
-            manualInput.perform(replaceText("0000-02-29"))
-            onView(withId(android.R.id.button1)).perform(click())
-            date.check(matches(withText("0000-02-29")))
-            date.perform(scrollTo(), click())
-            manualInput.check(matches(withText("0000-02-29")))
-            onView(withId(android.R.id.button2)).perform(click())
+            date.perform(sageScrollTo(), replaceText("29-02-0000"))
+            date.check(matches(withText("29-02-0000")))
             enterManualField(R.id.review_item_0_description, "Synthetic rice")
             enterManualField(R.id.review_item_0_quantity, "1")
             enterManualField(R.id.review_item_0_line_total, "6.00")
             enterManualField(R.id.review_receipt_total, "6.00")
-            onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
-            onView(withId(android.R.id.message)).check(matches(withText(containsString("0000-02-29"))))
-            onView(withText(R.string.manual_confirm_action)).check(matches(isDisplayed()))
+            onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
+            onView(withText("29-02-0000")).check(matches(isDisplayed()))
+            onView(withId(R.id.manual_confirm)).check(matches(isDisplayed()))
         } finally {
             image.delete()
         }
@@ -575,40 +568,88 @@ class PantryProofImageBoundaryInstrumentedTest {
 
     @Test
     fun cropApplyCancelResetAndRecreationKeepOriginalGalleryImage() = withIntents {
+        val compact = InstrumentationRegistry.getArguments().getString("v4Compact") == "true"
+        if (compact) activityRule.scenario.onActivity { enlargeSageTestText(it) }
         val image = createSyntheticImageFixture(twoTone = true)
         val original = image.readBytes()
         try {
             openGalleryPreview(image)
             assertPreviewColor(Color.GREEN)
+            onView(withId(R.id.home_add_receipt)).check(doesNotExist())
+            recordSageScreen(if (compact) "12-v5-image-preview-compact-200" else "12-v5-image-preview")
             onView(withId(R.id.preview_crop_receipt)).perform(scrollTo(), click())
             onView(withId(R.id.crop_editor_image)).check(matches(withContentDescription(R.string.crop_editor_description)))
+            onView(withId(R.id.home_add_receipt)).check(doesNotExist())
+            onView(withId(R.id.crop_edge_left)).check(matches(not(isDisplayed())))
+            recordSageScreen(if (compact) "13-v5-crop-collapsed-compact-200" else "13-v5-crop-collapsed")
+            onView(withId(R.id.crop_precise_toggle)).perform(click())
             moveCropLeftEdge(60)
-            onView(withText(android.R.string.cancel)).perform(scrollTo(), click())
+            assertCropBounds(0.6f, 0f, 1f, 1f)
+            onView(withId(R.id.crop_apply_action)).check(matches(isCompletelyDisplayed()))
+            if (compact) onView(withId(R.id.crop_precise_toggle)).check { view, missing ->
+                if (missing != null) throw missing
+                assertEquals(2f, view.resources.configuration.fontScale, .01f)
+                assertTrue(view.resources.configuration.screenWidthDp <= 320)
+            }
+            onView(withId(R.id.crop_move_left)).perform(sageScrollTo())
+            recordSageScreen(if (compact) "13b-v5-crop-expanded-compact-200" else "13b-v5-crop-expanded")
+            onView(withId(R.id.crop_precise_toggle)).perform(click())
+            assertCropBounds(0.6f, 0f, 1f, 1f)
+            activityRule.scenario.recreate()
+            assertCropBounds(0.6f, 0f, 1f, 1f)
+            onView(withId(R.id.crop_edge_left)).check(matches(not(isDisplayed())))
+            onView(withId(R.id.crop_close)).perform(click())
             onView(withId(R.id.preview_crop_status)).check(doesNotExist())
             assertPreviewColor(Color.GREEN)
 
-            onView(withId(R.id.preview_crop_receipt)).perform(scrollTo(), click())
+            openCropEditor()
             moveCropLeftEdge(60)
-            onView(withText(R.string.crop_apply)).perform(scrollTo(), click())
+            onView(withId(R.id.crop_apply_action)).perform(click())
             onView(withId(R.id.preview_crop_status)).check(matches(withText(R.string.crop_applied)))
             assertPreviewColor(Color.RED)
+            recordSageScreen(if (compact) "07-v4-preview-applied-compact-200" else "07-v4-preview-applied")
             activityRule.scenario.recreate()
             assertPreviewColor(Color.RED)
             checkZoomControls()
 
-            onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
-            onView(withText(R.string.manual_view_image)).perform(scrollTo(), click())
+            onView(withId(R.id.preview_continue)).perform(sageScrollTo(), click())
+            onView(withText(R.string.sage_local_receipt_image)).perform(scrollTo(), click())
             assertPreviewColor(Color.RED)
             checkZoomControls()
             onView(withText(android.R.string.ok)).perform(click())
             onView(withId(R.id.app_bar_back)).perform(click())
             onView(withText(R.string.review_discard_confirm)).perform(click())
             onView(withId(R.id.preview_crop_receipt)).perform(scrollTo(), click())
-            onView(withText(R.string.crop_reset)).perform(scrollTo(), click())
-            onView(withText(R.string.crop_apply)).perform(scrollTo(), click())
+            onView(withId(R.id.crop_reset_action)).perform(click())
+            onView(withId(R.id.crop_apply_action)).perform(click())
             onView(withId(R.id.preview_crop_status)).check(doesNotExist())
             assertPreviewColor(Color.GREEN)
             assertArrayEquals(original, image.readBytes())
+            if (compact) {
+                openCropEditor()
+                moveCropLeftEdge(60)
+                activityRule.scenario.onActivity {
+                    it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                }
+                val deadline = SystemClock.uptimeMillis() + 5_000
+                var landscape = false
+                while (!landscape && SystemClock.uptimeMillis() < deadline) {
+                    activityRule.scenario.onActivity {
+                        landscape = it.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+                    }
+                    if (!landscape) SystemClock.sleep(50)
+                }
+                assertTrue("The crop activity entered landscape", landscape)
+                InstrumentationRegistry.getInstrumentation().uiAutomation.waitForIdle(500, 5_000)
+                assertCropBounds(0.6f, 0f, 1f, 1f)
+                onView(withId(R.id.crop_apply_action)).check(matches(isCompletelyDisplayed()))
+                onView(withId(R.id.crop_edge_bottom)).perform(sageScrollTo())
+                    .check(matches(isCompletelyDisplayed()))
+                recordSageScreen("11-v4-crop-landscape")
+                androidx.test.espresso.Espresso.pressBack()
+                onView(withId(R.id.preview_crop_status)).check(doesNotExist())
+                assertArrayEquals(original, image.readBytes())
+            }
         } finally {
             image.delete()
         }
@@ -619,16 +660,16 @@ class PantryProofImageBoundaryInstrumentedTest {
         val image = createSyntheticImageFixture()
         try {
             openGalleryPreview(image)
-            onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
+            onView(withId(R.id.preview_continue)).perform(sageScrollTo(), click())
             val date = onView(withId(R.id.review_purchase_date))
-            date.perform(scrollTo(), click())
+            onView(withId(R.id.manual_calendar)).perform(sageScrollTo(), click())
             onView(withText(android.R.string.cancel)).perform(click())
             date.check(matches(withText("")))
             enterManualField(R.id.review_store_name, "Fictional Kedai")
-            onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
+            onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
             onView(withId(R.id.review_error_summary)).check(doesNotExist())
             val dateError = onView(allOf(
-                withText("Use a valid date in YYYY-MM-DD format."),
+                withText(R.string.v51_date_incomplete),
                 isDescendantOfA(withId(R.id.screen_manual)),
             ))
             dateError.check(matches(isDisplayed()))
@@ -636,16 +677,16 @@ class PantryProofImageBoundaryInstrumentedTest {
                 if (exception != null) throw exception
                 val input = view as EditText
                 val node = input.createAccessibilityNodeInfo()
-                assertEquals("android.widget.Button", node.className.toString())
-                assertTrue(!node.isEditable && input.keyListener == null && input.isFocused)
-                assertTrue(node.error.toString().contains("Use a valid date"))
+                assertEquals("android.widget.EditText", node.className.toString())
+                assertTrue(node.isEditable && input.keyListener != null && input.isFocused)
+                assertTrue(node.error.toString().contains("DD-MM-YYYY"))
             }
             chooseManualDate()
             dateError.check(doesNotExist())
-            date.perform(scrollTo(), click())
+            onView(withId(R.id.manual_calendar)).perform(sageScrollTo(), click())
             onView(withText(android.R.string.cancel)).perform(click())
             activityRule.scenario.recreate()
-            date.check(matches(withText("2026-11-10")))
+            date.check(matches(withText("10-11-2026")))
 
             val removeFirst = onView(withText(context.getString(R.string.manual_remove_item, 1)))
             removeFirst.perform(scrollTo(), click())
@@ -653,7 +694,7 @@ class PantryProofImageBoundaryInstrumentedTest {
             onView(withText(android.R.string.ok)).perform(click())
             onView(withId(R.id.review_item_0_description)).check(matches(withText("")))
             enterManualField(R.id.review_item_0_description, "Synthetic rice")
-            onView(withId(R.id.manual_add_item)).perform(scrollTo(), click())
+            onView(withId(R.id.manual_add_item)).perform(closeSoftKeyboard(), sageScrollTo(), click())
             enterManualField(R.id.review_item_1_description, "Synthetic tea")
             enterManualField(R.id.review_item_1_quantity, "2")
             enterManualField(R.id.review_item_1_line_total, "6.00")
@@ -669,12 +710,12 @@ class PantryProofImageBoundaryInstrumentedTest {
             onView(withId(R.id.review_item_0_description)).check(matches(withText("Synthetic tea")))
             onView(withId(R.id.review_item_0_quantity)).check(matches(withText("2")))
             onView(withId(R.id.review_item_0_unit_price)).check(matches(withText("")))
-            onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
-            onView(withId(android.R.id.message)).check(matches(withText(
-                containsString(context.getString(R.string.manual_unit_price_not_entered)),
-            )))
-            onView(withText(R.string.manual_confirm_action)).perform(click())
-            onView(withText("Synthetic tea")).perform(scrollTo()).check(matches(isDisplayed()))
+            onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
+            onView(withText(containsString(context.getString(R.string.v4_unit_price_optional))))
+                .perform(sageScrollTo()).check(matches(isDisplayed()))
+            onView(withId(R.id.manual_confirm)).perform(click())
+            onView(withId(R.id.sage_expand_all)).perform(sageScrollTo(), click())
+            onView(withText("Synthetic tea")).perform(sageScrollTo()).check(matches(isDisplayed()))
             onView(withText("Synthetic rice")).check(doesNotExist())
         } finally {
             image.delete()
@@ -685,7 +726,7 @@ class PantryProofImageBoundaryInstrumentedTest {
         intending(hasAction(expectedPickerAction())).respondWith(
             ActivityResult(Activity.RESULT_OK, Intent().setData(Uri.fromFile(image))),
         )
-        onView(withId(R.id.home_add_receipt)).perform(scrollTo(), click())
+        onView(withId(R.id.home_add_receipt)).perform(sageScrollTo(), click())
         onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
         onView(withId(R.id.preview_selected_image)).perform(scrollTo()).check(matches(isDisplayed()))
     }
@@ -721,7 +762,7 @@ class PantryProofImageBoundaryInstrumentedTest {
                 assertCropBounds(0.92f, 0.92f, 1f, 1f)
             }
             assertCropSliderPositions(92, 92, 100, 100)
-            onView(withText(R.string.crop_apply)).perform(scrollTo(), click())
+            onView(withId(R.id.crop_apply_action)).perform(click())
             assertPreviewColor(Color.RED)
             activityRule.scenario.recreate()
             openCropEditor()
@@ -729,13 +770,13 @@ class PantryProofImageBoundaryInstrumentedTest {
 
             clickCropMove(R.id.crop_move_left)
             assertCropBounds(0.87f, 0.92f, 0.95f, 1f)
-            onView(withText(android.R.string.cancel)).perform(scrollTo(), click())
+            androidx.test.espresso.Espresso.pressBack()
             openCropEditor()
             assertCropBounds(0.92f, 0.92f, 1f, 1f)
-            onView(withText(R.string.crop_reset)).perform(scrollTo(), click())
+            onView(withId(R.id.crop_reset_action)).perform(click())
             assertCropBounds(0f, 0f, 1f, 1f)
             assertCropSliderPositions(0, 0, 100, 100)
-            onView(withText(R.string.crop_apply)).perform(scrollTo(), click())
+            onView(withId(R.id.crop_apply_action)).perform(click())
             onView(withId(R.id.preview_crop_status)).check(doesNotExist())
             assertPreviewColor(Color.GREEN)
             assertArrayEquals(original, image.readBytes())
@@ -758,7 +799,7 @@ class PantryProofImageBoundaryInstrumentedTest {
             for (image in listOf(tall, wide)) {
                 if (image == wide) {
                     selected.set(Uri.fromFile(wide))
-                    onView(withId(R.id.preview_choose_another)).perform(scrollTo(), click())
+                    onView(withId(R.id.preview_choose_another)).perform(sageScrollTo(), click())
                 }
                 val original = image.readBytes()
                 openCropEditor()
@@ -771,7 +812,7 @@ class PantryProofImageBoundaryInstrumentedTest {
                 assertCropBounds(0.46f, 0.51f, 0.54f, 0.59f)
                 clickCropMove(R.id.crop_move_up)
                 assertCropBounds(0.46f, 0.46f, 0.54f, 0.54f)
-                onView(withText(android.R.string.cancel)).perform(scrollTo(), click())
+                onView(withId(R.id.crop_close)).perform(click())
                 assertArrayEquals(original, image.readBytes())
             }
         } finally {
@@ -781,7 +822,8 @@ class PantryProofImageBoundaryInstrumentedTest {
     }
 
     private fun openCropEditor() {
-        onView(withId(R.id.preview_crop_receipt)).perform(scrollTo(), click())
+        onView(withId(R.id.preview_crop_receipt)).perform(sageScrollTo(), click())
+        onView(withId(R.id.crop_precise_toggle)).perform(click())
     }
 
     private fun assertCropMovementControlsReachable() {
@@ -792,7 +834,7 @@ class PantryProofImageBoundaryInstrumentedTest {
             R.id.crop_move_down to R.string.crop_move_down,
         )) {
             val button = onView(withId(buttonId))
-            button.perform(scrollTo()).check(matches(allOf(isCompletelyDisplayed(), withContentDescription(label))))
+            button.perform(sageScrollTo()).check(matches(allOf(isCompletelyDisplayed(), withContentDescription(label))))
             button.check { view, exception ->
                 if (exception != null) throw exception
                 val minimum = (48 * view.resources.displayMetrics.density).roundToInt()
@@ -803,7 +845,7 @@ class PantryProofImageBoundaryInstrumentedTest {
     }
 
     private fun clickCropMove(id: Int) {
-        onView(withId(id)).perform(scrollTo(), click())
+        onView(withId(id)).perform(sageScrollTo(), click())
     }
 
     private fun assertCropBounds(left: Float, top: Float, right: Float, bottom: Float) {
@@ -840,7 +882,7 @@ class PantryProofImageBoundaryInstrumentedTest {
     private fun moveCropLeftEdge(progress: Int) = setCropEdge(R.id.crop_edge_left, progress)
 
     private fun setCropEdge(id: Int, progress: Int) {
-        onView(withId(id)).perform(scrollTo(), object : ViewAction {
+        onView(withId(id)).perform(sageScrollTo(), object : ViewAction {
             override fun getConstraints(): Matcher<View> = isAssignableFrom(SeekBar::class.java)
             override fun getDescription() = "adjust the crop with its accessible edge slider"
             override fun perform(controller: UiController, view: View) {

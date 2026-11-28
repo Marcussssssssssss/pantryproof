@@ -22,6 +22,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertNull
 import org.junit.Rule
+import org.hamcrest.Matchers.containsString
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -38,14 +39,14 @@ class PantryProofWorkflowInstrumentedTest {
         onView(withText(R.string.preview_synthetic_status)).check(matches(isDisplayed()))
         onView(withText("Process receipt")).check(doesNotExist())
 
-        onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
+        onView(withId(R.id.preview_continue)).perform(sageScrollTo(), click())
         onView(withId(R.id.screen_details)).check(matches(isDisplayed()))
-        onView(withId(R.id.details_review)).perform(scrollTo(), click())
+        onView(withId(R.id.details_review)).perform(sageScrollTo(), click())
         onView(withId(R.id.screen_review)).check(matches(isDisplayed()))
 
-        onView(withId(R.id.review_confirm)).perform(scrollTo(), click())
+        onView(withId(R.id.review_confirm)).perform(sageScrollTo(), click())
         onView(withId(R.id.review_success)).check(matches(isDisplayed()))
-        onView(withId(R.id.review_view_inventory)).perform(scrollTo(), click())
+        onView(withId(R.id.review_view_inventory)).perform(sageScrollTo(), click())
         onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
 
         pressBack()
@@ -59,25 +60,25 @@ class PantryProofWorkflowInstrumentedTest {
 
         listOf(
             "Demo Grocery Store (Synthetic)",
-            "31 October 2026",
+            "31-10-2026",
             "RM 23.00",
         ).forEach { expected ->
             onView(withText(expected)).check(matches(isDisplayed()))
         }
         onView(withId(R.id.details_item_0)).check(matches(
             hasDescendant(withText("UHT Milk 1L")),
-        )).check(matches(hasDescendant(withText("2"))))
-            .check(matches(hasDescendant(withText("RM 6.50"))))
+        )).check(matches(hasDescendant(withText(containsString("Qty: 2")))))
+            .check(matches(hasDescendant(withText(containsString("RM 6.50 each")))))
             .check(matches(hasDescendant(withText("RM 13.00"))))
         onView(withId(R.id.details_item_1)).check(matches(
             hasDescendant(withText("Wholemeal Bread")),
-        )).check(matches(hasDescendant(withText("1"))))
+        )).check(matches(hasDescendant(withText(containsString("Qty: 1")))))
             .check(matches(hasDescendant(withText("RM 4.20"))))
         onView(withId(R.id.details_item_2)).check(matches(
             hasDescendant(withText("Bananas (bunch)")),
-        )).check(matches(hasDescendant(withText("1"))))
+        )).check(matches(hasDescendant(withText(containsString("Qty: 1")))))
             .check(matches(hasDescendant(withText("RM 5.80"))))
-            .check(matches(hasDescendant(withText(R.string.details_unit_price_missing))))
+            .check(matches(hasDescendant(withText(containsString(context.getString(R.string.v4_unit_price_optional))))))
     }
 
     @Test
@@ -95,7 +96,7 @@ class PantryProofWorkflowInstrumentedTest {
             replaceText("1.234"),
             closeSoftKeyboard(),
         )
-        onView(withId(R.id.review_confirm)).perform(scrollTo(), click())
+        onView(withId(R.id.review_confirm)).perform(sageScrollTo(), click())
 
         onView(withId(R.id.review_error_summary)).check(
             matches(withEffectiveVisibility(Visibility.VISIBLE)),
@@ -152,18 +153,100 @@ class PantryProofWorkflowInstrumentedTest {
 
     @Test
     fun repeatedConfirmationDoesNotDuplicateInventoryRows() {
-        onView(withId(R.id.home_inventory)).perform(scrollTo(), click())
+        onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
+        openSageInventoryDetails("stock-rice")
         onView(withId(R.id.inventory_stock_rice_decrease)).perform(scrollTo(), click())
         pressBack()
+        pressBack()
         openManualReview()
-        onView(withId(R.id.review_confirm)).perform(scrollTo(), click())
+        onView(withId(R.id.review_confirm)).perform(sageScrollTo(), click())
         onView(withId(R.id.review_success)).check(matches(isDisplayed()))
-        onView(withId(R.id.review_confirm)).perform(scrollTo(), click())
-        onView(withId(R.id.review_view_inventory)).perform(scrollTo(), click())
+        pressBack()
+        onView(withId(R.id.review_confirm)).perform(sageScrollTo(), click())
+        onView(withId(R.id.review_view_inventory)).perform(sageScrollTo(), click())
 
         onView(withId(R.id.inventory_summary)).check(
             matches(withText(context.resources.getQuantityString(R.plurals.inventory_summary, 6, 6))),
         )
+        openSageInventoryDetails("stock-rice")
         onView(withId(R.id.inventory_stock_rice_value)).check(matches(withText("0")))
     }
+    @Test
+    fun reviewRejects100AndOverflowWithoutAdmittingInventory() {
+        lateinit var originalInventory: List<com.pantryproof.prototype.data.InventoryItem>
+        lateinit var originalReceipt: com.pantryproof.prototype.data.Receipt
+        activityRule.scenario.onActivity { activity ->
+            val state = quantityState(activity)
+            originalInventory = state.inventory.toList()
+            originalReceipt = requireNotNull(state.receipt)
+        }
+        openManualReview()
+        for (raw in listOf("100", "2147483648")) {
+            onView(withId(R.id.review_item_0_quantity)).perform(scrollTo(), replaceText(raw), closeSoftKeyboard())
+            onView(withId(R.id.review_confirm)).perform(sageScrollTo(), click())
+            onView(withId(R.id.review_success)).check(doesNotExist())
+            onView(withId(R.id.review_item_0_quantity)).check(matches(withText(raw)))
+                .check(matches(hasErrorText(if (raw == "100") "Quantity must be 99 or less." else
+                    "Quantity must be a whole number above zero.")))
+            activityRule.scenario.onActivity { activity ->
+                val state = quantityState(activity)
+                org.junit.Assert.assertEquals(originalInventory, state.inventory)
+                org.junit.Assert.assertEquals(originalReceipt, state.receipt)
+                org.junit.Assert.assertFalse(state.demoConfirmed)
+            }
+        }
+    }
+
+    @Test
+    fun reviewed98IsAdmittedExactlyAndIncrementStopsAt99() = verifyReviewedQuantityBoundary(98)
+
+    @Test
+    fun reviewed99IsAdmittedExactlyAndDecrementKeepsTheSameRow() = verifyReviewedQuantityBoundary(99)
+
+    private fun verifyReviewedQuantityBoundary(quantity: Int) {
+        lateinit var rowId: String
+        lateinit var baseline: List<com.pantryproof.prototype.data.InventoryItem>
+        activityRule.scenario.onActivity { activity ->
+            val state = quantityState(activity)
+            rowId = "receipt-${requireNotNull(state.receipt).items[0].id}"
+            baseline = state.inventory.toList()
+        }
+        openManualReview()
+        onView(withId(R.id.review_item_0_quantity)).perform(scrollTo(), replaceText(quantity.toString()), closeSoftKeyboard())
+        onView(withId(R.id.review_confirm)).perform(sageScrollTo(), click())
+        onView(withId(R.id.review_success)).check(matches(isDisplayed()))
+        onView(withId(R.id.review_view_inventory)).perform(sageScrollTo(), click())
+        val increase = androidx.test.espresso.matcher.ViewMatchers.withTagValue(org.hamcrest.CoreMatchers.equalTo("inventory-increase:$rowId"))
+        val decrease = androidx.test.espresso.matcher.ViewMatchers.withTagValue(org.hamcrest.CoreMatchers.equalTo("inventory-decrease:$rowId"))
+        fun assertQuantity(expected: Int) {
+            activityRule.scenario.onActivity { activity ->
+                val state = quantityState(activity)
+                org.junit.Assert.assertEquals(expected.toBigDecimal(), state.inventory.single { it.id == rowId }.quantity)
+                org.junit.Assert.assertEquals(baseline, state.inventory.filterNot { it.id.startsWith("receipt-") })
+                val results = activity.findViewById<android.view.ViewGroup>(R.id.inventory_browse_results)
+                val row = requireNotNull(results.findViewWithTag<android.view.View>(rowId))
+                fun hasQuantity(view: android.view.View): Boolean = when (view) {
+                    is android.widget.TextView -> view.text.toString() == expected.toString()
+                    is android.view.ViewGroup -> (0 until view.childCount).any { hasQuantity(view.getChildAt(it)) }
+                    else -> false
+                }
+                org.junit.Assert.assertTrue("The exact row must display $expected", hasQuantity(row))
+            }
+        }
+        assertQuantity(quantity)
+        openSageInventoryDetails(rowId)
+        if (quantity == 98) {
+            onView(increase).perform(scrollTo(), click())
+            assertQuantity(99)
+        }
+        onView(increase).check(matches(org.hamcrest.CoreMatchers.not(androidx.test.espresso.matcher.ViewMatchers.isEnabled())))
+        onView(decrease).perform(scrollTo(), click())
+        assertQuantity(98)
+        onView(increase).check(matches(androidx.test.espresso.matcher.ViewMatchers.isEnabled()))
+    }
+
+    private fun quantityState(activity: MainActivity): com.pantryproof.prototype.ui.PantryUiState =
+        MainActivity::class.java.getDeclaredField("state").apply { isAccessible = true }
+            .get(activity) as com.pantryproof.prototype.ui.PantryUiState
+
 }

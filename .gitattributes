@@ -1,2 +1,5 @@
 /tests/fixtures/receipt_presentation_v1/v1/manifest.json text eol=lf
 /tests/fixtures/receipt_presentation_v1/v1/fixtures/*.json text eol=lf
+/tests/fixtures/receipt_presentation_v1/review_v1/** -text
+/docs/review_contract.md -text
+/docs/prototype_runtime.md -text

@@ -12,6 +12,8 @@ import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 
 object ReceiptPresentationV1Decoder {
+    const val MAX_BYTES = 1_048_576
+
     private val jsonFactory: JsonFactory =
         JsonFactory.builder()
             .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
@@ -19,6 +21,9 @@ object ReceiptPresentationV1Decoder {
 
     fun decode(rawJson: ByteArray): ReceiptPresentationResult<ReceiptPresentationV1> =
         try {
+            if (rawJson.size > MAX_BYTES) {
+                rejectPresentation(ReceiptPresentationIssueCodes.RESPONSE_TOO_LARGE, "$", "presentation exceeds byte limit")
+            }
             val text = decodeUtf8(rawJson)
             jsonFactory.createParser(text).use { parser ->
                 val firstToken = parser.nextToken()
@@ -57,6 +62,32 @@ object ReceiptPresentationV1Decoder {
                 ),
             )
         }
+
+    /** Strictly inspect the entire original document before interpreting a version or object span. */
+    internal fun strictObject(raw: ByteArray): ReceiptPresentationResult<JsonObject> = try {
+        decodeUtf8(raw)
+        if (raw.any { it == 0.toByte() }) {
+            rejectPresentation(ReceiptPresentationIssueCodes.INVALID_JSON, "$", "unescaped null byte")
+        }
+        jsonFactory.createParser(raw).use { parser ->
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                rejectPresentation(ReceiptPresentationIssueCodes.INVALID_JSON, "$", "expected a JSON object")
+            }
+            val root = readObject(parser, "$")
+            if (parser.nextToken() != null) {
+                rejectPresentation(ReceiptPresentationIssueCodes.INVALID_JSON, "$", "trailing JSON content")
+            }
+            ReceiptPresentationResult.Accepted(root)
+        }
+    } catch (violation: ReceiptPresentationViolation) {
+        ReceiptPresentationResult.Rejected(violation.issue)
+    } catch (error: JsonParseException) {
+        ReceiptPresentationResult.Rejected(parserIssue(error))
+    } catch (_: IOException) {
+        ReceiptPresentationResult.Rejected(ReceiptPresentationIssue(
+            ReceiptPresentationIssueCodes.INVALID_JSON, "$", "JSON parser failure",
+        ))
+    }
 
     /**
      * Decodes one envelope object from a parser currently positioned at its
@@ -136,7 +167,7 @@ object ReceiptPresentationV1Decoder {
                         "invalid JSON number",
                     )
                 }
-                JsonNumber(decimal)
+                JsonNumber(decimal, parser.currentToken == JsonToken.VALUE_NUMBER_INT)
             }
             JsonToken.VALUE_TRUE -> JsonBoolean(true)
             JsonToken.VALUE_FALSE -> JsonBoolean(false)
@@ -149,6 +180,7 @@ object ReceiptPresentationV1Decoder {
         }
 
     private fun readObject(parser: JsonParser, path: String): JsonObject {
+        val start = parser.currentTokenLocation().byteOffset.toInt()
         val members = linkedMapOf<String, JsonValue>()
         while (true) {
             val token = parser.nextToken()
@@ -158,7 +190,7 @@ object ReceiptPresentationV1Decoder {
                     "unterminated JSON object",
                 )
             if (token == JsonToken.END_OBJECT) {
-                return JsonObject(members)
+                return JsonObject(members, start, parser.currentLocation().byteOffset.toInt())
             }
             if (token != JsonToken.FIELD_NAME) {
                 rejectPresentation(
@@ -446,9 +478,13 @@ object ReceiptPresentationV1Decoder {
 
     private fun path(parent: String, member: String): String = "$parent.$member"
 
-    private sealed interface JsonValue
+    internal sealed interface JsonValue
 
-    private data class JsonObject(val members: Map<String, JsonValue>) : JsonValue {
+    internal data class JsonObject(
+        val members: Map<String, JsonValue>,
+        val byteStart: Int,
+        val byteEnd: Int,
+    ) : JsonValue {
         fun required(name: String): JsonValue =
             members[name]
                 ?: rejectPresentation(
@@ -483,15 +519,15 @@ object ReceiptPresentationV1Decoder {
         }
     }
 
-    private data class JsonArray(val values: List<JsonValue>) : JsonValue
+    internal data class JsonArray(val values: List<JsonValue>) : JsonValue
 
-    private data class JsonString(val value: String) : JsonValue
+    internal data class JsonString(val value: String) : JsonValue
 
-    private data class JsonNumber(val value: BigDecimal) : JsonValue
+    internal data class JsonNumber(val value: BigDecimal, val integerToken: Boolean) : JsonValue
 
-    private data class JsonBoolean(val value: Boolean) : JsonValue
+    internal data class JsonBoolean(val value: Boolean) : JsonValue
 
-    private data object JsonNull : JsonValue
+    internal data object JsonNull : JsonValue
 
     private fun JsonValue.asObject(path: String): JsonObject =
         this as? JsonObject

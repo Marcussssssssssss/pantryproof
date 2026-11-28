@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/pantry_surface_bright" />
+    <stroke android:width="1dp" android:color="@color/pantry_outline_variant" />
+    <corners android:radius="@dimen/pantry_radius_control" />
+    <padding
+        android:bottom="@dimen/pantry_space_1"
+        android:left="@dimen/pantry_space_1"
+        android:right="@dimen/pantry_space_1"
+        android:top="@dimen/pantry_space_1" />
+</shape>

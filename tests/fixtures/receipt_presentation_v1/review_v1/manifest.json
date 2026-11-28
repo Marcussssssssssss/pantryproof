@@ -1,0 +1,186 @@
+{
+  "acceptCount": 10,
+  "byteLimitCases": [
+    {
+      "baseFixture": "fixtures/13-exact-weighted-quantity.json",
+      "bodyByteLength": 1059188,
+      "bodySha256": "253ee00e9ec318a3707a72efcbcbecbd6467cac28568f7b4b2f90d53e7ce83e1",
+      "expectedPath": null,
+      "expectedResult": "ACCEPT",
+      "id": "embedded-at-limit",
+      "location": "insidePresentation",
+      "presentationByteLength": 1048576,
+      "spaceCount": 1046264
+    },
+    {
+      "baseFixture": "fixtures/13-exact-weighted-quantity.json",
+      "bodyByteLength": 1059189,
+      "bodySha256": "4ec92b7ce02c69b4bf28a861b70dbc998ae3ea601eae82f365445b1bb5988aa2",
+      "expectedPath": "$.presentation",
+      "expectedResult": "REJECT_RESPONSE_TOO_LARGE",
+      "id": "embedded-one-over",
+      "location": "insidePresentation",
+      "presentationByteLength": 1048577,
+      "spaceCount": 1046265
+    },
+    {
+      "baseFixture": "fixtures/13-exact-weighted-quantity.json",
+      "bodyByteLength": 1059189,
+      "bodySha256": "04fef8c64cfce4de594ac011f86856782512e86ecabce8e89ab44a4df6d1ad24",
+      "expectedPath": null,
+      "expectedResult": "ACCEPT",
+      "id": "embedded-external-padding",
+      "location": "beforePresentation",
+      "presentationByteLength": 2312,
+      "spaceCount": 1046265
+    },
+    {
+      "baseFixture": "fixtures/13-exact-weighted-quantity.json",
+      "bodyByteLength": 2097152,
+      "bodySha256": "79e7f8651dc57d8b190a0164841290818b332df7e2e4afba138a6042b34ff6fb",
+      "expectedPath": null,
+      "expectedResult": "ACCEPT",
+      "id": "wrapper-at-limit",
+      "location": "insideWrapper",
+      "presentationByteLength": 2312,
+      "spaceCount": 2084228
+    },
+    {
+      "baseFixture": "fixtures/13-exact-weighted-quantity.json",
+      "bodyByteLength": 2097153,
+      "bodySha256": "66715a8444a50a85140a0a3520515b0659744e2fd2331187f746b793030199b0",
+      "expectedPath": "$",
+      "expectedResult": "REJECT_RESPONSE_TOO_LARGE",
+      "id": "wrapper-one-over",
+      "location": "insideWrapper",
+      "presentationByteLength": 2312,
+      "spaceCount": 2084229
+    }
+  ],
+  "fixtureCount": 17,
+  "fixtureStatus": "PROPOSED_NOT_YET_APPROVED — SYNTHETIC_ONLY",
+  "fixtures": [
+    {
+      "byteLength": 14344,
+      "expectedPath": null,
+      "expectedResult": "ACCEPT",
+      "path": "fixtures/01-policy-verified-correction.json",
+      "sha256": "b4721cf84b97f28a50d9aa46259ce3e979729f72433fb358892567690ea7e9b4"
+    },
+    {
+      "byteLength": 12549,
+      "expectedPath": null,
+      "expectedResult": "ACCEPT",
+      "path": "fixtures/02-retained-original-and-missing-price.json",
+      "sha256": "95579a9f08f526c130f74558f619cfc8d386a246d5c6471b30c601e17f3501f1"
+    },
+    {
+      "byteLength": 15483,
+      "expectedPath": null,
+      "expectedResult": "ACCEPT",
+      "path": "fixtures/03-review-required-with-alternatives.json",
+      "sha256": "43f3c2d4f90e6964d6155bb34790e93872b7462ea0f2013a655c1623a47a6307"
+    },
+    {
+      "byteLength": 13978,
+      "expectedPath": null,
+      "expectedResult": "ACCEPT",
+      "path": "fixtures/04-unverified-development-draft.json",
+      "sha256": "9b31b1300640a07b9740e4e6d403eb4f398c77a970314576207ddff4977f89dc"
+    },
+    {
+      "byteLength": 13622,
+      "expectedPath": null,
+      "expectedResult": "ACCEPT",
+      "path": "fixtures/05-conflicting-and-inconclusive-price.json",
+      "sha256": "71ae9b3b207383a34bb1e8af057209e13f50178ebaa5ef1e721be83bd041bbe8"
+    },
+    {
+      "byteLength": 12510,
+      "expectedPath": null,
+      "expectedResult": "ACCEPT",
+      "path": "fixtures/06-unavailable-calibrated-probability.json",
+      "sha256": "6ef4cc38d486fcedc0bd04e12844b941bd4f7679fb440eca2ab9edcde4da1bff"
+    },
+    {
+      "byteLength": 1603,
+      "expectedPath": null,
+      "expectedResult": "ACCEPT",
+      "path": "fixtures/07-source-evidence-fallback.json",
+      "sha256": "7e35b9e6fd24e82d06067558a77f9b01ef24af8fc01ce1822a78f8464dac31da"
+    },
+    {
+      "byteLength": 1693,
+      "expectedPath": null,
+      "expectedResult": "ACCEPT",
+      "path": "fixtures/08-technical-failure.json",
+      "sha256": "3ddf05a756cf2b43331fc12239a3e7fecc6174291981b67376e4c1e1f799cb79"
+    },
+    {
+      "byteLength": 13737,
+      "expectedPath": "$.review.fields[3].selectedPreReview.candidateId",
+      "expectedResult": "REJECT_INVALID_REVIEW_REFERENCE",
+      "path": "fixtures/09-invalid-candidate-reference.json",
+      "sha256": "76bc77268d2b6a3e2655425169ca8289e0aa6aa15077886340aea1c248931a56"
+    },
+    {
+      "byteLength": 12454,
+      "expectedPath": "$.review.fields[0].fieldId",
+      "expectedResult": "REJECT_INVALID_REVIEW_REFERENCE",
+      "path": "fixtures/10-invalid-field-reference.json",
+      "sha256": "4415c54b08388e823211155d4a4ddbe056d7713dc3e2b6bbfc3b709a5e6f6008"
+    },
+    {
+      "byteLength": 12528,
+      "expectedPath": "$.schemaVersion",
+      "expectedResult": "REJECT_UNSUPPORTED_SCHEMA_VERSION",
+      "path": "fixtures/11-unsupported-schema-version.json",
+      "sha256": "59140f9cde84dc325cd3cf2d4371305739e220af51ec21ccb816a25e681ced33"
+    },
+    {
+      "byteLength": 12515,
+      "expectedPath": "$.review.fields[0].probabilityAvailable",
+      "expectedResult": "REJECT_REVIEW_STATE",
+      "path": "fixtures/12-invalid-probability-state.json",
+      "sha256": "f15c056d9fda9e164c860bebc1060613bbddf4258a8db3e84147cd8261b63e90"
+    },
+    {
+      "byteLength": 13278,
+      "expectedPath": null,
+      "expectedResult": "ACCEPT",
+      "path": "fixtures/13-exact-weighted-quantity.json",
+      "sha256": "7131deadcf6f3e01a2ced80017dd20e5bf02db309a3ea49271723c38bf86d5af"
+    },
+    {
+      "byteLength": 13289,
+      "expectedPath": null,
+      "expectedResult": "ACCEPT",
+      "path": "fixtures/14-quantity-unit-unavailable.json",
+      "sha256": "b16fdd27b1346959acbdf66e6c09afe0ed647277ee5c975c135e3b88a888000a"
+    },
+    {
+      "byteLength": 14377,
+      "expectedPath": "$.presentation.requestId",
+      "expectedResult": "REJECT_REQUEST_ID_MISMATCH",
+      "path": "fixtures/15-request-id-mismatch.json",
+      "sha256": "ec288d464a5d4fda4f1b3e2abe2f57f59d94b7196a5bb52edacfc10790d07737"
+    },
+    {
+      "byteLength": 14363,
+      "expectedPath": "$.presentation.imageId",
+      "expectedResult": "REJECT_IMAGE_ID_MISMATCH",
+      "path": "fixtures/16-image-id-mismatch.json",
+      "sha256": "2d608993a76e1ac0ef6915c93d29b292dc028936e3ee493fbc2cd17405eddde7"
+    },
+    {
+      "byteLength": 13358,
+      "expectedPath": "$.review.ocrEvidence.coordinateFrame.imageWidth",
+      "expectedResult": "REJECT_INVALID_REVIEW_REFERENCE",
+      "path": "fixtures/17-coordinate-frame-mismatch.json",
+      "sha256": "dde21934e5f6fb072dc4253f0387e75681dfaf786309572d189f7164df4d7470"
+    }
+  ],
+  "rejectCount": 7,
+  "schemaName": "receipt-review-v1-conformance-fixtures",
+  "schemaVersion": "1"
+}

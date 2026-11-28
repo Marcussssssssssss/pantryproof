@@ -1,5 +1,7 @@
 package com.pantryproof.prototype.data
 
+import com.pantryproof.prototype.contract.v1.AutomaticExtractionStatus
+import com.pantryproof.prototype.contract.v1.ReceiptPresentationV1
 import com.pantryproof.prototype.contract.v1.PresentationFailureStage
 import com.pantryproof.prototype.contract.v1.ReceiptPresentationIssue
 import java.math.BigDecimal
@@ -34,6 +36,7 @@ data class PresentedReceipt(
     val purchaseDate: PresentedField,
     val receiptTotal: PresentedField,
     val items: List<PresentedReceiptItem>,
+    val automaticExtractionStatus: AutomaticExtractionStatus? = null,
 ) {
     /**
      * Converts only values that the legacy session inventory can represent
@@ -64,10 +67,18 @@ data class PresentedReceipt(
         value?.takeIf { status == PresentedFieldStatus.EXTRACTED }
 }
 
+class LiveReceiptEvidence internal constructor(
+    val envelope: ReceiptPresentationV1,
+    internal val wrapper: com.pantryproof.prototype.contract.review.ReceiptReviewV1? = null,
+)
+
 sealed interface ReceiptPresentationUiResult {
     val canReview: Boolean get() = this is Available
 
-    data class Available(val receipt: PresentedReceipt) : ReceiptPresentationUiResult
+    data class Available(
+        val receipt: PresentedReceipt,
+        val liveEvidence: LiveReceiptEvidence? = null,
+    ) : ReceiptPresentationUiResult
 
     data class ProcessingUnavailable(
         val failureCode: String,
