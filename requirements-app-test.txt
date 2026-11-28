@@ -1,0 +1,6 @@
+# Synthetic test dependencies.
+-r requirements-app.txt
+iniconfig==2.1.0
+pluggy==1.6.0
+pygments==2.20.0
+pytest==9.0.3

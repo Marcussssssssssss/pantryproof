@@ -1,8 +1,7 @@
 """Synthetic-only materialization of ranked candidates into shared records.
 
-This component is a deterministic projection of a validated candidate-limiting
-result.  It does not rerun candidate production, ranking, or limiting, and it
-does not create candidate evidence or make correction decisions.
+This component projects and revalidates a completed candidate-limiting result.
+It does not run candidate production or make correction decisions.
 """
 
 from __future__ import annotations
@@ -10,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from . import finalization_replay_meter_v1 as fn
 from .candidate_deduplication import EquivalentToC0AuditV0
 from .candidate_limiting import (
     TOTAL_CANDIDATE_LIMIT_EXCEEDED,
@@ -26,6 +26,7 @@ from .candidate_provenance import (
 )
 from .candidate_ranking import (
     CandidateRankingBlockV0,
+    PreliminaryCandidateRankingResultV0,
     ProvenanceMaterializationStatusV0,
 )
 from .contracts import (
@@ -62,11 +63,12 @@ class CandidateFinalizationCoverageStatusV0(str, Enum):
 
 
 def _require_id_tuple(values: tuple[str, ...], name: str) -> None:
+    fn.reserve_id_checks(values)
     if not isinstance(values, tuple):
         raise TypeError(f"{name} must be a tuple.")
     if any(not isinstance(value, str) or not value.strip() for value in values):
         raise ValueError(f"{name} must contain non-empty strings.")
-    if len(values) != len(set(values)):
+    if fn.has_duplicate_ids(values):
         raise ValueError(f"{name} must not contain duplicate IDs.")
 
 
@@ -78,11 +80,15 @@ class BlockedCandidateFinalizationAuditV0:
     reason: str = SHARED_PROVENANCE_UNAVAILABLE
     record_version: str = CANDIDATE_FINALIZATION_RECORD_VERSION
 
+    @fn.operation
     def __post_init__(self) -> None:
+        fn.screen(self, BlockedCandidateFinalizationAuditV0)
         if not isinstance(self.decision, CandidateLimitDecisionV0):
             raise TypeError("decision must be CandidateLimitDecisionV0.")
         try:
+            fn.reserve(max_work_units=1)
             self.decision.__post_init__()
+            fn.reserve(max_work_units=1)
             self.decision.ranked_candidate.__post_init__()
         except (TypeError, ValueError) as exc:
             raise CandidateFinalizationIntegrityError(
@@ -98,18 +104,19 @@ class BlockedCandidateFinalizationAuditV0:
                 "A blocked audit requires a blocked provenance source record."
             )
         try:
+            fn.reserve(max_work_units=1)
             ranked.source_record.__post_init__()
         except (TypeError, ValueError) as exc:
             raise CandidateFinalizationIntegrityError(
                 "Blocked provenance source failed complete revalidation."
             ) from exc
-        if ranked.identity.candidate_id == ranked.identity.c0_candidate_id:
+        if fn.equal(ranked.identity.candidate_id, ranked.identity.c0_candidate_id):
             raise CandidateFinalizationIntegrityError(
                 "A blocked finalization audit must describe an altered candidate."
             )
-        if self.reason != SHARED_PROVENANCE_UNAVAILABLE:
+        if fn.not_equal(self.reason, SHARED_PROVENANCE_UNAVAILABLE):
             raise ValueError("Unsupported blocked-finalization reason.")
-        if self.record_version != CANDIDATE_FINALIZATION_RECORD_VERSION:
+        if fn.not_equal(self.record_version, CANDIDATE_FINALIZATION_RECORD_VERSION):
             raise ValueError("Unsupported candidate-finalization record version.")
 
 
@@ -126,7 +133,10 @@ class CandidateFinalizationCoverageV0:
     ranking_blocked_candidate_ids: tuple[str, ...]
     record_version: str = CANDIDATE_FINALIZATION_RECORD_VERSION
 
+    @fn.operation
     def __post_init__(self) -> None:
+        fn.exact(self, CandidateFinalizationCoverageV0)
+        fn.exact(self.status, CandidateFinalizationCoverageStatusV0)
         if not isinstance(self.status, CandidateFinalizationCoverageStatusV0):
             raise TypeError(
                 "status must be CandidateFinalizationCoverageStatusV0."
@@ -139,13 +149,30 @@ class CandidateFinalizationCoverageV0:
             "blocked_overflow_candidate_ids",
             "ranking_blocked_candidate_ids",
         )
+        selected = fn.selected() is not None
+        if selected:
+            fn.population(
+                self.retained_materialized_candidate_ids,
+                self.overflow_materialized_candidate_ids,
+                self.blocked_retained_candidate_ids,
+                self.blocked_overflow_candidate_ids,
+                self.ranking_blocked_candidate_ids,
+            )
         for name in names:
             _require_id_tuple(getattr(self, name), name)
+        if selected:
+            materialized_count = len(self.retained_materialized_candidate_ids) + len(
+                self.overflow_materialized_candidate_ids
+            )
+            blocked_count = len(self.blocked_retained_candidate_ids) + len(
+                self.blocked_overflow_candidate_ids
+            )
+            fn.reserve_sequence(materialized_count, coverage=True)
         expected_materialized = (
             self.retained_materialized_candidate_ids
             + self.overflow_materialized_candidate_ids
         )
-        if self.materialized_candidate_ids != expected_materialized:
+        if fn.not_equal(self.materialized_candidate_ids, expected_materialized):
             raise CandidateFinalizationIntegrityError(
                 "materialized_candidate_ids must concatenate retained and overflow "
                 "materialized IDs in rank order."
@@ -156,13 +183,17 @@ class CandidateFinalizationCoverageV0:
             self.blocked_retained_candidate_ids,
             self.blocked_overflow_candidate_ids,
         )
+        if selected:
+            fn.reserve_sequence(materialized_count + blocked_count, coverage=True)
         terminal_ids = tuple(
             candidate_id for category in terminal_categories for candidate_id in category
         )
-        if len(terminal_ids) != len(set(terminal_ids)):
+        if fn.has_duplicate_ids(terminal_ids):
             raise CandidateFinalizationIntegrityError(
                 "Altered-identity terminal coverage categories must be disjoint."
             )
+        if selected:
+            fn.reserve_sequence(blocked_count, coverage=True)
         blocked_ids = (
             self.blocked_retained_candidate_ids
             + self.blocked_overflow_candidate_ids
@@ -192,15 +223,30 @@ class CandidateFinalizationCoverageV0:
                 raise CandidateFinalizationIntegrityError(
                     "Incomplete provenance coverage requires a blocked identity."
                 )
-        if self.record_version != CANDIDATE_FINALIZATION_RECORD_VERSION:
+        if fn.not_equal(self.record_version, CANDIDATE_FINALIZATION_RECORD_VERSION):
             raise ValueError("Unsupported candidate-finalization record version.")
 
 
+@fn.operation
 def _validate_limit_result(limit_result: CandidateLimitResultV0) -> None:
+    fn.exact(limit_result, CandidateLimitResultV0)
     if not isinstance(limit_result, CandidateLimitResultV0):
         raise TypeError("limit_result must be CandidateLimitResultV0.")
+    if fn.selected() is not None:
+        ranking_result = limit_result.ranking_result
+        fn.exact(ranking_result, PreliminaryCandidateRankingResultV0)
+        fn.exact(limit_result.original_candidate, CandidateRecordV1)
+        fn.exact(limit_result.configuration, CandidateLimitingConfigurationV0)
+        fn.exact(limit_result.boundary_tie_audit, BoundaryTieAuditV0)
+        fn.exact(limit_result.readiness, CandidateLimitingReadinessV0)
+        if limit_result.equivalent_to_c0 is not None:
+            fn.exact(limit_result.equivalent_to_c0, EquivalentToC0AuditV0)
+        fn.population(limit_result.decisions, limit_result.ranking_blocks)
+        fn.population(ranking_result.ranked_candidates, ranking_result.ranking_blocks)
     try:
+        fn.reserve(max_upstream_replays=1, max_work_units=1)
         limit_result.__post_init__()
+        fn.reserve_candidate_record(limit_result.original_candidate)
         limit_result.original_candidate.__post_init__()
     except (TypeError, ValueError) as exc:
         raise CandidateFinalizationIntegrityError(
@@ -208,11 +254,14 @@ def _validate_limit_result(limit_result: CandidateLimitResultV0) -> None:
         ) from exc
 
 
+@fn.operation
 def _materialized_record(
     *,
     decision: CandidateLimitDecisionV0,
     original_candidate: CandidateRecordV1,
 ) -> CandidateRecordV1:
+    fn.screen(decision, CandidateLimitDecisionV0)
+    fn.exact(original_candidate, CandidateRecordV1)
     ranked = decision.ranked_candidate
     source_record = ranked.source_record
     if (
@@ -226,13 +275,13 @@ def _materialized_record(
             "Shared candidate construction requires materialized provenance."
         )
     identity = ranked.identity
-    if identity.c0_candidate_id != original_candidate.candidate_id:
+    if fn.not_equal(identity.c0_candidate_id, original_candidate.candidate_id):
         raise CandidateFinalizationIntegrityError(
             "Altered candidate c0 identity contradicts the permanent original."
         )
     if (
-        identity.receipt_id != original_candidate.receipt_id
-        or identity.field_id != original_candidate.field_id
+        fn.not_equal(identity.receipt_id, original_candidate.receipt_id)
+        or fn.not_equal(identity.field_id, original_candidate.field_id)
     ):
         raise CandidateFinalizationIntegrityError(
             "Altered candidate receipt/field identity contradicts permanent c0."
@@ -241,7 +290,7 @@ def _materialized_record(
         limit_status = CandidateLimitStatus.RETAINED
         overflow_reason = None
     elif decision.status is CandidateLimitDecisionStatusV0.LIMIT_OVERFLOW:
-        if decision.overflow_reason != TOTAL_CANDIDATE_LIMIT_EXCEEDED:
+        if fn.not_equal(decision.overflow_reason, TOTAL_CANDIDATE_LIMIT_EXCEEDED):
             raise CandidateFinalizationIntegrityError(
                 "Overflow decision does not retain the approved reason."
             )
@@ -252,7 +301,10 @@ def _materialized_record(
             "Unsupported local capacity decision."
         )
     try:
-        record = CandidateRecordV1(
+        if fn.selected() is not None:
+            fn.reserve_sequence(len(source_record.members))
+            fn.reserve(max_temporary_slots=12, max_work_units=12)
+        fields = dict(
             candidate_id=identity.candidate_id,
             receipt_id=identity.receipt_id,
             field_id=identity.field_id,
@@ -266,6 +318,11 @@ def _materialized_record(
             overflow_reason=overflow_reason,
             record_version=PROPOSED_CONTRACT_VERSION,
         )
+        if fn.selected() is not None:
+            fn.reserve(max_temporary_slots=len(fields))
+            fn.reserve_candidate_fields(tuple(fields.values()), construct=True)
+        record = CandidateRecordV1(**fields)
+        fn.reserve_candidate_record(record)
         record.__post_init__()
     except (TypeError, ValueError) as exc:
         raise CandidateFinalizationIntegrityError(
@@ -274,6 +331,12 @@ def _materialized_record(
     return record
 
 
+def _new_coverage(**fields) -> CandidateFinalizationCoverageV0:
+    fn.reserve(max_records=1, max_temporary_slots=8, max_work_units=8)
+    return CandidateFinalizationCoverageV0(**fields)
+
+
+@fn.operation
 def _derive_finalization(
     limit_result: CandidateLimitResultV0,
 ) -> tuple[
@@ -284,11 +347,15 @@ def _derive_finalization(
     CandidateFinalizationCoverageV0,
 ]:
     _validate_limit_result(limit_result)
+    selected = fn.selected() is not None
+    fn.reserve(max_temporary_slots=5, max_work_units=5)
     if limit_result.readiness is CandidateLimitingReadinessV0.RANKING_UNAVAILABLE:
+        if selected:
+            fn.reserve_sequence(len(limit_result.ranking_blocks), coverage=True)
         blocked_ids = tuple(
             block.identity.candidate_id for block in limit_result.ranking_blocks
         )
-        coverage = CandidateFinalizationCoverageV0(
+        coverage = _new_coverage(
             status=CandidateFinalizationCoverageStatusV0.RANKING_UNAVAILABLE,
             materialized_candidate_ids=(),
             retained_materialized_candidate_ids=(),
@@ -305,6 +372,10 @@ def _derive_finalization(
             coverage,
         )
 
+    if selected:
+        count = len(limit_result.decisions)
+        fn.reserve(max_scan_items=count, max_temporary_slots=5 + 2 * count,
+                   max_work_units=5 + 3 * count)
     retained: list[CandidateRecordV1] = []
     overflow: list[CandidateRecordV1] = []
     blocked: list[BlockedCandidateFinalizationAuditV0] = []
@@ -329,6 +400,7 @@ def _derive_finalization(
             raise CandidateFinalizationIntegrityError(
                 "Unsupported provenance materialization status."
             )
+        fn.reserve(max_records=1, max_temporary_slots=3, max_work_units=3)
         audit = BlockedCandidateFinalizationAuditV0(decision=decision)
         blocked.append(audit)
         if decision.status is CandidateLimitDecisionStatusV0.WITHIN_CAPACITY:
@@ -350,9 +422,19 @@ def _derive_finalization(
         if blocked
         else CandidateFinalizationCoverageStatusV0.COMPLETE_SHARED_LEDGER
     )
+    if selected:
+        materialized_count = len(retained) + len(overflow)
+        fn.reserve_sequence(materialized_count)
+        fn.reserve_sequence(len(blocked))
+        fn.reserve_sequence(materialized_count)
+        fn.reserve_sequence(materialized_count, coverage=True)
+        fn.reserve_sequence(len(retained), coverage=True)
+        fn.reserve_sequence(len(overflow), coverage=True)
+        fn.reserve_sequence(len(blocked_retained_ids), coverage=True)
+        fn.reserve_sequence(len(blocked_overflow_ids), coverage=True)
     retained_tuple = tuple(retained)
     overflow_tuple = tuple(overflow)
-    coverage = CandidateFinalizationCoverageV0(
+    coverage = _new_coverage(
         status=coverage_status,
         materialized_candidate_ids=tuple(
             record.candidate_id for record in (*retained_tuple, *overflow_tuple)
@@ -370,13 +452,17 @@ def _derive_finalization(
     return retained_tuple, overflow_tuple, tuple(blocked), readiness, coverage
 
 
+@fn.operation
 def _validate_shared_record_references(
     record: CandidateRecordV1,
     decision: CandidateLimitDecisionV0,
 ) -> None:
+    fn.screen(decision, CandidateLimitDecisionV0)
     try:
+        fn.reserve_candidate_record(record)
         record.__post_init__()
         for provenance in record.provenance:
+            fn.reserve_provenance(provenance)
             provenance.__post_init__()
     except (TypeError, ValueError) as exc:
         raise CandidateFinalizationIntegrityError(
@@ -392,6 +478,10 @@ def _validate_shared_record_references(
         raise CandidateFinalizationIntegrityError(
             "Shared candidate must retain the exact upstream rank object."
         )
+    if fn.selected() is not None:
+        count = len(source_record.members)
+        fn.reserve_sequence(count)
+        fn.reserve(max_scan_items=count, max_work_units=count)
     upstream_members = tuple(member.provenance for member in source_record.members)
     if len(record.provenance) != len(upstream_members) or any(
         observed is not source
@@ -415,7 +505,15 @@ class CandidateFinalizationResultV0:
     component_version: str = CANDIDATE_FINALIZATION_COMPONENT_VERSION
     record_version: str = CANDIDATE_FINALIZATION_RECORD_VERSION
 
+    @fn.operation
     def __post_init__(self) -> None:
+        fn.exact(self, CandidateFinalizationResultV0)
+        fn.exact(self.limit_result, CandidateLimitResultV0)
+        fn.exact(self.readiness, CandidateFinalizationReadinessV0)
+        fn.exact(self.coverage, CandidateFinalizationCoverageV0)
+        selected = fn.selected() is not None
+        if selected:
+            fn.population(self.retained_records, self.overflow_records, self.blocked_audits)
         if not isinstance(self.limit_result, CandidateLimitResultV0):
             raise TypeError("limit_result must be CandidateLimitResultV0.")
         for value, expected_type, name in (
@@ -427,7 +525,11 @@ class CandidateFinalizationResultV0:
                 "blocked_audits",
             ),
         ):
-            if not isinstance(value, tuple) or any(
+            if selected:
+                fn.reserve(max_scan_items=len(value), max_work_units=len(value))
+                for item in value:
+                    fn.exact(item, expected_type)
+            elif not isinstance(value, tuple) or any(
                 not isinstance(item, expected_type) for item in value
             ):
                 raise TypeError(f"{name} contains an unsupported record.")
@@ -435,9 +537,9 @@ class CandidateFinalizationResultV0:
             raise TypeError("readiness must be CandidateFinalizationReadinessV0.")
         if not isinstance(self.coverage, CandidateFinalizationCoverageV0):
             raise TypeError("coverage must be CandidateFinalizationCoverageV0.")
-        if self.component_version != CANDIDATE_FINALIZATION_COMPONENT_VERSION:
+        if fn.not_equal(self.component_version, CANDIDATE_FINALIZATION_COMPONENT_VERSION):
             raise ValueError("Unsupported candidate-finalization component version.")
-        if self.record_version != CANDIDATE_FINALIZATION_RECORD_VERSION:
+        if fn.not_equal(self.record_version, CANDIDATE_FINALIZATION_RECORD_VERSION):
             raise ValueError("Unsupported candidate-finalization record version.")
 
         try:
@@ -449,6 +551,7 @@ class CandidateFinalizationResultV0:
             raise CandidateFinalizationIntegrityError(
                 "Finalization reconstruction failed."
             ) from exc
+        fn.reserve(max_temporary_slots=5, max_work_units=5)
         observed = (
             self.retained_records,
             self.overflow_records,
@@ -456,27 +559,37 @@ class CandidateFinalizationResultV0:
             self.readiness,
             self.coverage,
         )
-        if observed != expected:
+        if fn.not_equal(observed, expected):
             raise CandidateFinalizationIntegrityError(
                 "Finalization result must equal its deterministic projection."
             )
 
+        if selected:
+            fn.reserve_sequence(len(self.limit_result.decisions))
         materialized_decisions = tuple(
             decision
             for decision in self.limit_result.decisions
             if decision.provenance_status
             is ProvenanceMaterializationStatusV0.MATERIALIZED
         )
+        if selected:
+            fn.reserve_sequence(len(self.retained_records) + len(self.overflow_records))
         shared_records = self.retained_records + self.overflow_records
         if len(shared_records) != len(materialized_decisions):
             raise CandidateFinalizationIntegrityError(
                 "Every materialized decision must have exactly one shared record."
             )
+        if selected:
+            fn.reserve(max_scan_items=len(shared_records), max_work_units=len(shared_records))
         for record, decision in zip(
             shared_records, materialized_decisions, strict=True
         ):
             _validate_shared_record_references(record, decision)
 
+        if selected:
+            fn.reserve_sequence(len(self.limit_result.decisions))
+            count = len(self.blocked_audits)
+            fn.reserve(max_scan_items=2 * count, max_work_units=2 * count)
         blocked_decisions = tuple(
             decision
             for decision in self.limit_result.decisions
@@ -516,6 +629,7 @@ class CandidateFinalizationResultV0:
         return self.limit_result.configuration
 
 
+@fn.operation
 def materialize_ranked_candidate_records(
     *,
     limit_result: CandidateLimitResultV0,
@@ -523,6 +637,7 @@ def materialize_ranked_candidate_records(
     """Materialize every provenance-complete ranked identity, fail closed."""
 
     derived = _derive_finalization(limit_result)
+    fn.reserve(max_records=1, max_temporary_slots=8, max_work_units=8)
     return CandidateFinalizationResultV0(
         limit_result=limit_result,
         retained_records=derived[0],

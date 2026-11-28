@@ -18,12 +18,19 @@ from typing import Any
 from pipeline.proposed.candidate_deduplication import (
     NORMALIZATION_PROFILE_ID,
     CandidateDeduplicationResultV0,
+    CandidateNormalizationV0,
     DeduplicatedAlteredGroupV0,
     EquivalentToC0AuditV0,
 )
-from pipeline.proposed.candidate_generation import AlteredCandidateProposalV0
+from pipeline.proposed.candidate_generation import (
+    AlteredCandidateProposalV0,
+    CandidateGenerationResultV0,
+    DateDiscoveryCandidateProposalV0,
+    OriginalCandidateDraftV0,
+)
 from pipeline.proposed.contracts import (
     B3CompatibleSeedV1,
+    PROPOSED_CONTRACT_VERSION,
     CandidateLimitStatus,
     CandidateProvenanceV1,
     CandidateRecordV1,
@@ -31,6 +38,16 @@ from pipeline.proposed.contracts import (
     CandidateSourceKind,
     MethodReadyFieldV1,
     SourceCharacterSpanV1,
+)
+from pipeline.proposed.identity_replay_meter_v1 import (
+    IdentityReplayMeterCodeV1,
+    identity_missing_member,
+    identity_not_equal,
+    identity_operation,
+    identity_scalar_equal,
+    identity_scalar_not_equal,
+    reserve_identity,
+    selected_meter,
 )
 
 
@@ -64,8 +81,23 @@ class ProvenanceProjectionClassificationV0(str, Enum):
 
 
 def _require_text(value: str, name: str) -> None:
+    if selected_meter() is not None:
+        _exact(value, str)
+        reserve_identity(max_temporary_slots=len(value), max_work_units=len(value))
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must be a non-empty string.")
+
+
+def _screen(value: object, hint: object) -> None:
+    meter = selected_meter()
+    if meter is not None:
+        meter.walk(value, hint)
+
+
+def _exact(value: object, kind: type) -> None:
+    meter = selected_meter()
+    if meter is not None and type(value) is not kind:
+        meter._reject(IdentityReplayMeterCodeV1.INVALID_SHAPE)
 
 
 def _validate_payload_part(value: Any) -> None:
@@ -80,7 +112,16 @@ def _validate_payload_part(value: Any) -> None:
     )
 
 
+@identity_operation
 def _canonical_identity_json(payload: tuple[Any, ...]) -> tuple[str, bytes]:
+    meter = selected_meter()
+    if meter is not None:
+        if type(payload) is not tuple:
+            meter._reject(IdentityReplayMeterCodeV1.INVALID_SHAPE)
+        size = meter.walk(payload, canonical=True)
+        # Both retained encoding buffers plus serialization/encoding work.
+        meter.reserve(max_canonical_bytes=size, max_temporary_slots=2 * size,
+                      max_work_units=3 * size)
     if not isinstance(payload, tuple) or not payload:
         raise CandidateIdentityIntegrityError(
             "An identity payload must be a nonempty positional tuple."
@@ -107,6 +148,8 @@ def _sha256_hex(encoded: bytes) -> str:
 
 def _identifier(prefix: str, payload: tuple[Any, ...]) -> tuple[str, str]:
     serialized, encoded = _canonical_identity_json(payload)
+    reserve_identity(max_hash_calls=1, max_work_units=len(encoded) + len(prefix) + 64,
+                     max_temporary_slots=len(prefix) + 128 + 2)
     return f"{prefix}{_sha256_hex(encoded)}", serialized
 
 
@@ -118,6 +161,7 @@ def _altered_identity_payload(
     c0_candidate_id: str,
     normalized_dedup_key: str,
 ) -> tuple[str, ...]:
+    reserve_identity(max_temporary_slots=6, max_work_units=6)
     return (
         ALTERED_IDENTITY_SCHEMA_VERSION,
         normalization_profile_id,
@@ -131,6 +175,7 @@ def _altered_identity_payload(
 def _original_provenance_payload(
     method: MethodReadyFieldV1,
 ) -> tuple[Any, ...]:
+    reserve_identity(max_temporary_slots=6, max_work_units=6)
     return (
         ORIGINAL_PROVENANCE_SCHEMA_VERSION,
         method.receipt_id,
@@ -159,7 +204,9 @@ class AlteredCandidateIdentityDraftV0:
     component_version: str = CANDIDATE_IDENTITY_COMPONENT_VERSION
     record_version: str = CANDIDATE_IDENTITY_RECORD_VERSION
 
+    @identity_operation
     def __post_init__(self) -> None:
+        _screen(self, AlteredCandidateIdentityDraftV0)
         for name in (
             "candidate_id",
             "receipt_id",
@@ -185,6 +232,7 @@ class AlteredCandidateIdentityDraftV0:
         expected_id, expected_json = _identifier(
             ALTERED_CANDIDATE_ID_PREFIX, expected_payload
         )
+        reserve_identity(max_temporary_slots=16, max_work_units=16)
         expected = (
             expected_id,
             method.receipt_id,
@@ -205,27 +253,30 @@ class AlteredCandidateIdentityDraftV0:
             self.identity_payload,
             self.identity_payload_json,
         )
-        if observed != expected:
+        if identity_not_equal(observed, expected):
             raise CandidateIdentityIntegrityError(
                 "Altered identity must equal its canonical deduplicated derivation."
             )
-        if self.candidate_id == self.c0_candidate_id:
+        if identity_scalar_equal(self.candidate_id, self.c0_candidate_id):
             raise CandidateIdentityIntegrityError(
                 "An altered identity cannot reuse permanent c0 identity."
             )
-        if self.normalization_profile_id != NORMALIZATION_PROFILE_ID:
+        if identity_scalar_not_equal(self.normalization_profile_id, NORMALIZATION_PROFILE_ID):
             raise ValueError("Unsupported normalization profile.")
-        if self.identity_schema_version != ALTERED_IDENTITY_SCHEMA_VERSION:
+        if identity_scalar_not_equal(self.identity_schema_version, ALTERED_IDENTITY_SCHEMA_VERSION):
             raise ValueError("Unsupported altered-candidate identity schema.")
-        if self.component_version != CANDIDATE_IDENTITY_COMPONENT_VERSION:
+        if identity_scalar_not_equal(self.component_version, CANDIDATE_IDENTITY_COMPONENT_VERSION):
             raise ValueError("Unsupported candidate-identity component version.")
-        if self.record_version != CANDIDATE_IDENTITY_RECORD_VERSION:
+        if identity_scalar_not_equal(self.record_version, CANDIDATE_IDENTITY_RECORD_VERSION):
             raise ValueError("Unsupported candidate-identity record version.")
 
 
 def _projection_classification(
     proposal: AlteredCandidateProposalV0,
 ) -> tuple[ProvenanceProjectionClassificationV0, str | None]:
+    # Two source-kind guards, the rule count and span presence, then
+    # the returned classification pair.
+    reserve_identity(max_temporary_slots=2, max_work_units=6)
     if (
         proposal.source_kind is CandidateSourceKind.GENERIC_NORMALIZATION
         and len(proposal.b3_rule_ids) > 1
@@ -248,6 +299,20 @@ def _projection_classification(
 def _span_token_ids(
     spans: tuple[SourceCharacterSpanV1, ...],
 ) -> tuple[str, ...]:
+    meter = selected_meter()
+    if meter is not None:
+        meter.walk(spans, tuple[SourceCharacterSpanV1, ...])
+        # Keep first occurrence order. The selected route avoids opaque
+        # hash-table probe costs and reserves before each membership attempt.
+        ids = []
+        for span in spans:
+            token_id = span.token_id
+            meter.reserve(max_temporary_slots=len(ids), max_work_units=len(ids))
+            if identity_missing_member(token_id, tuple(ids)):
+                meter.reserve(max_temporary_slots=1, max_work_units=1)
+                ids.append(token_id)
+        meter.reserve(max_temporary_slots=len(ids), max_work_units=len(ids))
+        return tuple(ids)
     return tuple(dict.fromkeys(span.token_id for span in spans))
 
 
@@ -275,32 +340,47 @@ class ProposalProvenanceAuditV0:
     component_version: str = CANDIDATE_IDENTITY_COMPONENT_VERSION
     record_version: str = CANDIDATE_IDENTITY_RECORD_VERSION
 
+    @identity_operation
     def __post_init__(self) -> None:
+        _screen(self, ProposalProvenanceAuditV0)
         if not isinstance(self.parent_identity, AlteredCandidateIdentityDraftV0):
             raise TypeError("parent_identity must be an altered identity draft.")
         if not isinstance(self.proposal, AlteredCandidateProposalV0):
             raise TypeError("proposal must be AlteredCandidateProposalV0.")
-        if not isinstance(self.b3_seed, B3CompatibleSeedV1):
-            raise TypeError("b3_seed must be B3CompatibleSeedV1.")
+        proposal = self.proposal
+        if type(proposal) is DateDiscoveryCandidateProposalV0:
+            if type(self) is not DateDiscoveryProvenanceAuditV0:
+                raise TypeError("D1 proposals require a D1 provenance audit.")
+            if (
+                not any(proposal is item for item in self.parent_identity.deduplicated_group.contributing_proposals)
+                or len(self.source_spans) != 1
+                or self.source_spans[0] is not proposal.observation.body_span
+            ):
+                raise CandidateIdentityIntegrityError("D1 provenance requires its original proposal and body span.")
+            b3_ruleset_id = None
+        else:
+            if type(self) is DateDiscoveryProvenanceAuditV0 or not isinstance(self.b3_seed, B3CompatibleSeedV1):
+                raise TypeError("B3 proposal audits require B3CompatibleSeedV1.")
+            b3_ruleset_id = proposal.b3_seed.b3_ruleset_id
         if not isinstance(self.method_ready_field, MethodReadyFieldV1):
             raise TypeError("method_ready_field must be MethodReadyFieldV1.")
         if not isinstance(
             self.projection_classification, ProvenanceProjectionClassificationV0
         ):
             raise TypeError("projection_classification has an unsupported type.")
-        proposal = self.proposal
-        if proposal not in self.parent_identity.deduplicated_group.contributing_proposals:
+        if identity_missing_member(proposal, self.parent_identity.deduplicated_group.contributing_proposals):
             raise CandidateIdentityIntegrityError(
                 "A provenance contribution must belong to its parent group."
             )
         expected_classification, expected_reason = _projection_classification(proposal)
+        reserve_identity(max_temporary_slots=30, max_work_units=30)
         expected = (
             proposal.proposal_reference,
             proposal.b3_seed,
             proposal.source_kind,
             proposal.proposed_value,
             proposal.adapter_seed_position,
-            proposal.b3_seed.b3_ruleset_id,
+            b3_ruleset_id,
             proposal.b3_event_ids,
             proposal.b3_rule_ids,
             proposal.source_spans,
@@ -328,21 +408,21 @@ class ProposalProvenanceAuditV0:
             self.projection_classification,
             self.projection_reason,
         )
-        if observed != expected:
+        if identity_not_equal(observed, expected):
             raise CandidateIdentityIntegrityError(
                 "Provenance audit must equal its complete proposal derivation."
             )
         if (
-            self.method_ready_field.receipt_id != self.parent_identity.receipt_id
-            or self.method_ready_field.field_id != self.parent_identity.field_id
-            or self.c0_candidate_id != self.parent_identity.c0_candidate_id
+            identity_scalar_not_equal(self.method_ready_field.receipt_id, self.parent_identity.receipt_id)
+            or identity_scalar_not_equal(self.method_ready_field.field_id, self.parent_identity.field_id)
+            or identity_scalar_not_equal(self.c0_candidate_id, self.parent_identity.c0_candidate_id)
         ):
             raise CandidateIdentityIntegrityError(
                 "Provenance contribution identity contradicts its parent candidate."
             )
-        if self.component_version != CANDIDATE_IDENTITY_COMPONENT_VERSION:
+        if identity_scalar_not_equal(self.component_version, CANDIDATE_IDENTITY_COMPONENT_VERSION):
             raise ValueError("Unsupported candidate-identity component version.")
-        if self.record_version != CANDIDATE_IDENTITY_RECORD_VERSION:
+        if identity_scalar_not_equal(self.record_version, CANDIDATE_IDENTITY_RECORD_VERSION):
             raise ValueError("Unsupported candidate-identity record version.")
 
     @property
@@ -351,6 +431,16 @@ class ProposalProvenanceAuditV0:
             self.projection_classification
             is not ProvenanceProjectionClassificationV0.PROJECTION_DEFERRED
         )
+
+
+@dataclass(frozen=True, slots=True)
+class DateDiscoveryProvenanceAuditV0(ProposalProvenanceAuditV0):
+    """Local D1 contribution. Its proposal carries the discovery and OCR references."""
+
+    proposal: DateDiscoveryCandidateProposalV0
+    b3_seed: None
+    adapter_seed_position: None
+    b3_ruleset_id: None
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,7 +453,13 @@ class AlteredCandidateProvenanceAuditV0:
     component_version: str = CANDIDATE_IDENTITY_COMPONENT_VERSION
     record_version: str = CANDIDATE_IDENTITY_RECORD_VERSION
 
+    @identity_operation
     def __post_init__(self) -> None:
+        _screen(self, AlteredCandidateProvenanceAuditV0)
+        meter = selected_meter()
+        if meter is not None:
+            # Presence, type scan, parent scan and blocked-classification scan.
+            meter.reserve(max_work_units=1 + 3 * len(self.contributions))
         if not isinstance(self.identity, AlteredCandidateIdentityDraftV0):
             raise TypeError("identity must be an altered identity draft.")
         if not self.contributions:
@@ -375,33 +471,37 @@ class AlteredCandidateProvenanceAuditV0:
             for item in self.contributions
         ):
             raise TypeError("contributions must contain proposal provenance audits.")
-        if any(item.parent_identity != self.identity for item in self.contributions):
+        if any(identity_not_equal(item.parent_identity, self.identity) for item in self.contributions):
             raise CandidateIdentityIntegrityError(
                 "Every contribution must reference the same altered identity."
             )
         expected_proposals = self.identity.deduplicated_group.contributing_proposals
-        if tuple(item.proposal for item in self.contributions) != expected_proposals:
+        if selected_meter() is not None:
+            count = len(self.contributions)
+            reserve_identity(max_temporary_slots=count, max_work_units=count)
+        if identity_not_equal(tuple(item.proposal for item in self.contributions), expected_proposals):
             raise CandidateIdentityIntegrityError(
                 "Contributions must preserve every proposal in canonical order."
             )
-        if self.has_blocked_contributions != any(
-            item.is_blocked for item in self.contributions
+        if identity_scalar_not_equal(
+            self.has_blocked_contributions, any(item.is_blocked for item in self.contributions)
         ):
             raise CandidateIdentityIntegrityError(
                 "Blocked-contribution state must equal the complete audit."
             )
-        if self.component_version != CANDIDATE_IDENTITY_COMPONENT_VERSION:
+        if identity_scalar_not_equal(self.component_version, CANDIDATE_IDENTITY_COMPONENT_VERSION):
             raise ValueError("Unsupported candidate-identity component version.")
-        if self.record_version != CANDIDATE_IDENTITY_RECORD_VERSION:
+        if identity_scalar_not_equal(self.record_version, CANDIDATE_IDENTITY_RECORD_VERSION):
             raise ValueError("Unsupported candidate-identity record version.")
 
 
+@identity_operation
 def _make_identity(
     deduplication_result: CandidateDeduplicationResultV0,
     group: DeduplicatedAlteredGroupV0,
 ) -> AlteredCandidateIdentityDraftV0:
     method = deduplication_result.candidate_drafts.original.method_ready_field
-    if group.representative.method_ready_field != method:
+    if identity_not_equal(group.representative.method_ready_field, method):
         raise CandidateIdentityIntegrityError(
             "An altered group must share the upstream method-ready identity."
         )
@@ -413,6 +513,7 @@ def _make_identity(
         normalized_dedup_key=group.normalization.normalized_key,
     )
     candidate_id, payload_json = _identifier(ALTERED_CANDIDATE_ID_PREFIX, payload)
+    reserve_identity(max_records=1, max_temporary_slots=13, max_work_units=13)
     return AlteredCandidateIdentityDraftV0(
         candidate_id=candidate_id,
         receipt_id=method.receipt_id,
@@ -432,7 +533,12 @@ def _make_contribution(
     proposal: AlteredCandidateProposalV0,
 ) -> ProposalProvenanceAuditV0:
     classification, reason = _projection_classification(proposal)
-    return ProposalProvenanceAuditV0(
+    reserve_identity(max_records=1, max_temporary_slots=17, max_work_units=17)
+    audit_type = (
+        DateDiscoveryProvenanceAuditV0
+        if type(proposal) is DateDiscoveryCandidateProposalV0 else ProposalProvenanceAuditV0
+    )
+    return audit_type(
         parent_identity=identity,
         proposal=proposal,
         proposal_reference=proposal.proposal_reference,
@@ -440,7 +546,7 @@ def _make_contribution(
         source_kind=proposal.source_kind,
         proposed_value=proposal.proposed_value,
         adapter_seed_position=proposal.adapter_seed_position,
-        b3_ruleset_id=proposal.b3_seed.b3_ruleset_id,
+        b3_ruleset_id=None if proposal.b3_seed is None else proposal.b3_seed.b3_ruleset_id,
         b3_event_ids=proposal.b3_event_ids,
         b3_rule_ids=proposal.b3_rule_ids,
         source_spans=proposal.source_spans,
@@ -459,6 +565,14 @@ def _materialize_original_candidate(
     method = deduplication_result.candidate_drafts.original.method_ready_field
     payload = _original_provenance_payload(method)
     provenance_id, _ = _identifier(ORIGINAL_PROVENANCE_ID_PREFIX, payload)
+    meter = selected_meter()
+    if meter is not None:
+        meter.reserve_c0_constructors(
+            provenance_id=provenance_id, receipt_id=method.receipt_id,
+            field_id=method.field_id, candidate_id=method.c0_candidate_id,
+            value=method.c0_value, normalized_key=deduplication_result.original_normalization.normalized_key,
+            source_token_ids=method.source_token_ids, record_version=PROPOSED_CONTRACT_VERSION,
+        )
     provenance = CandidateProvenanceV1(
         provenance_id=provenance_id,
         receipt_id=method.receipt_id,
@@ -490,6 +604,7 @@ def _materialize_original_candidate(
     )
 
 
+@identity_operation
 def _derive_preparation(
     deduplication_result: CandidateDeduplicationResultV0,
 ) -> tuple[
@@ -497,25 +612,61 @@ def _derive_preparation(
     tuple[AlteredCandidateProvenanceAuditV0, ...],
     EquivalentToC0AuditV0 | None,
 ]:
+    meter = selected_meter()
+    if meter is not None:
+        _exact(deduplication_result, CandidateDeduplicationResultV0)
+        _exact(deduplication_result.candidate_drafts, CandidateGenerationResultV0)
+        _exact(deduplication_result.candidate_drafts.original, OriginalCandidateDraftV0)
+        _screen(deduplication_result.candidate_drafts.original.method_ready_field, MethodReadyFieldV1)
+        _screen(deduplication_result.original_normalization, CandidateNormalizationV0)
+        _screen(deduplication_result.profile_id, str)
+        _screen(deduplication_result.equivalent_to_c0, EquivalentToC0AuditV0 | None)
+        _exact(deduplication_result.altered_groups, tuple)
+        groups = len(deduplication_result.altered_groups)
+        meter._limit("max_tuple_arity", groups)
+        meter.reserve(max_groups=groups, max_temporary_slots=2 + 2 * groups,
+                      max_work_units=1 + groups)
+        for group in deduplication_result.altered_groups:
+            _screen(group, DeduplicatedAlteredGroupV0)
+            meter.reserve(max_contributions=len(group.contributing_proposals))
     original = _materialize_original_candidate(deduplication_result)
     altered: list[AlteredCandidateProvenanceAuditV0] = []
     payload_by_candidate_id: dict[str, tuple[str, ...]] = {}
+    metered_payloads: list[tuple[str, tuple[str, ...]]] | None = [] if meter is not None else None
     for group in deduplication_result.altered_groups:
         identity = _make_identity(deduplication_result, group)
-        prior_payload = payload_by_candidate_id.get(identity.candidate_id)
-        if prior_payload is not None and prior_payload != identity.identity_payload:
+        if metered_payloads is None:
+            prior_payload = payload_by_candidate_id.get(identity.candidate_id)
+        else:
+            prior_payload = None
+            for previous_id, payload in metered_payloads:
+                if not identity_not_equal(previous_id, identity.candidate_id):
+                    prior_payload = payload
+                    break
+        if prior_payload is not None and identity_not_equal(prior_payload, identity.identity_payload):
             raise CandidateIdentityIntegrityError(
                 "Distinct canonical payloads produced the same candidate ID."
             )
-        if identity.candidate_id in payload_by_candidate_id:
+        duplicate = (identity.candidate_id in payload_by_candidate_id
+                     if metered_payloads is None else prior_payload is not None)
+        if duplicate:
             raise CandidateIdentityIntegrityError(
                 "Duplicate altered candidate identity was produced."
             )
-        payload_by_candidate_id[identity.candidate_id] = identity.identity_payload
+        if metered_payloads is None:
+            payload_by_candidate_id[identity.candidate_id] = identity.identity_payload
+        else:
+            reserve_identity(max_temporary_slots=3, max_work_units=3)
+            metered_payloads.append((identity.candidate_id, identity.identity_payload))
+        if meter is not None:
+            count = len(group.contributing_proposals)
+            # Contribution construction loop and blocked classification scan.
+            reserve_identity(max_temporary_slots=count, max_work_units=2 * count)
         contributions = tuple(
             _make_contribution(identity, proposal)
             for proposal in group.contributing_proposals
         )
+        reserve_identity(max_records=1, max_temporary_slots=6, max_work_units=5)
         altered.append(
             AlteredCandidateProvenanceAuditV0(
                 identity=identity,
@@ -525,6 +676,7 @@ def _derive_preparation(
                 ),
             )
         )
+    reserve_identity(max_temporary_slots=3, max_work_units=3)
     return original, tuple(altered), deduplication_result.equivalent_to_c0
 
 
@@ -539,7 +691,16 @@ class CandidateIdentityPreparationResultV0:
     component_version: str = CANDIDATE_IDENTITY_COMPONENT_VERSION
     record_version: str = CANDIDATE_IDENTITY_RECORD_VERSION
 
+    @identity_operation
     def __post_init__(self) -> None:
+        if selected_meter() is not None:
+            _exact(self, CandidateIdentityPreparationResultV0)
+            _screen(self.original_candidate, CandidateRecordV1)
+            _screen(self.altered_candidates, tuple[AlteredCandidateProvenanceAuditV0, ...])
+            _screen(self.equivalent_to_c0, EquivalentToC0AuditV0 | None)
+            _screen(self.component_version, str)
+            _screen(self.record_version, str)
+            reserve_identity(max_work_units=len(self.altered_candidates))
         if not isinstance(self.deduplication_result, CandidateDeduplicationResultV0):
             raise TypeError(
                 "deduplication_result must be CandidateDeduplicationResultV0."
@@ -555,21 +716,23 @@ class CandidateIdentityPreparationResultV0:
             self.equivalent_to_c0, EquivalentToC0AuditV0
         ):
             raise TypeError("equivalent_to_c0 must be an equivalence audit or None.")
-        if self.component_version != CANDIDATE_IDENTITY_COMPONENT_VERSION:
+        if identity_scalar_not_equal(self.component_version, CANDIDATE_IDENTITY_COMPONENT_VERSION):
             raise ValueError("Unsupported candidate-identity component version.")
-        if self.record_version != CANDIDATE_IDENTITY_RECORD_VERSION:
+        if identity_scalar_not_equal(self.record_version, CANDIDATE_IDENTITY_RECORD_VERSION):
             raise ValueError("Unsupported candidate-identity record version.")
         expected = _derive_preparation(self.deduplication_result)
-        if (
+        reserve_identity(max_temporary_slots=3, max_work_units=3)
+        if identity_not_equal((
             self.original_candidate,
             self.altered_candidates,
             self.equivalent_to_c0,
-        ) != expected:
+        ), expected):
             raise CandidateIdentityIntegrityError(
                 "Identity preparation must equal its canonical upstream derivation."
             )
 
 
+@identity_operation
 def prepare_candidate_identities(
     *,
     deduplication_result: CandidateDeduplicationResultV0,
@@ -581,6 +744,7 @@ def prepare_candidate_identities(
             "deduplication_result must be CandidateDeduplicationResultV0."
         )
     original, altered, equivalence = _derive_preparation(deduplication_result)
+    reserve_identity(max_records=1, max_temporary_slots=7, max_work_units=7)
     return CandidateIdentityPreparationResultV0(
         deduplication_result=deduplication_result,
         original_candidate=original,

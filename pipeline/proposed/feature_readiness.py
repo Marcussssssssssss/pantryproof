@@ -12,6 +12,7 @@ from enum import Enum
 from typing import Any
 
 from pipeline.contracts import FieldStatus, OcrSourceToken, StructuredField
+from pipeline.proposed import feature_readiness_replay_meter_v1 as fr
 from pipeline.proposed.contracts import (
     FEATURE_SLOT_ORDER,
     CandidateLimitStatus,
@@ -84,16 +85,24 @@ def _require_text(value: str, name: str) -> None:
 def _require_unique_text(values: tuple[str, ...], name: str) -> None:
     if any(not isinstance(value, str) or not value.strip() for value in values):
         raise ValueError(f"{name} must contain non-empty strings.")
-    if len(values) != len(set(values)):
+    meter = fr.selected()
+    if (fr.duplicate_references(meter, values) if meter is not None
+            else len(values) != len(set(values))):
         raise ValueError(f"{name} must not contain duplicates.")
 
 
+@fr.operation
 def _number_fingerprint(value: object) -> NumberFingerprintV0:
+    fr.reserve_fingerprint(value)
     value_type = type(value)
     return value_type.__module__, value_type.__qualname__, repr(value)
 
 
+@fr.operation
 def _refs(*values: str | None) -> tuple[str, ...]:
+    meter = fr.selected()
+    if meter is not None:
+        return fr.first_references(meter, values)
     return tuple(dict.fromkeys(value for value in values if value is not None))
 
 
@@ -110,7 +119,9 @@ class InputFactObservationV0:
     detail: str | None = None
     record_version: str = FEATURE_READINESS_RECORD_VERSION
 
+    @fr.operation
     def __post_init__(self) -> None:
+        fr.fact_validation(self, InputFactObservationV0)
         if not isinstance(self.kind, InputFactKindV0):
             raise TypeError("kind must be InputFactKindV0.")
         if not isinstance(self.presence, InputFactPresenceV0):
@@ -181,7 +192,13 @@ class FeatureSlotInputObservationV0:
     facts: tuple[InputFactObservationV0, ...]
     record_version: str = FEATURE_READINESS_RECORD_VERSION
 
+    @fr.operation
     def __post_init__(self) -> None:
+        fr.exact(self, FeatureSlotInputObservationV0)
+        fr.exact(self.slot, FeatureSlot)
+        fr.text(self.record_version)
+        fr.reserve(max_slot_validations=1, max_work_units=4)
+        fr.sequence(self.facts, copies=3, kind=InputFactObservationV0)
         if not isinstance(self.slot, FeatureSlot):
             raise TypeError("slot must be an existing FeatureSlot.")
         if not isinstance(self.facts, tuple) or not self.facts:
@@ -190,8 +207,13 @@ class FeatureSlotInputObservationV0:
             raise TypeError("facts must contain InputFactObservationV0 records.")
         for item in self.facts:
             item.__post_init__()
-        identities = tuple((item.kind, item.source_references) for item in self.facts)
-        if len(identities) != len(set(identities)):
+        meter = fr.selected()
+        if meter is None:
+            identities = tuple((item.kind, item.source_references) for item in self.facts)
+            duplicate = len(identities) != len(set(identities))
+        else:
+            duplicate = fr.duplicate_facts(meter, self.facts)
+        if duplicate:
             raise ValueError("A slot cannot duplicate the same input-fact identity.")
         if self.record_version != FEATURE_READINESS_RECORD_VERSION:
             raise ValueError("Unsupported feature-readiness slot version.")
@@ -212,7 +234,14 @@ class CandidateFeatureInputObservationV0:
         compare=False,
     )
 
+    @fr.operation
     def __post_init__(self) -> None:
+        fr.exact(self, CandidateFeatureInputObservationV0)
+        fr.exact(self.operand_audit, HardConstraintOperandAuditResultV0)
+        fr.exact(self.candidate_audit, CandidateOperandAuditV0)
+        fr.exact(self.candidate, CandidateRecordV1)
+        fr.text(self.record_version)
+        fr.reserve(max_candidate_validations=1, max_work_units=8)
         if not isinstance(self.operand_audit, HardConstraintOperandAuditResultV0):
             raise TypeError("operand_audit must be HardConstraintOperandAuditResultV0.")
         try:
@@ -233,13 +262,14 @@ class CandidateFeatureInputObservationV0:
         if not isinstance(self.candidate, CandidateRecordV1):
             raise TypeError("candidate must be CandidateRecordV1.")
         try:
-            self.operand_audit.__post_init__()
-            self.candidate_audit.__post_init__()
-            self.candidate.__post_init__()
+            fr.replay_parent(self.operand_audit)
+            fr.replay_candidate_audit(self.candidate_audit)
+            fr.replay_shared_candidate(self.candidate)
         except (TypeError, ValueError) as exc:
             raise FeatureInputReadinessIntegrityError(
                 "Candidate input evidence failed upstream revalidation."
             ) from exc
+        fr.sequence(self.operand_audit.candidate_audits)
         if not any(
             item is self.candidate_audit
             for item in self.operand_audit.candidate_audits
@@ -255,11 +285,15 @@ class CandidateFeatureInputObservationV0:
             raise FeatureInputReadinessIntegrityError(
                 "Overflow candidates cannot receive feature-input observations."
             )
+        fr.sequence(self.slots, copies=4, kind=FeatureSlotInputObservationV0)
         if not isinstance(self.slots, tuple) or any(
             not isinstance(item, FeatureSlotInputObservationV0)
             for item in self.slots
         ):
             raise TypeError("slots must contain FeatureSlotInputObservationV0 records.")
+        if fr.selected() is not None:
+            for entry in self.slots:
+                fr.exact(entry.slot, FeatureSlot)
         if tuple(item.slot for item in self.slots) != FEATURE_SLOT_ORDER:
             raise FeatureInputReadinessIntegrityError(
                 "Candidate observations require exactly seven slots in contract order."
@@ -270,7 +304,7 @@ class CandidateFeatureInputObservationV0:
             self.candidate_audit,
             self.operand_audit.hard_constraint_input,
         )
-        if self.slots != expected:
+        if fr.different(self.slots, expected):
             raise FeatureInputReadinessIntegrityError(
                 "Candidate slot observations differ from deterministic reconstruction."
             )
@@ -297,7 +331,13 @@ class FeatureInputReadinessResultV0:
         compare=False,
     )
 
+    @fr.operation
     def __post_init__(self) -> None:
+        fr.exact(self, FeatureInputReadinessResultV0)
+        fr.exact(self.operand_audit, HardConstraintOperandAuditResultV0)
+        fr.text(self.component_version)
+        fr.text(self.record_version)
+        fr.reserve(max_result_validations=1, max_work_units=8)
         if not isinstance(self.operand_audit, HardConstraintOperandAuditResultV0):
             raise TypeError("operand_audit must be HardConstraintOperandAuditResultV0.")
         try:
@@ -313,6 +353,7 @@ class FeatureInputReadinessResultV0:
                 raise FeatureInputReadinessIntegrityError(
                     "Result's exact D3 operand-audit reference changed."
                 )
+        fr.sequence(self.candidate_observations, copies=6, kind=CandidateFeatureInputObservationV0)
         if not isinstance(self.candidate_observations, tuple) or any(
             not isinstance(item, CandidateFeatureInputObservationV0)
             for item in self.candidate_observations
@@ -326,7 +367,7 @@ class FeatureInputReadinessResultV0:
             raise ValueError("Unsupported feature-readiness result version.")
 
         try:
-            self.operand_audit.__post_init__()
+            fr.replay_parent(self.operand_audit)
         except (TypeError, ValueError) as exc:
             raise FeatureInputReadinessIntegrityError(
                 "Supplied D3 operand audit failed complete revalidation."
@@ -351,7 +392,7 @@ class FeatureInputReadinessResultV0:
                 raise FeatureInputReadinessIntegrityError(
                     "Candidate observations must retain exact upstream audit references."
                 )
-            if observed != reconstructed:
+            if fr.observation_different(observed, reconstructed):
                 raise FeatureInputReadinessIntegrityError(
                     "Candidate observations differ from deterministic reconstruction."
                 )
@@ -363,10 +404,14 @@ class FeatureInputReadinessResultV0:
             raise FeatureInputReadinessIntegrityError(
                 "Only retained candidates belong to the observation population."
             )
-        overflow_ids = {
-            item.candidate_id for item in self.operand_audit.overflow_audit_records
-        }
-        if overflow_ids.intersection(item.candidate_id for item in candidates):
+        overflow = self.operand_audit.overflow_audit_records
+        meter = fr.selected()
+        if meter is None:
+            overflow_ids = {item.candidate_id for item in overflow}
+            overlap = overflow_ids.intersection(item.candidate_id for item in candidates)
+        else:
+            overlap = fr.overflow_overlap(meter, overflow, candidates)
+        if overlap:
             raise FeatureInputReadinessIntegrityError(
                 "Overflow candidates cannot enter feature-input observations."
             )
@@ -377,7 +422,7 @@ class FeatureInputReadinessResultV0:
         except AttributeError:
             object.__setattr__(self, "_primitive_observation", current)
         else:
-            if original != current:
+            if fr.different(original, current):
                 raise FeatureInputReadinessIntegrityError(
                     "Stored feature-input observations changed after construction."
                 )
@@ -391,6 +436,7 @@ def _present(
     numbers: tuple[object, ...] = (),
     polygons: tuple[tuple[tuple[object, object], ...], ...] = (),
 ) -> InputFactObservationV0:
+    fr.construct_fact(references, texts, numbers, polygons)
     return InputFactObservationV0(
         kind=kind,
         presence=InputFactPresenceV0.PRESENT,
@@ -415,6 +461,7 @@ def _nonpresent(
     references: tuple[str, ...] = (),
     texts: tuple[str, ...] = (),
 ) -> InputFactObservationV0:
+    fr.construct_fact(references, texts)
     return InputFactObservationV0(
         kind=kind,
         presence=presence,
@@ -451,6 +498,8 @@ def _field_fact(
     field_value: StructuredField,
     kind: InputFactKindV0,
 ) -> InputFactObservationV0:
+    fr.exact(field_value, StructuredField)
+    fr.sequence(field_value.source_token_ids, copies=4, extra=2)
     references = _refs(
         field_value.field_id,
         field_value.item_row_id,
@@ -478,6 +527,8 @@ def _operand_fact(
     *,
     row_id: str | None = None,
 ) -> InputFactObservationV0:
+    fr.exact(operand, OperandEvidenceV0)
+    fr.sequence(operand.source_token_ids, copies=4, extra=2)
     references = _refs(
         operand.field_id,
         row_id,
@@ -526,6 +577,7 @@ def _slot_observations(
     audit: CandidateOperandAuditV0,
     context: Any,
 ) -> tuple[FeatureSlotInputObservationV0, ...]:
+    fr.slot_plan(audit, context)
     candidate = audit.candidate
     method = context.method_ready_field
     output = context.receipt_output
@@ -542,6 +594,8 @@ def _slot_observations(
     )
 
     target = audit.target_field
+    fr.exact(target, StructuredField)
+    fr.sequence(target.source_token_ids, copies=4, extra=2)
     target_references = _refs(
         target.field_id,
         target.item_row_id,
@@ -707,39 +761,59 @@ def _slot_observations(
         ),
     )
 
-    facts_by_slot = {
-        FeatureSlot.OCR_EVIDENCE: q_o_facts,
-        FeatureSlot.EXTRACTOR_EVIDENCE: q_e_facts,
-        FeatureSlot.LEXICAL_AGREEMENT: a_l_facts,
-        FeatureSlot.LAYOUT_AGREEMENT: a_y_facts,
-        FeatureSlot.RETAILER_SUPPORT: s_r_facts,
-        FeatureSlot.ARITHMETIC_SUPPORT: s_a_facts,
-        FeatureSlot.PRICE_REFERENCE_SUPPORT: s_p_facts,
-    }
+    facts_by_slot = (
+        (FeatureSlot.OCR_EVIDENCE, q_o_facts),
+        (FeatureSlot.EXTRACTOR_EVIDENCE, q_e_facts),
+        (FeatureSlot.LEXICAL_AGREEMENT, a_l_facts),
+        (FeatureSlot.LAYOUT_AGREEMENT, a_y_facts),
+        (FeatureSlot.RETAILER_SUPPORT, s_r_facts),
+        (FeatureSlot.ARITHMETIC_SUPPORT, s_a_facts),
+        (FeatureSlot.PRICE_REFERENCE_SUPPORT, s_p_facts),
+    )
+    if fr.selected() is None:
+        indexed = dict(facts_by_slot)
+        return tuple(
+            FeatureSlotInputObservationV0(slot=slot, facts=indexed[slot])
+            for slot in FEATURE_SLOT_ORDER
+        )
+    if any(slot is not expected for (slot, _), expected in zip(
+        facts_by_slot, FEATURE_SLOT_ORDER, strict=True
+    )):
+        raise FeatureInputReadinessIntegrityError(
+            "Candidate observations require exactly seven slots in contract order."
+        )
     return tuple(
-        FeatureSlotInputObservationV0(slot=slot, facts=facts_by_slot[slot])
-        for slot in FEATURE_SLOT_ORDER
+        FeatureSlotInputObservationV0(slot=slot, facts=facts)
+        for slot, facts in facts_by_slot
     )
 
 
 def _candidate_observations(
     operand_audit: HardConstraintOperandAuditResultV0,
 ) -> tuple[CandidateFeatureInputObservationV0, ...]:
+    fr.exact(operand_audit, HardConstraintOperandAuditResultV0)
+    fr.sequence(operand_audit.candidate_audits, copies=4, kind=CandidateOperandAuditV0)
     context = operand_audit.hard_constraint_input
     return tuple(
-        CandidateFeatureInputObservationV0(
-            operand_audit=operand_audit,
-            candidate_audit=audit,
-            candidate=audit.candidate,
-            slots=_slot_observations(audit, context),
-        )
+        _candidate_observation(operand_audit, audit, context)
         for audit in operand_audit.candidate_audits
+    )
+
+
+def _candidate_observation(operand_audit, audit, context) -> CandidateFeatureInputObservationV0:
+    fr.reserve(max_candidate_records=1, max_temporary_slots=8, max_work_units=8)
+    return CandidateFeatureInputObservationV0(
+        operand_audit=operand_audit,
+        candidate_audit=audit,
+        candidate=audit.candidate,
+        slots=_slot_observations(audit, context),
     )
 
 
 def _primitive_payload(
     observations: tuple[CandidateFeatureInputObservationV0, ...],
 ) -> tuple[Any, ...]:
+    fr.primitive_plan(observations, CandidateFeatureInputObservationV0)
     return tuple(
         (
             item.candidate.candidate_id,
@@ -767,21 +841,24 @@ def _primitive_payload(
     )
 
 
+@fr.operation(entry=True)
 def inspect_feature_input_readiness(
     *,
     operand_audit: HardConstraintOperandAuditResultV0,
 ) -> FeatureInputReadinessResultV0:
     """Inventory stored seven-slot inputs without constructing features."""
 
+    fr.exact(operand_audit, HardConstraintOperandAuditResultV0)
     if not isinstance(operand_audit, HardConstraintOperandAuditResultV0):
         raise TypeError("operand_audit must be HardConstraintOperandAuditResultV0.")
     try:
-        operand_audit.__post_init__()
+        fr.replay_parent(operand_audit)
     except (TypeError, ValueError) as exc:
         raise FeatureInputReadinessIntegrityError(
             "Supplied D3 operand audit failed complete revalidation."
         ) from exc
     observations = _candidate_observations(operand_audit)
+    fr.reserve(max_result_records=1, max_temporary_slots=8, max_work_units=8)
     return FeatureInputReadinessResultV0(
         operand_audit=operand_audit,
         candidate_observations=observations,

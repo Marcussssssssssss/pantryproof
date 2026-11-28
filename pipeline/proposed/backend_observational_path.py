@@ -15,7 +15,9 @@ from pipeline.proposed.candidate_finalization import (
     materialize_ranked_candidate_records as _materialize_ranked_candidate_records,
 )
 from pipeline.proposed.candidate_generation import (
+    CandidateGenerationIntegrityError,
     generate_candidate_drafts as _generate_candidate_drafts,
+    generate_candidate_drafts_from_date_discovery_v0,
 )
 from pipeline.proposed.candidate_identity import (
     prepare_candidate_identities as _prepare_candidate_identities,
@@ -44,6 +46,12 @@ from pipeline.proposed.hard_constraint_operands import (
 )
 from pipeline.proposed.purchase_date_constraint_stage import (
     evaluate_purchase_date_constraint_stage_v0 as _evaluate_purchase_date_constraint_stage_v0,
+)
+from pipeline.proposed.purchase_date_source_contracts_v1 import DateDiscoveryResultV1
+from pipeline.proposed.purchase_date_whole_graph_admission_v1 import (
+    PreflightStatusV1,
+    PurchaseDatePreflightLimitsV1,
+    preflight_date_discovery_intake_v1,
 )
 from pipeline.proposed.suspicion import SuspicionResultV0
 
@@ -78,6 +86,50 @@ def execute_purchase_date_observational_path_v0(
     return constraint_results
 
 
+def execute_purchase_date_discovery_graph_v0(
+    *,
+    adapter_result: ProposedAdapterResultV1,
+    suspicion_result: SuspicionResultV0,
+    ranking_configuration: CandidateRankingConfigurationV0,
+    limiting_configuration: CandidateLimitingConfigurationV0,
+    rule_profile_reference: HardConstraintProfileRefV2,
+    grammar_reference: str,
+    date_discovery: DateDiscoveryResultV1,
+    d1_input_limits: PurchaseDatePreflightLimitsV1 | None = None,
+) -> tuple[HardConstraintOperandAuditResultV0, tuple[ConstraintResultV2, ...]]:
+    """Opt into synthetic D1 intake, with optional limits checked before dispatch.
+
+    The check covers D1 input admission only. The generation stage still
+    refuses execution under existing replay and owned-numeric profiles.
+    """
+    if type(date_discovery) is not DateDiscoveryResultV1:
+        raise TypeError("The D1 path requires a date discovery result.")
+    if d1_input_limits is not None:
+        admission = preflight_date_discovery_intake_v1(
+            adapter_result=adapter_result,
+            suspicion_result=suspicion_result,
+            ranking_configuration=ranking_configuration,
+            limiting_configuration=limiting_configuration,
+            rule_profile_reference=rule_profile_reference,
+            grammar_reference=grammar_reference,
+            date_discovery=date_discovery,
+            limits=d1_input_limits,
+        )
+        if admission.status is not PreflightStatusV1.SUPPORTED_CHECKS_PASSED:
+            raise CandidateGenerationIntegrityError(
+                f"D1 input preflight refused: {admission.refusal.value}."
+            )
+    return _execute_purchase_date_observational_graph_v0(
+        adapter_result=adapter_result,
+        suspicion_result=suspicion_result,
+        ranking_configuration=ranking_configuration,
+        limiting_configuration=limiting_configuration,
+        rule_profile_reference=rule_profile_reference,
+        grammar_reference=grammar_reference,
+        date_discovery=date_discovery,
+    )
+
+
 def _execute_purchase_date_observational_graph_v0(
     *,
     adapter_result: ProposedAdapterResultV1,
@@ -86,6 +138,7 @@ def _execute_purchase_date_observational_graph_v0(
     limiting_configuration: CandidateLimitingConfigurationV0,
     rule_profile_reference: HardConstraintProfileRefV2,
     grammar_reference: str,
+    date_discovery: DateDiscoveryResultV1 | None = None,
 ) -> tuple[HardConstraintOperandAuditResultV0, tuple[ConstraintResultV2, ...]]:
     """Return the exact in-process D3 audit and its G2A result tuple.
 
@@ -94,10 +147,15 @@ def _execute_purchase_date_observational_graph_v0(
     public API or reconstructing any upstream component.
     """
 
-    candidate_drafts = _generate_candidate_drafts(
-        suspicion_result=suspicion_result,
-        adapter_result=adapter_result,
-    )
+    if date_discovery is None:
+        candidate_drafts = _generate_candidate_drafts(
+            suspicion_result=suspicion_result, adapter_result=adapter_result,
+        )
+    else:
+        candidate_drafts = generate_candidate_drafts_from_date_discovery_v0(
+            suspicion_result=suspicion_result, adapter_result=adapter_result,
+            date_discovery=date_discovery,
+        )
     deduplication_result = _deduplicate_candidate_drafts(
         candidate_drafts=candidate_drafts
     )

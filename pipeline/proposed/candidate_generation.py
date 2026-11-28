@@ -2,21 +2,34 @@
 
 This component implements only the boundary between validated suspicion and
 future candidate processing.  It preserves permanent B2 c0 and exposes
-adapter-produced B3 seeds as source-bound drafts.  It deliberately does not
+adapter-produced B3 seeds as source-bound drafts. The opt-in purchase-date
+entry point also admits anchored D1 derivations. This component does not
 deduplicate, rank, limit, constrain, score, or materialize CandidateRecordV1.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
+from pipeline.baseline_b3 import B3ParseState
+from pipeline.contracts import ReceiptFieldName
 from pipeline.proposed.adapter import ProposedAdapterResultV1
 from pipeline.proposed.contracts import (
     B3CompatibleSeedV1,
     CandidateSourceKind,
     MethodReadyFieldV1,
     SourceCharacterSpanV1,
+)
+from pipeline.proposed.identity_replay_meter_v1 import selected_meter
+from pipeline.proposed.owned_numeric_producer_v1 import current_owned_numeric_scope_v1
+from pipeline.proposed.purchase_date_source_contracts_v1 import (
+    DateDerivationV1,
+    DateDiscoveryResultV1,
+    DateObservationKindV1,
+    DateProposalV1,
+    DateSourceObservationV1,
+    validate_date_discovery_result_v1,
 )
 from pipeline.proposed.suspicion import SuspicionResultV0
 
@@ -149,6 +162,65 @@ class AlteredCandidateProposalV0:
         return self.b3_seed.source_spans
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DateDiscoveryCandidateProposalV0(AlteredCandidateProposalV0):
+    """One unambiguous D1 derivation with the exact observed OCR token and span."""
+
+    b3_seed: None = field(default=None, init=False)
+    adapter_seed_position: None = field(default=None, init=False)
+    date_proposal: DateProposalV1
+    derivation: DateDerivationV1
+    observation: DateSourceObservationV1
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.method_ready_field) is not MethodReadyFieldV1
+            or self.method_ready_field.field_name is not ReceiptFieldName.PURCHASE_DATE
+            or type(self.date_proposal) is not DateProposalV1
+            or type(self.derivation) is not DateDerivationV1
+            or type(self.observation) is not DateSourceObservationV1
+            or self.b3_seed is not None
+            or self.adapter_seed_position is not None
+            or self.record_version != CANDIDATE_GENERATION_RECORD_VERSION
+        ):
+            raise CandidateGenerationIntegrityError("Invalid D1 proposal shape.")
+        if (
+            self.proposal_reference != self.derivation.derivation_id
+            or self.proposal_reference not in self.date_proposal.derivation_ids
+            or self.derivation.normalized_value != self.date_proposal.normalized_value
+            or self.derivation.parse_state is not B3ParseState.VALID
+            or self.derivation.observation_id != self.observation.observation_id
+            or self.derivation.context_id != self.date_proposal.context_id
+            or self.derivation.context_id != self.observation.context_id
+            or self.observation.observation_kind is not DateObservationKindV1.ANCHORED_BODY
+            or self.observation.body_span is None
+        ):
+            raise CandidateGenerationIntegrityError("D1 proposal requires its bound anchored derivation.")
+
+    @property
+    def proposed_value(self) -> str:
+        return self.date_proposal.normalized_value
+
+    @property
+    def source_kind(self) -> CandidateSourceKind:
+        return CandidateSourceKind.SOURCE_TOKEN_OR_NEIGHBOUR
+
+    @property
+    def b3_event_ids(self) -> tuple[str, ...]:
+        return ()
+
+    @property
+    def b3_rule_ids(self) -> tuple[str, ...]:
+        return ()
+
+    @property
+    def source_spans(self) -> tuple[SourceCharacterSpanV1, ...]:
+        body = self.observation.body_span
+        if body is None:
+            raise CandidateGenerationIntegrityError("D1 proposal has no anchored body span.")
+        return (body,)
+
+
 @dataclass(frozen=True, slots=True)
 class CandidateSourceStatusV0:
     """Auditable evaluation status for one thesis-permitted source category."""
@@ -210,10 +282,13 @@ class CandidateGenerationResultV0:
         if self.record_version != CANDIDATE_GENERATION_RECORD_VERSION:
             raise ValueError("Unsupported candidate-generation record version.")
 
-        expected = _derive_candidate_drafts(
-            self.suspicion_result,
-            self.adapter_result,
-        )
+        discovery_selected = type(self) is DateDiscoveryCandidateGenerationResultV0
+        if discovery_selected:
+            expected = _derive_date_discovery_drafts(
+                self.suspicion_result, self.adapter_result, self.date_discovery,
+            )
+        else:
+            expected = _derive_candidate_drafts(self.suspicion_result, self.adapter_result)
         if self.original != expected[0]:
             raise ValueError("Original draft must equal the exact derived permanent c0.")
         if self.altered_proposals != expected[1]:
@@ -222,6 +297,22 @@ class CandidateGenerationResultV0:
             )
         if self.source_statuses != expected[2]:
             raise ValueError("Source statuses must equal the canonical source audit.")
+        if discovery_selected:
+            for observed, derived in zip(self.altered_proposals, expected[1], strict=True):
+                if type(derived) is DateDiscoveryCandidateProposalV0 and (
+                    type(observed) is not DateDiscoveryCandidateProposalV0
+                    or observed.date_proposal is not derived.date_proposal
+                    or observed.derivation is not derived.derivation
+                    or observed.observation is not derived.observation
+                ):
+                    raise CandidateGenerationIntegrityError("D2 drafts lost their exact D1 records.")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DateDiscoveryCandidateGenerationResultV0(CandidateGenerationResultV0):
+    """Opt-in D2 drafts retaining the source-bound D1 result for replay."""
+
+    date_discovery: DateDiscoveryResultV1
 
 
 def generate_candidate_drafts(
@@ -246,6 +337,85 @@ def generate_candidate_drafts(
         altered_proposals=proposals,
         source_statuses=statuses,
     )
+
+
+def generate_candidate_drafts_from_date_discovery_v0(
+    *,
+    suspicion_result: SuspicionResultV0,
+    adapter_result: ProposedAdapterResultV1,
+    date_discovery: DateDiscoveryResultV1,
+) -> DateDiscoveryCandidateGenerationResultV0:
+    """Admit D1 evidence before c0 materialization, alongside existing B3 seeds."""
+    original, proposals, statuses = _derive_date_discovery_drafts(
+        suspicion_result, adapter_result, date_discovery,
+    )
+    return DateDiscoveryCandidateGenerationResultV0(
+        suspicion_result=suspicion_result,
+        adapter_result=adapter_result,
+        original=original,
+        altered_proposals=proposals,
+        source_statuses=statuses,
+        date_discovery=date_discovery,
+    )
+
+
+def _derive_date_discovery_drafts(
+    suspicion_result: SuspicionResultV0,
+    adapter_result: ProposedAdapterResultV1,
+    discovery: DateDiscoveryResultV1,
+) -> tuple[
+    OriginalCandidateDraftV0,
+    tuple[AlteredCandidateProposalV0, ...],
+    tuple[CandidateSourceStatusV0, ...],
+]:
+    if selected_meter() is not None or current_owned_numeric_scope_v1() is not None:
+        raise CandidateGenerationIntegrityError("D1 intake is outside the existing replay profiles.")
+    if not isinstance(suspicion_result, SuspicionResultV0) or not isinstance(adapter_result, ProposedAdapterResultV1):
+        raise TypeError("D1 intake requires the existing suspicion and adapter records.")
+    original, proposals, statuses = _derive_candidate_drafts(suspicion_result, adapter_result)
+    method = original.method_ready_field
+    receipt = adapter_result.original_b2_result.receipt_output
+    if (
+        type(discovery) is not DateDiscoveryResultV1
+        or method.field_name is not ReceiptFieldName.PURCHASE_DATE
+        or discovery.b2_result is not adapter_result.original_b2_result
+        or discovery.source_evidence is not receipt.source_evidence
+        or discovery.existing_c0 is not None
+        or discovery.theta_a_reference != suspicion_result.theta_a_ref
+    ):
+        raise CandidateGenerationIntegrityError("D1 discovery does not bind to the current purchase-date field.")
+    validate_date_discovery_result_v1(discovery)
+    if discovery.original_anchor.b2_purchase_date_field is not method.original_b2_field:
+        raise CandidateGenerationIntegrityError("D1 discovery does not retain the exact B2 date field.")
+    if not suspicion_result.is_suspicious:
+        return original, proposals, statuses
+
+    observations = {item.observation_id: item for item in discovery.observations}
+    derivations = {item.derivation_id: item for item in discovery.derivations}
+    discovered = []
+    for proposal in discovery.proposals:
+        for derivation_id in proposal.derivation_ids:
+            derivation = derivations[derivation_id]
+            observation = observations[derivation.observation_id]
+            if (
+                derivation.parse_state is B3ParseState.VALID
+                and observation.observation_kind is DateObservationKindV1.ANCHORED_BODY
+            ):
+                discovered.append(DateDiscoveryCandidateProposalV0(
+                    proposal_reference=derivation_id,
+                    method_ready_field=method,
+                    date_proposal=proposal,
+                    derivation=derivation,
+                    observation=observation,
+                ))
+    source, *other_sources = statuses
+    n = len(source.proposal_references)
+    combined = (*proposals[:n], *discovered, *proposals[n:])
+    _require_unique_text(tuple(item.proposal_reference for item in combined), "proposal_references")
+    source = replace(source, proposal_references=(
+        *source.proposal_references, *(item.proposal_reference for item in discovered),
+    ))
+    return original, combined, (source, *other_sources)
 
 
 def _derive_candidate_drafts(

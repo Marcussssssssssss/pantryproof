@@ -13,7 +13,10 @@ from decimal import Decimal
 from enum import Enum
 from math import isfinite
 
+from pipeline.proposed.owned_numeric_producer_v1 import current_owned_numeric_scope_v1
+
 from pipeline.contracts import ReceiptFieldName
+from pipeline.proposed import feature_construction_replay_meter_v1 as fc
 from pipeline.proposed.contracts import (
     FEATURE_SCHEMA_ID_V1,
     FEATURE_SLOT_ORDER,
@@ -78,11 +81,23 @@ def _require_text(value: str, name: str) -> None:
         raise ValueError(f"{name} must be a non-empty string.")
 
 
+@fc.operation
 def _unique_references(values: tuple[str, ...]) -> tuple[str, ...]:
+    meter = fc.selected()
+    if meter is not None:
+        return fc.references(meter, values)
     return tuple(dict.fromkeys(values))
 
 
-def _decimal_confidence(value: object, source_name: str) -> Decimal:
+@fc.operation
+def _decimal_confidence(value: object, source_name: str, *, source=None) -> Decimal:
+    fc.reserve_confidence(value, source_name, source)
+    owned = current_owned_numeric_scope_v1()
+    if owned is not None:
+        converted = owned.confidence(value=value, source_id=source_name)
+        if converted is None or not owned.zero <= converted <= owned.one:
+            owned._reject_numeric_value()
+        return converted
     if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
         raise FeatureConstructionIntegrityError(
             f"Present confidence {source_name!r} must be a non-Boolean number."
@@ -114,7 +129,11 @@ class FeatureSlotValueV0:
     reason: FeatureValueReasonV0 | None = None
     record_version: str = FEATURE_CONSTRUCTION_RECORD_VERSION
 
+    @fc.operation
     def __post_init__(self) -> None:
+        fc.exact(self, FeatureSlotValueV0)
+        fc.sequence(self.provenance_references, kind=str, copies=3)
+        fc.slot_validation(self)
         if not isinstance(self.slot, FeatureSlot):
             raise TypeError("slot must be FeatureSlot.")
         if not isinstance(self.availability, FeatureValueAvailabilityV0):
@@ -128,10 +147,15 @@ class FeatureSlotValueV0:
             for reference in self.provenance_references
         ):
             raise ValueError("provenance_references must contain non-empty strings.")
-        if len(self.provenance_references) != len(set(self.provenance_references)):
+        meter = fc.selected()
+        if (fc.duplicate_references(meter, self.provenance_references) if meter is not None
+                else len(self.provenance_references) != len(set(self.provenance_references))):
             raise ValueError("provenance_references must not contain duplicates.")
 
         if isinstance(self.value, Decimal):
+            owned = current_owned_numeric_scope_v1()
+            if owned is not None:
+                owned.require_owned(self.value)
             if not self.value.is_finite():
                 raise ValueError("Decimal feature values must be finite.")
         elif self.value is not None and not isinstance(self.value, (str, bool)):
@@ -143,7 +167,7 @@ class FeatureSlotValueV0:
             if self.value is not None or self.reason is None:
                 raise ValueError("A missing feature requires null value and a reason.")
         elif self.availability is FeatureValueAvailabilityV0.NOT_APPLICABLE:
-            if self.value != NOT_APPLICABLE_VALUE or self.reason is None:
+            if fc.different(self.value, NOT_APPLICABLE_VALUE) or self.reason is None:
                 raise ValueError(
                     "A non-applicable feature requires its categorical value and reason."
                 )
@@ -160,14 +184,21 @@ class FeatureSlotValueV0:
         return self.value is None
 
 
+@fc.operation
 def _slot_values(
     operand_audit: HardConstraintOperandAuditResultV0,
     candidate_audit: CandidateOperandAuditV0,
 ) -> tuple[FeatureSlotValueV0, ...]:
+    fc.exact(operand_audit, HardConstraintOperandAuditResultV0)
+    fc.exact(candidate_audit, CandidateOperandAuditV0)
     context = operand_audit.hard_constraint_input
     candidate = candidate_audit.candidate
     target = candidate_audit.target_field
     tokens = context.method_ready_field.source_tokens
+    fc.sequence(tokens, copies=6)
+    fc.sequence(candidate.provenance, copies=4, extra=3)
+    fc.sequence(target.source_token_ids, copies=4, extra=2)
+    fc.reserve(max_slot_groups=1, max_temporary_slots=35, max_work_units=70)
 
     ocr_values: list[Decimal] = []
     ocr_missing = False
@@ -175,10 +206,11 @@ def _slot_values(
         if token.raw_confidence is None:
             ocr_missing = True
         else:
-            ocr_values.append(_decimal_confidence(token.raw_confidence, token.token_id))
+            ocr_values.append(_decimal_confidence(token.raw_confidence, token.token_id, source=token))
+    fc.reserve(max_slot_records=1, max_temporary_slots=8, max_work_units=8)
     q_o = FeatureSlotValueV0(
         slot=FeatureSlot.OCR_EVIDENCE,
-        value=None if ocr_missing else min(ocr_values),
+        value=None if ocr_missing else fc.minimum(ocr_values),
         availability=(
             FeatureValueAvailabilityV0.MISSING
             if ocr_missing
@@ -191,12 +223,13 @@ def _slot_values(
     )
 
     extractor_confidence = target.confidence
+    fc.reserve(max_slot_records=1, max_temporary_slots=8, max_work_units=8)
     q_e = FeatureSlotValueV0(
         slot=FeatureSlot.EXTRACTOR_EVIDENCE,
         value=(
             None
             if extractor_confidence is None
-            else _decimal_confidence(extractor_confidence, target.field_id)
+            else _decimal_confidence(extractor_confidence, target.field_id, source=target)
         ),
         availability=(
             FeatureValueAvailabilityV0.MISSING
@@ -214,7 +247,8 @@ def _slot_values(
     )
 
     if candidate.role is CandidateRole.ORIGINAL:
-        lexical_value = Decimal("1")
+        owned = current_owned_numeric_scope_v1()
+        lexical_value = owned.one if owned is not None else Decimal("1")
         rank_reference: tuple[str, ...] = ()
     else:
         rank = candidate.preliminary_rank
@@ -224,6 +258,7 @@ def _slot_values(
             )
         lexical_value = rank.normalized_edit_similarity
         rank_reference = () if rank.tie_group_id is None else (rank.tie_group_id,)
+    fc.reserve(max_slot_records=1, max_temporary_slots=8, max_work_units=8)
     a_l = FeatureSlotValueV0(
         slot=FeatureSlot.LEXICAL_AGREEMENT,
         value=lexical_value,
@@ -238,6 +273,7 @@ def _slot_values(
         ),
     )
 
+    fc.reserve(max_slot_records=1, max_temporary_slots=8, max_work_units=8)
     a_y = FeatureSlotValueV0(
         slot=FeatureSlot.LAYOUT_AGREEMENT,
         value=None,
@@ -252,6 +288,7 @@ def _slot_values(
         reason=FeatureValueReasonV0.LAYOUT_AGREEMENT_UNAVAILABLE_V0,
     )
 
+    fc.reserve(max_slot_records=1, max_temporary_slots=8, max_work_units=8)
     s_r = FeatureSlotValueV0(
         slot=FeatureSlot.RETAILER_SUPPORT,
         value=None,
@@ -263,6 +300,7 @@ def _slot_values(
     applicability_references = _unique_references(
         (target.field_id, candidate.candidate_id)
     )
+    fc.reserve(max_slot_records=1, max_temporary_slots=8, max_work_units=8)
     s_a = FeatureSlotValueV0(
         slot=FeatureSlot.ARITHMETIC_SUPPORT,
         value=NOT_APPLICABLE_VALUE,
@@ -270,6 +308,7 @@ def _slot_values(
         provenance_references=applicability_references,
         reason=FeatureValueReasonV0.PURCHASE_DATE_ARITHMETIC_NOT_APPLICABLE,
     )
+    fc.reserve(max_slot_records=1, max_temporary_slots=8, max_work_units=8)
     s_p = FeatureSlotValueV0(
         slot=FeatureSlot.PRICE_REFERENCE_SUPPORT,
         value=NOT_APPLICABLE_VALUE,
@@ -286,7 +325,7 @@ def _capture_reference(record: object, attribute: str, current: object, message:
     except AttributeError:
         object.__setattr__(record, attribute, current)
     else:
-        if original is not current:
+        if not fc.same(original, current):
             raise FeatureConstructionIntegrityError(message)
 
 
@@ -315,7 +354,19 @@ class CandidateFeatureVectorV0:
         init=False, repr=False, compare=False
     )
 
+    @fc.operation
     def __post_init__(self) -> None:
+        fc.require_dependencies(constraints=True)
+        fc.exact(self, CandidateFeatureVectorV0)
+        fc.exact(self.operand_audit, HardConstraintOperandAuditResultV0)
+        fc.exact(self.candidate_audit, CandidateOperandAuditV0)
+        fc.exact(self.constraint_result, ConstraintResultV2)
+        fc.exact(self.candidate, CandidateRecordV1)
+        fc.exact(self.theta_a_reference, ConfigurationRefV1)
+        fc.text(self.feature_schema_id)
+        fc.text(self.record_version)
+        fc.reserve(max_vector_validations=1, max_work_units=32)
+        fc.sequence(self.slot_values, kind=FeatureSlotValueV0, copies=4)
         _capture_reference(
             self,
             "_original_operand_audit_reference",
@@ -345,30 +396,31 @@ class CandidateFeatureVectorV0:
         ):
             raise TypeError("slot_values must contain FeatureSlotValueV0 records.")
         try:
-            self.operand_audit.__post_init__()
-            self.candidate_audit.__post_init__()
-            self.constraint_result.__post_init__()
-            self.candidate.__post_init__()
+            fc.replay(self.operand_audit, "max_parent_replays")
+            fc.replay(self.candidate_audit, "max_candidate_audit_replays")
+            fc.replay(self.constraint_result, "max_v2_replays")
+            fc.replay_shared_candidate(self.candidate)
         except (AttributeError, TypeError, ValueError) as exc:
             raise FeatureConstructionIntegrityError(
                 "Feature-vector upstream evidence failed revalidation."
             ) from exc
 
+        fc.sequence(self.operand_audit.candidate_audits)
         if not any(
-            stored is self.candidate_audit
+            fc.same(stored, self.candidate_audit)
             for stored in self.operand_audit.candidate_audits
         ):
             raise FeatureConstructionIntegrityError(
                 "The candidate audit is not an exact D3 aggregate member."
             )
-        if self.candidate is not self.candidate_audit.candidate:
+        if not fc.same(self.candidate, self.candidate_audit.candidate):
             raise FeatureConstructionIntegrityError(
                 "The feature candidate is not the exact D3 candidate."
             )
         c0_candidate = self.operand_audit.candidate_audits[0].candidate
         if (
-            self.constraint_result.candidate is not self.candidate
-            or self.constraint_result.c0_candidate is not c0_candidate
+            not fc.same(self.constraint_result.candidate, self.candidate)
+            or not fc.same(self.constraint_result.c0_candidate, c0_candidate)
         ):
             raise FeatureConstructionIntegrityError(
                 "The V2 result changed exact candidate or permanent-c0 identity."
@@ -382,8 +434,8 @@ class CandidateFeatureVectorV0:
             )
         upstream_theta = self.operand_audit.hard_constraint_input.theta_a_ref
         if (
-            self.theta_a_reference != upstream_theta
-            or self.constraint_result.theta_a_reference != upstream_theta
+            fc.different(self.theta_a_reference, upstream_theta)
+            or fc.different(self.constraint_result.theta_a_reference, upstream_theta)
         ):
             raise FeatureConstructionConfigurationError(
                 "Feature, D3, and V2 Theta_A references must match completely."
@@ -392,6 +444,9 @@ class CandidateFeatureVectorV0:
             raise FeatureConstructionConfigurationError(
                 "The approved seven-slot feature schema identifier is required."
             )
+        if fc.selected() is not None:
+            for slot in self.slot_values:
+                fc.exact(slot.slot, FeatureSlot)
         if tuple(slot.slot for slot in self.slot_values) != FEATURE_SLOT_ORDER:
             raise FeatureConstructionIntegrityError(
                 "Feature values must preserve exact Equation 4.1 order."
@@ -399,7 +454,7 @@ class CandidateFeatureVectorV0:
         for slot in self.slot_values:
             slot.__post_init__()
         expected = _slot_values(self.operand_audit, self.candidate_audit)
-        if self.slot_values != expected:
+        if fc.slot_values_different(self.slot_values, expected):
             raise FeatureConstructionIntegrityError(
                 "Stored feature values differ from deterministic source reconstruction."
             )
@@ -408,25 +463,33 @@ class CandidateFeatureVectorV0:
 
     @property
     def feature_slots(self) -> tuple[FeatureSlot, ...]:
+        fc.sequence(self.slot_values, kind=FeatureSlotValueV0)
         return tuple(slot.slot for slot in self.slot_values)
 
     @property
     def feature_values(self) -> tuple[FeatureValueV1, ...]:
+        fc.sequence(self.slot_values, kind=FeatureSlotValueV0)
         return tuple(slot.value for slot in self.slot_values)
 
     @property
     def feature_provenance_refs(self) -> tuple[tuple[str, ...], ...]:
+        fc.sequence(self.slot_values, kind=FeatureSlotValueV0)
         return tuple(slot.provenance_references for slot in self.slot_values)
 
     @property
     def missingness_mask(self) -> tuple[bool, ...]:
+        fc.sequence(self.slot_values, kind=FeatureSlotValueV0)
         return tuple(slot.is_missing for slot in self.slot_values)
 
 
+@fc.operation
 def _validated_candidate_set(
     operand_audit: HardConstraintOperandAuditResultV0,
     constraint_results: tuple[ConstraintResultV2, ...],
 ) -> tuple[tuple[CandidateOperandAuditV0, ConstraintResultV2], ...]:
+    fc.require_dependencies(constraints=True)
+    fc.exact(operand_audit, HardConstraintOperandAuditResultV0)
+    fc.sequence(constraint_results, kind=ConstraintResultV2)
     if not isinstance(operand_audit, HardConstraintOperandAuditResultV0):
         raise TypeError("operand_audit must be HardConstraintOperandAuditResultV0.")
     if not isinstance(constraint_results, tuple) or any(
@@ -434,13 +497,15 @@ def _validated_candidate_set(
     ):
         raise TypeError("constraint_results must be a tuple of ConstraintResultV2.")
     try:
-        operand_audit.__post_init__()
+        fc.replay(operand_audit, "max_parent_replays")
     except (AttributeError, TypeError, ValueError) as exc:
         raise FeatureConstructionIntegrityError(
             "The supplied D3 operand audit failed complete revalidation."
         ) from exc
 
     audits = operand_audit.candidate_audits
+    fc.sequence(audits, kind=CandidateOperandAuditV0, copies=10)
+    fc.reserve(max_retained_items=len(audits), max_work_units=len(audits))
     if not audits or len(constraint_results) != len(audits):
         raise FeatureConstructionIntegrityError(
             "Exactly one V2 result is required per retained D3 candidate."
@@ -455,58 +520,68 @@ def _validated_candidate_set(
         )
 
     upstream_theta = operand_audit.hard_constraint_input.theta_a_ref
-    result_ids: set[str] = set()
-    candidate_ids: set[str] = set()
+    selected = fc.selected() is not None
+    result_ids = [] if selected else set()
+    candidate_ids = [] if selected else set()
     first_profile = constraint_results[0].rule_profile_reference
     pairs: list[tuple[CandidateOperandAuditV0, ConstraintResultV2]] = []
     for audit, result in zip(audits, constraint_results, strict=True):
         try:
-            result.__post_init__()
+            fc.replay(result, "max_v2_replays")
         except (AttributeError, TypeError, ValueError) as exc:
             raise FeatureConstructionIntegrityError(
                 "A supplied V2 result failed complete revalidation."
             ) from exc
-        if result.constraint_result_id in result_ids:
+        duplicate_result = (fc.seen(result.constraint_result_id, result_ids) if selected
+                            else result.constraint_result_id in result_ids)
+        if duplicate_result:
             raise FeatureConstructionIntegrityError(
                 "constraint_result_id values must be unique."
             )
-        if result.candidate.candidate_id in candidate_ids:
+        duplicate_candidate = (fc.seen(result.candidate.candidate_id, candidate_ids) if selected
+                               else result.candidate.candidate_id in candidate_ids)
+        if duplicate_candidate:
             raise FeatureConstructionIntegrityError(
                 "Exactly one V2 result is permitted per retained candidate."
             )
-        result_ids.add(result.constraint_result_id)
-        candidate_ids.add(result.candidate.candidate_id)
-        if result.candidate is not audit.candidate:
+        if selected:
+            result_ids.append(result.constraint_result_id)
+            candidate_ids.append(result.candidate.candidate_id)
+        else:
+            result_ids.add(result.constraint_result_id)
+            candidate_ids.add(result.candidate.candidate_id)
+        if not fc.same(result.candidate, audit.candidate):
             raise FeatureConstructionIntegrityError(
                 "V2 results must preserve exact D3 candidate order and identity."
             )
-        if result.c0_candidate is not c0_candidate:
+        if not fc.same(result.c0_candidate, c0_candidate):
             raise FeatureConstructionIntegrityError(
                 "Every V2 result must retain the exact permanent c0."
             )
+        fc.sequence(result.rule_outcomes)
         if any(
-            outcome.candidate is not audit.candidate
-            or outcome.c0_candidate is not c0_candidate
+            not fc.same(outcome.candidate, audit.candidate)
+            or not fc.same(outcome.c0_candidate, c0_candidate)
             for outcome in result.rule_outcomes
         ):
             raise FeatureConstructionIntegrityError(
                 "Every V2 rule outcome must retain the exact D3 candidate and permanent c0."
             )
         if (
-            result.receipt_id != c0_candidate.receipt_id
-            or result.field_id != c0_candidate.field_id
+            fc.different(result.receipt_id, c0_candidate.receipt_id)
+            or fc.different(result.field_id, c0_candidate.field_id)
         ):
             raise FeatureConstructionIntegrityError(
                 "V2 receipt or field identity differs from the D3 candidate set."
             )
         if (
-            result.theta_a_reference != upstream_theta
-            or result.rule_profile_reference.theta_a_reference != upstream_theta
+            fc.different(result.theta_a_reference, upstream_theta)
+            or fc.different(result.rule_profile_reference.theta_a_reference, upstream_theta)
         ):
             raise FeatureConstructionConfigurationError(
                 "V2 and D3 Theta_A references must match completely."
             )
-        if result.rule_profile_reference != first_profile:
+        if fc.different(result.rule_profile_reference, first_profile):
             raise FeatureConstructionConfigurationError(
                 "One purchase-date candidate set requires one common V2 profile."
             )
@@ -514,22 +589,44 @@ def _validated_candidate_set(
     return tuple(pairs)
 
 
+@fc.operation
 def _expected_vectors(
     operand_audit: HardConstraintOperandAuditResultV0,
     pairs: tuple[tuple[CandidateOperandAuditV0, ConstraintResultV2], ...],
+    *,
+    reconstructing: bool = False,
 ) -> tuple[CandidateFeatureVectorV0, ...]:
+    fc.sequence(pairs, copies=4)
+    fc.reserve(max_filter_items=len(pairs), max_work_units=len(pairs))
+    if fc.selected() is not None:
+        for pair in pairs:
+            fc.exact(pair, tuple)
+            if len(pair) != 2:
+                raise FeatureConstructionIntegrityError("Invalid candidate and constraint pair.")
+            fc.exact(pair[0], CandidateOperandAuditV0)
+            fc.exact(pair[1], ConstraintResultV2)
+    return _filter_vectors(operand_audit, pairs, reconstructing=reconstructing)
+
+
+def _filter_vectors(operand_audit, pairs, *, reconstructing):
     theta_a = operand_audit.hard_constraint_input.theta_a_ref
     return tuple(
-        CandidateFeatureVectorV0(
-            operand_audit=operand_audit,
-            candidate_audit=audit,
-            constraint_result=result,
-            candidate=audit.candidate,
-            theta_a_reference=theta_a,
-            slot_values=_slot_values(operand_audit, audit),
-        )
+        _make_vector(operand_audit, audit, result, theta_a, reconstructing=reconstructing)
         for audit, result in pairs
         if result.aggregate_state is ConstraintAggregateStateV2.ELIGIBLE
+    )
+
+
+def _make_vector(operand_audit, audit, result, theta_a, *, reconstructing):
+    fc.reserve(max_vector_records=1, max_reconstructed_vectors=int(reconstructing),
+               max_temporary_slots=16, max_work_units=16)
+    return CandidateFeatureVectorV0(
+        operand_audit=operand_audit,
+        candidate_audit=audit,
+        constraint_result=result,
+        candidate=audit.candidate,
+        theta_a_reference=theta_a,
+        slot_values=_slot_values(operand_audit, audit),
     )
 
 
@@ -553,7 +650,17 @@ class FeatureConstructionResultV0:
         init=False, repr=False, compare=False
     )
 
+    @fc.operation
     def __post_init__(self) -> None:
+        fc.require_dependencies(readiness=True, constraints=True)
+        fc.exact(self, FeatureConstructionResultV0)
+        fc.exact(self.operand_audit, HardConstraintOperandAuditResultV0)
+        fc.exact(self.input_readiness, FeatureInputReadinessResultV0)
+        fc.text(self.component_version)
+        fc.text(self.record_version)
+        fc.reserve(max_result_validations=1, max_work_units=24)
+        fc.sequence(self.constraint_results, kind=ConstraintResultV2)
+        fc.sequence(self.candidate_features, kind=CandidateFeatureVectorV0, copies=4)
         _capture_reference(
             self,
             "_original_operand_audit_reference",
@@ -575,8 +682,9 @@ class FeatureConstructionResultV0:
                 self.constraint_results,
             )
         else:
+            fc.sequence(original_results, kind=ConstraintResultV2)
             if len(original_results) != len(self.constraint_results) or any(
-                original is not current
+                not fc.same(original, current)
                 for original, current in zip(
                     original_results, self.constraint_results, strict=True
                 )
@@ -598,24 +706,24 @@ class FeatureConstructionResultV0:
 
         pairs = _validated_candidate_set(self.operand_audit, self.constraint_results)
         try:
-            self.input_readiness.__post_init__()
+            fc.replay(self.input_readiness, "max_readiness_replays")
         except (AttributeError, TypeError, ValueError) as exc:
             raise FeatureConstructionIntegrityError(
                 "Feature-input readiness failed complete revalidation."
             ) from exc
-        if self.input_readiness.operand_audit is not self.operand_audit:
+        if not fc.same(self.input_readiness.operand_audit, self.operand_audit):
             raise FeatureConstructionIntegrityError(
                 "Feature readiness must retain the result's exact D3 audit."
             )
-        reconstructed_readiness = inspect_feature_input_readiness(
-            operand_audit=self.operand_audit
+        reconstructed_readiness = fc.inspect_readiness(
+            inspect_feature_input_readiness, self.operand_audit
         )
-        if self.input_readiness != reconstructed_readiness:
+        if fc.readiness_different(self.input_readiness, reconstructed_readiness):
             raise FeatureConstructionIntegrityError(
                 "Feature readiness differs from deterministic reconstruction."
             )
 
-        expected = _expected_vectors(self.operand_audit, pairs)
+        expected = _expected_vectors(self.operand_audit, pairs, reconstructing=True)
         if len(self.candidate_features) != len(expected):
             raise FeatureConstructionIntegrityError(
                 "Exactly the V2-eligible candidates require feature vectors."
@@ -625,21 +733,21 @@ class FeatureConstructionResultV0:
         ):
             observed.__post_init__()
             if (
-                observed.operand_audit is not self.operand_audit
-                or observed.constraint_result
-                is not reconstructed.constraint_result
-                or observed.candidate_audit is not reconstructed.candidate_audit
-                or observed.candidate is not reconstructed.candidate
+                not fc.same(observed.operand_audit, self.operand_audit)
+                or not fc.same(observed.constraint_result, reconstructed.constraint_result)
+                or not fc.same(observed.candidate_audit, reconstructed.candidate_audit)
+                or not fc.same(observed.candidate, reconstructed.candidate)
             ):
                 raise FeatureConstructionIntegrityError(
                     "Candidate feature records changed exact source references."
                 )
-            if observed != reconstructed:
+            if fc.vector_different(observed, reconstructed):
                 raise FeatureConstructionIntegrityError(
                     "Candidate feature records differ from deterministic reconstruction."
                 )
 
 
+@fc.operation(entry=True)
 def construct_purchase_date_features_v0(
     *,
     operand_audit: HardConstraintOperandAuditResultV0,
@@ -647,9 +755,51 @@ def construct_purchase_date_features_v0(
 ) -> FeatureConstructionResultV0:
     """Construct approved V0 features atomically for eligible purchase dates."""
 
+    fc.require_dependencies(readiness=True, constraints=True)
     pairs = _validated_candidate_set(operand_audit, constraint_results)
-    readiness = inspect_feature_input_readiness(operand_audit=operand_audit)
+    readiness = fc.inspect_readiness(inspect_feature_input_readiness, operand_audit)
+    return _assemble_feature_construction_result(
+        operand_audit, constraint_results, pairs, readiness
+    )
+
+
+@fc.operation(entry=True)
+def construct_purchase_date_features_from_readiness_v0(
+    *,
+    operand_audit: HardConstraintOperandAuditResultV0,
+    constraint_results: tuple[ConstraintResultV2, ...],
+    input_readiness: FeatureInputReadinessResultV0,
+) -> FeatureConstructionResultV0:
+    """Reuse an FR01 observation from the exact D3 audit in FC01.
+
+    The result validator still replays the supplied observation and compares
+    it with fresh readiness. An active FC01 scope requires the same live
+    dependencies as ordinary construction.
+    """
+
+    fc.require_dependencies(readiness=True, constraints=True)
+    fc.exact(input_readiness, FeatureInputReadinessResultV0)
+    if type(input_readiness) is not FeatureInputReadinessResultV0:
+        raise TypeError("input_readiness must be FeatureInputReadinessResultV0.")
+    if not fc.same(getattr(input_readiness, "operand_audit", None), operand_audit):
+        raise FeatureConstructionIntegrityError(
+            "Supplied readiness must retain the exact D3 operand audit."
+        )
+
+    pairs = _validated_candidate_set(operand_audit, constraint_results)
+    return _assemble_feature_construction_result(
+        operand_audit, constraint_results, pairs, input_readiness
+    )
+
+
+def _assemble_feature_construction_result(
+    operand_audit: HardConstraintOperandAuditResultV0,
+    constraint_results: tuple[ConstraintResultV2, ...],
+    pairs: tuple[tuple[CandidateOperandAuditV0, ConstraintResultV2], ...],
+    readiness: FeatureInputReadinessResultV0,
+) -> FeatureConstructionResultV0:
     vectors = _expected_vectors(operand_audit, pairs)
+    fc.reserve(max_result_records=1, max_temporary_slots=16, max_work_units=16)
     return FeatureConstructionResultV0(
         operand_audit=operand_audit,
         constraint_results=constraint_results,
@@ -667,5 +817,6 @@ __all__ = (
     "FeatureSlotValueV0",
     "FeatureValueAvailabilityV0",
     "FeatureValueReasonV0",
+    "construct_purchase_date_features_from_readiness_v0",
     "construct_purchase_date_features_v0",
 )
