@@ -181,7 +181,7 @@ class InventoryBrowseInstrumentedTest {
         repeat(2) { onView(withTagValue(equalTo("inventory-increase:stock-a"))).perform(scrollTo(), click()) }
         pressBack()
         assertRows("receipt-one", "stock-z", "stock-a", "manual-receipt-one", "stock-duplicate")
-        expectedInventory = fixture.map { if (it.id == "stock-a") it.copy(quantity = 3) else it }
+        expectedInventory = fixture.map { if (it.id == "stock-a") it.copy(quantity = 3.toBigDecimal()) else it }
         scenario!!.onActivity { assertEquals(expectedInventory, pantry(it).inventory) }
         search("apple"); assertRows("stock-a", "stock-duplicate")
     }
@@ -311,8 +311,8 @@ class InventoryBrowseInstrumentedTest {
         launch(); sort("Product name A–Z")
         changeFocusedQuantity("inventory-increase:stock-duplicate")
         scenario!!.onActivity { a ->
-            assertEquals(1, pantry(a).inventory.single { it.id == "stock-a" }.quantity)
-            assertEquals(3, pantry(a).inventory.single { it.id == "stock-duplicate" }.quantity)
+            assertEquals(1.toBigDecimal(), pantry(a).inventory.single { it.id == "stock-a" }.quantity)
+            assertEquals(3.toBigDecimal(), pantry(a).inventory.single { it.id == "stock-duplicate" }.quantity)
             assertFalse(a.findViewById<ViewGroup>(R.id.inventory_browse_results)
                 .findViewWithTag<View>("stock-a").isFocused)
         }
@@ -381,7 +381,7 @@ class InventoryBrowseInstrumentedTest {
         val first = addStandaloneItem("Synthetic oats", "0")
         val second = addStandaloneItem("Synthetic oats", "99")
         assertNotEquals(first.id, second.id)
-        assertEquals(listOf(0, 99), committedRows().map { it.quantity })
+        assertEquals(listOf(0.toBigDecimal(), 99.toBigDecimal()), committedRows().map { it.quantity })
         filter("Items added directly")
         search(" OATS ")
         sort("Quantity high to low")
@@ -394,7 +394,7 @@ class InventoryBrowseInstrumentedTest {
         recordSageScreen("05b-edit-item")
         editFields("Rolled oats", "4")
         saveItem()
-        val edited = first.copy(name = "Rolled oats", quantity = 4)
+        val edited = first.copy(name = "Rolled oats", quantity = 4.toBigDecimal())
         expectedInventory = expectedInventory.map { if (it.id == first.id) edited else it }
         assertEquals(listOf(edited, second), committedRows())
         onView(withId(R.id.inventory_search)).check(matches(withText(" OATS ")))
@@ -549,7 +549,7 @@ class InventoryBrowseInstrumentedTest {
         changeFocusedQuantity("inventory-decrease:stock-low", countFallback = true)
         changeFocusedQuantity("inventory-increase:stock-high", countFallback = true)
         scenario!!.onActivity { a ->
-            assertEquals(listOf(0, 99), pantry(a).inventory.map { it.quantity })
+            assertEquals(listOf(0.toBigDecimal(), 99.toBigDecimal()), pantry(a).inventory.map { it.quantity })
         }
     }
 
@@ -587,7 +587,7 @@ class InventoryBrowseInstrumentedTest {
         val id = tag.substringAfter(':')
         openSageInventoryDetails(id)
         val delta = if (tag.startsWith("inventory-increase:")) 1 else -1
-        expectedInventory = expectedInventory.map { if (it.id == id) it.copy(quantity = it.quantity + delta) else it }
+        expectedInventory = expectedInventory.map { if (it.id == id) it.copy(quantity = it.quantity + delta.toBigDecimal()) else it }
         onView(withTagValue(equalTo(tag))).check { original, missing ->
             if (missing != null) throw missing
             assertEquals(View.NO_ID, original.id)
@@ -630,7 +630,7 @@ class InventoryBrowseInstrumentedTest {
             }
             observe("search-input-and-reader-row-restored-by-tag")
             openSageInventoryDetails("stock-duplicate")
-            expectedInventory = fixture.map { if (it.id == "stock-duplicate") it.copy(quantity = 1) else it }
+            expectedInventory = fixture.map { if (it.id == "stock-duplicate") it.copy(quantity = 1.toBigDecimal()) else it }
             onView(withTagValue(equalTo("inventory-decrease:stock-duplicate"))).check { input, missing ->
                 if (missing != null) throw missing
                 val reader = input.rootView.findViewWithTag<View>("inventory-increase:stock-duplicate")

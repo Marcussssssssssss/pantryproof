@@ -131,4 +131,7 @@
     <item name="inventory_success_dismiss" type="id" />
     <item name="inventory_success_host" type="id" />
     <item name="pantry_brand_logo" type="id" />
+    <item name="receipt_history" type="id" />
+    <item name="receipt_history_search" type="id" />
+    <item name="keep_receipt_original" type="id" />
 </resources>

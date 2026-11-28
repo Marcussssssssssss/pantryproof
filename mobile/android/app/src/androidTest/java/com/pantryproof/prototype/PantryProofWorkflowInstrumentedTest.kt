@@ -221,7 +221,7 @@ class PantryProofWorkflowInstrumentedTest {
         fun assertQuantity(expected: Int) {
             activityRule.scenario.onActivity { activity ->
                 val state = quantityState(activity)
-                org.junit.Assert.assertEquals(expected, state.inventory.single { it.id == rowId }.quantity)
+                org.junit.Assert.assertEquals(expected.toBigDecimal(), state.inventory.single { it.id == rowId }.quantity)
                 org.junit.Assert.assertEquals(baseline, state.inventory.filterNot { it.id.startsWith("receipt-") })
                 val results = activity.findViewById<android.view.ViewGroup>(R.id.inventory_browse_results)
                 val row = requireNotNull(results.findViewWithTag<android.view.View>(rowId))

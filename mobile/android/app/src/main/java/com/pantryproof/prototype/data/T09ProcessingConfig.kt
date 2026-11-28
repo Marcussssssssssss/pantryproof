@@ -4,7 +4,7 @@ package com.pantryproof.prototype.data
 internal object T09ProcessingConfig {
     const val HOST = "10.0.2.2"
     const val PORT = 8765
-    private val bearerSyntax = Regex("[A-Za-z0-9._~+/\\-]+=*")
+    private val bearerSyntax = Regex("[0-9a-f]{64}")
     private var pending: Session? = null
 
     fun isCapable(packageName: String) = packageName == "com.pantryproof.prototype.t09live"
@@ -12,7 +12,7 @@ internal object T09ProcessingConfig {
     class Session internal constructor(val scheme: String, val host: String, val port: Int, credential: String) {
         init {
             require(scheme == "http" && host == HOST && port == PORT) { "Unapproved T09 development origin." }
-            require(credential.length in 1..4096 && bearerSyntax.matches(credential)) { "Invalid Bearer credential." }
+            require(bearerSyntax.matches(credential)) { "Invalid Bearer credential." }
         }
 
         @Volatile
@@ -31,7 +31,10 @@ internal object T09ProcessingConfig {
     }
 
     @Synchronized
-    fun isConfigured(): Boolean = pending != null
+    fun isConfigured(): Boolean = pending?.credential() != null
+
+    @Synchronized
+    fun current(): Session? = pending?.takeIf { it.credential() != null }
 
     @Synchronized
     fun take(): Session? = pending.also { pending = null }

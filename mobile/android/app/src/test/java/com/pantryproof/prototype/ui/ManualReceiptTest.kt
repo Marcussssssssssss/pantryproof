@@ -220,7 +220,7 @@ class ManualReceiptTest {
         val restored = PantryUiState(source)
         restored.restore(state.receipt, state.inventory, state.demoConfirmed)
         assertEquals(
-            listOf(2, 2),
+            listOf(2.toBigDecimal(), 2.toBigDecimal()),
             restored.inventory.filter { it.id.startsWith(PantryUiState.MANUAL_ROW_PREFIX) }
                 .map { it.quantity },
         )

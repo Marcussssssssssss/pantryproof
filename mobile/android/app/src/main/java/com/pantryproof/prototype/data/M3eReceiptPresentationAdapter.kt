@@ -1,5 +1,6 @@
 package com.pantryproof.prototype.data
 
+import com.pantryproof.prototype.contract.review.ReceiptReviewV1
 import com.pantryproof.prototype.contract.v1.AutomaticExtractionStatus
 import com.pantryproof.prototype.contract.v1.PresentationConsumerContext
 import com.pantryproof.prototype.contract.v1.PresentationConsumerMode
@@ -20,6 +21,16 @@ class M3eReceiptPresentationAdapter {
             is ReceiptPresentationResult.Rejected -> ReceiptPresentationUiResult.Rejected(result.issue)
             is ReceiptPresentationResult.Accepted -> mapAccepted(result.value, context.mode)
         }
+
+    internal fun mapReview(wrapper: ReceiptReviewV1): ReceiptPresentationUiResult {
+        val result = mapAccepted(wrapper.presentation, PresentationConsumerMode.LIVE)
+        return when (result) {
+            is ReceiptPresentationUiResult.Available -> result.copy(liveEvidence = LiveReceiptEvidence(wrapper.presentation, wrapper))
+            is ReceiptPresentationUiResult.ProcessingFailed ->
+                result.copy(failureCode = wrapper.review?.failureCode ?: result.failureCode)
+            else -> result
+        }
+    }
 
     private fun mapAccepted(
         envelope: ReceiptPresentationV1,

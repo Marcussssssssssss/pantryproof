@@ -37,6 +37,7 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.inputmethod.EditorInfo
 import android.widget.AdapterView
+import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.Spinner
@@ -58,6 +59,14 @@ import com.pantryproof.prototype.image.SelectedImageSnapshotEncoder
 import com.pantryproof.prototype.ui.SelectedImageProcessingController
 import com.pantryproof.prototype.data.MockReceiptPresentationSource
 import com.pantryproof.prototype.data.InventoryItem
+import com.pantryproof.prototype.data.InventoryUnit
+import com.pantryproof.prototype.data.ReceiptConfirmationMode
+import com.pantryproof.prototype.data.PurchaseRecord
+import com.pantryproof.prototype.data.receiptHistoryMonths
+import com.pantryproof.prototype.contract.review.ReviewReadiness
+import com.pantryproof.prototype.contract.review.ReviewField
+import com.pantryproof.prototype.contract.v1.ReceiptFieldRole
+import com.pantryproof.prototype.image.PreparedReceiptImage
 import com.pantryproof.prototype.data.ManualInventoryStore
 import com.pantryproof.prototype.data.PresentedField
 import com.pantryproof.prototype.data.PresentedFieldStatus
@@ -107,7 +116,7 @@ import kotlin.math.roundToInt
 @SuppressLint("SetTextI18n", "ExifInterface")
 class MainActivity : ComponentActivity() {
     private enum class Screen {
-        INVENTORY, DEVELOPMENT, PREVIEW, DETAILS, REVIEW, MANUAL, MANUAL_REVIEW, PROCESSING_DEMO, SELECTED_PROCESSING, T09_PROCESSING,
+        INVENTORY, DEVELOPMENT, PREVIEW, DETAILS, REVIEW, MANUAL, MANUAL_REVIEW, PROCESSING_DEMO, SELECTED_PROCESSING, T09_PROCESSING, HISTORY, HISTORY_DETAIL,
     }
 
     private enum class LocalImageSource {
@@ -202,6 +211,13 @@ class MainActivity : ComponentActivity() {
 
     private data class BoundLiveImage(val uri: Uri, val crop: ReceiptCrop, val source: LocalImageSource)
     private var selectedProcessingController: SelectedImageProcessingController? = null
+    private var preparedLiveImage: PreparedReceiptImage? = null
+    private var historyQuery = ""
+    private var historyIdentity: String? = null
+    private var receiptCommitInProgress = false
+    private var pendingReceiptAcknowledgements = emptySet<String>()
+    private val reviewPreferences by lazy { getSharedPreferences("receipt-review-preferences", MODE_PRIVATE) }
+    private var keepOriginal = false
     private var liveSession: T09ProcessingConfig.Session? = null
     private var livePhase = T09HttpTransport.Phase.PREPARING
     private var liveCancelled = false
@@ -236,6 +252,10 @@ class MainActivity : ComponentActivity() {
             isAppearanceLightNavigationBars = Build.VERSION.SDK_INT >= 26
         }
         state = PantryUiState(MockReceiptPresentationSource(), ManualInventoryStore(applicationContext))
+        pendingReceiptAcknowledgements = state.recoverConfirmations().orEmpty()
+        keepOriginal = reviewPreferences.getBoolean("keepOriginal", false)
+        historyQuery = savedInstanceState?.getString("historyQuery").orEmpty()
+        historyIdentity = savedInstanceState?.getString("historyIdentity")
         @Suppress("DEPRECATION")
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         selectedImageUri = savedInstanceState?.getString("selectedImageUri")?.let(Uri::parse)
@@ -364,6 +384,8 @@ class MainActivity : ComponentActivity() {
         outState.putString("pendingCaptureUri", pendingCaptureUri?.toString())
         outState.putString("pendingCaptureFileName", pendingCaptureFileName)
         outState.putString("currentScreen", currentScreen.name)
+        outState.putString("historyQuery", historyQuery)
+        outState.putString("historyIdentity", historyIdentity)
         outState.putStringArrayList(
             "backStack",
             ArrayList(backStack.map(Screen::name)),
@@ -392,6 +414,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleBackNavigation() {
+        if (receiptCommitInProgress) return
         if (currentScreen == Screen.SELECTED_PROCESSING || currentScreen == Screen.T09_PROCESSING) {
             disposeSelectedImageProcessing()
             currentScreen = backStack.pollLast() ?: Screen.PREVIEW
@@ -497,6 +520,8 @@ class MainActivity : ComponentActivity() {
             Screen.PROCESSING_DEMO -> renderProcessingDemo()
             Screen.SELECTED_PROCESSING -> renderSelectedImageProcessing()
             Screen.T09_PROCESSING -> renderSelectedImageProcessing(live = true)
+            Screen.HISTORY -> renderReceiptHistory()
+            Screen.HISTORY_DETAIL -> renderReceiptHistoryDetail()
         }
     }
 
@@ -661,7 +686,7 @@ class MainActivity : ComponentActivity() {
                     ReceiptProcessingLifecycle.Outcome.LocalFailure.TIMEOUT -> ui.statePanel(
                         getString(R.string.processing_timeout), getString(R.string.processing_timeout_body), PantryBannerTone.INFO,
                     )
-                    ReceiptProcessingLifecycle.Outcome.LocalFailure.EXECUTION_FAILURE -> ui.statePanel(
+                    else -> ui.statePanel(
                         getString(R.string.processing_execution_failure), getString(R.string.processing_execution_failure_body), PantryBannerTone.ERROR,
                     )
                 }
@@ -766,10 +791,12 @@ class MainActivity : ComponentActivity() {
                 selectedImageSource?.let { BoundLiveImage(imageUri, crop, it) }
             }
             val encoder = SelectedImageSnapshotEncoder(applicationContext.contentResolver)
+            val prepared = PreparedReceiptImage()
+            preparedLiveImage = prepared
             val transport = T09HttpTransport(
                 session = checkNotNull(liveSession),
                 nowMillis = SystemClock::elapsedRealtime,
-                preparePng = { encoder.encode(checkNotNull(uri), crop) },
+                preparePng = prepared::uploadBytes,
                 onPhase = { request, phase ->
                     handler.post {
                         val pending = selectedProcessingController?.state as? ReceiptProcessingLifecycle.State.Pending
@@ -791,7 +818,7 @@ class MainActivity : ComponentActivity() {
                 newImageId = { "selected-image-" + UUID.randomUUID() },
                 newRequestId = { "selected-request-" + UUID.randomUUID() },
                 onChanged = onChanged,
-            ).also { it.selectLiveInput() }
+            ).also { it.selectLiveInput { uri != null && prepared.prepare(encoder, uri, crop) } }
         } else if (fixture != null) {
             SelectedImageProcessingController(fixture, postWorker, postUi, schedule, onChanged).also {
                 it.prepareInput(fixture.preparedInput)
@@ -843,6 +870,8 @@ class MainActivity : ComponentActivity() {
         liveReviewDraft = null
         liveCollapsed.clear()
         boundLiveImage = null
+        preparedLiveImage?.release()
+        preparedLiveImage = null
         liveReviewConfirmation?.dismiss()
         liveReviewConfirmation = null
         val controller = selectedProcessingController
@@ -854,7 +883,6 @@ class MainActivity : ComponentActivity() {
         try {
             controller?.dispose()
         } finally {
-            liveSession?.clear()
             liveSession = null
             // Remove only deadline callbacks. Queued preparation callbacks release stale snapshots.
             handler?.removeCallbacksAndMessages(handler)
@@ -877,12 +905,23 @@ class MainActivity : ComponentActivity() {
         val input = controller.inputState
         val finished = current as? ReceiptProcessingLifecycle.State.Finished
         val result = (finished?.outcome as? ReceiptProcessingLifecycle.Outcome.Presentation)?.result
+        if (live && (finished?.outcome as? ReceiptProcessingLifecycle.Outcome.HttpRefusal)?.status in setOf(401, 503) &&
+            T09ProcessingConfig.current() === liveSession
+        ) T09ProcessingConfig.clear()
         setScreen(getString(if (live) R.string.t09_processing_title else R.string.selected_processing_title), true) {
             if (live || current !is ReceiptProcessingLifecycle.State.Pending && result !is ReceiptPresentationUiResult.Available) {
                 add(bodyText(getString(if (live) R.string.t09_processing_notice else R.string.v4_test_boundary)))
                 add(space(6))
             }
-            val panel = if (live) liveProcessingPanel(current) else when (input) {
+            val panel = if (live) when (input) {
+                SelectedImageProcessingController.InputState.PREPARING -> ui.statePanel(
+                    "Preparing submitted frame", "Orienting, cropping and resizing the receipt.", PantryBannerTone.INFO,
+                )
+                SelectedImageProcessingController.InputState.ERROR -> ui.statePanel(
+                    "Receipt image could not be prepared", "Go back and recrop or choose a smaller image.", PantryBannerTone.ERROR,
+                )
+                else -> liveProcessingPanel(current)
+            } else when (input) {
                 SelectedImageProcessingController.InputState.PREPARING -> ui.statePanel(
                     getString(R.string.selected_processing_preparing),
                     getString(R.string.selected_processing_limits), PantryBannerTone.INFO,
@@ -913,7 +952,7 @@ class MainActivity : ComponentActivity() {
                         ReceiptProcessingLifecycle.Outcome.LocalFailure.TIMEOUT -> ui.statePanel(
                             getString(R.string.processing_timeout), getString(R.string.processing_timeout_body), PantryBannerTone.INFO,
                         )
-                        ReceiptProcessingLifecycle.Outcome.LocalFailure.EXECUTION_FAILURE -> ui.statePanel(
+                        else -> ui.statePanel(
                             getString(R.string.processing_execution_failure), getString(R.string.processing_execution_failure_body), PantryBannerTone.ERROR,
                         )
                     }
@@ -947,7 +986,11 @@ class MainActivity : ComponentActivity() {
                     }
                 })
             } else {
-                val canStart = controller.canStart
+                val refusal = finished?.outcome as? ReceiptProcessingLifecycle.Outcome.HttpRefusal
+                val canRetry = live && finished != null && result !is ReceiptPresentationUiResult.Available &&
+                    refusal?.status !in setOf(401, 406, 503) &&
+                    (result as? ReceiptPresentationUiResult.ProcessingFailed)?.retryable != false
+                val canStart = controller.canStart || canRetry
                 val start = ui.actionButton(
                     getString(if (live) R.string.t09_processing_start else R.string.selected_processing_start),
                     PantryActionStyle.PRIMARY,
@@ -957,11 +1000,18 @@ class MainActivity : ComponentActivity() {
                         if (live) {
                             livePhase = T09HttpTransport.Phase.PREPARING
                             liveCancelled = false
+                            if (canRetry) controller.allowExplicitRetry()
                         }
                         controller.start()
                     }
                 }
                 if (canStart) sticky(start) else add(start)
+            }
+            if (live && current is ReceiptProcessingLifecycle.State.Ready) {
+                preparedLiveImage?.bitmap?.let { bitmap ->
+                    add(bodyText("Exact image to submit"))
+                    add(submittedImageView(bitmap))
+                }
             }
             if (!live) {
                 val recover = (input == SelectedImageProcessingController.InputState.ERROR ||
@@ -995,7 +1045,7 @@ class MainActivity : ComponentActivity() {
                             selectedProcessingController === controller && controller.state === finished &&
                             liveReviewDraft == null
                         ) {
-                            liveReviewDraft = LiveReceiptReviewDraft.from(finished)
+                            liveReviewDraft = LiveReceiptReviewDraft.from(finished)?.also { it.keepOriginal = keepOriginal }
                             if (liveReviewDraft != null) render()
                         }
                     })
@@ -1020,204 +1070,354 @@ class MainActivity : ComponentActivity() {
 
     private fun renderLiveReceiptReview(draft: LiveReceiptReviewDraft) =
         setScreen(getString(R.string.live_review_title), true, formWidth = true) {
-            val sections = SageExpandableSections(this@MainActivity, ui, liveCollapsed)
+            val review = requireNotNull(draft.wrapper?.review)
             add(ui.progressHeader(3, getString(R.string.sage_step_review)))
-            add(space(12))
-            liveReceiptImage(draft.request)?.let { add(it); add(space(8)) }
-            add(bodyText(getString(R.string.live_review_notice)))
-            add(space(8))
-            add(sectionBar(getString(R.string.review_receipt_section), sections.allAction()))
-            val store = liveReviewField(R.string.field_store_name, draft.storeName)
-            val date = liveReviewField(R.string.field_purchase_date, draft.purchaseDate)
-            val total = liveReviewField(R.string.field_receipt_total, draft.receiptTotal, draft.currencyCode)
-            val header = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                listOf(store, date, total).forEach { addView(it.container) }
+            if (review.readiness == ReviewReadiness.NOT_READY) {
+                add(ui.banner("Unverified draft", "Approve each value you use. Automated verification is unavailable.",
+                    PantryBannerTone.INFO))
             }
-            add(sections.add("receipt", getString(R.string.details_summary_title), header))
+            liveReceiptImage(draft.request)?.let { add(it) }
             add(space(8))
-            add(sectionTitle(getString(R.string.review_items_section)))
-            val selectedFields = mutableListOf<Pair<ReviewFieldUi, ReviewFieldUi>>()
-            val checkboxes = mutableListOf<CheckBox>()
+            val sections = SageExpandableSections(this@MainActivity, ui, liveCollapsed)
+            add(sectionBar("Receipt fields", sections.allAction()))
+            val receiptFields = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                draft.receiptFields.forEach { addView(reviewFieldRow(draft, it)) }
+            }
+            add(sections.add("receipt", "Store, date and total", receiptFields, subtitle = draft.storeName.displayed))
+            add(space(8))
+            val included = bodyText("").apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
+            fun updateCounts() {
+                val count = draft.items.count { it.selected }
+                included.text = "$count included · ${draft.items.size - count} excluded from inventory"
+            }
+            updateCounts()
+            add(included)
             draft.items.forEachIndexed { index, item ->
-                val description = liveReviewField(R.string.field_description, item.description)
-                val quantity = liveReviewField(R.string.field_quantity, item.quantity)
-                val unitPrice = liveReviewField(R.string.field_unit_price, item.unitPrice, draft.currencyCode, optional = true)
-                val lineTotal = liveReviewField(R.string.field_line_total, item.lineTotal, draft.currencyCode)
-                selectedFields += description to quantity
-                val fields = LinearLayout(this@MainActivity).apply {
+                val itemFields = LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.VERTICAL
                     addView(CheckBox(this@MainActivity).apply {
-                        text = getString(R.string.live_review_include_item, index + 1)
-                        minHeight = ui.dimen(R.dimen.pantry_touch_target)
+                        text = "Include in inventory"
+                        contentDescription = "Include item ${index + 1} in inventory"
+                        minHeight = dp(48)
                         isChecked = item.selected
-                        setOnCheckedChangeListener { _, checked -> item.selected = checked }
-                        checkboxes += this
+                        setOnCheckedChangeListener { _, checked -> item.selected = checked; updateCounts() }
                     })
-                    listOf(description, quantity, unitPrice, lineTotal).forEach { addView(it.container) }
+                    addView(inventoryUnitChoice(item.inventoryUnit) { item.inventoryUnit = it })
+                    item.allFields.forEach { addView(reviewFieldRow(draft, it)) }
+                    review.pantryMappings.firstOrNull { it.rowId == item.rowId }?.selection?.let { mapping ->
+                        if (item.description.displayed == item.description.backend?.selected?.canonical &&
+                            item.description.reviewState != LiveReceiptReviewDraft.UserReviewState.USER_MODIFIED
+                        ) {
+                            addView(bodyText("Pantry terminology suggestion · ${mapping.identity}" +
+                                (mapping.referenceUnit?.let { " · Reference unit $it" } ?: "")))
+                        }
+                    }
                 }
-                add(sections.add(item.rowId, getString(R.string.review_item_number, index + 1), fields,
-                    subtitle = item.description.value.takeIf(String::isNotBlank)))
+                add(sections.add(item.rowId, "Item ${index + 1}", itemFields, subtitle = item.description.displayed))
                 add(space(8))
             }
-            val evidenceIssues = buildList {
-                listOf(draft.storeName to store, draft.purchaseDate to date, draft.receiptTotal to total).forEach { (field, view) ->
-                    if (field.original.status != PresentedFieldStatus.EXTRACTED) add(view.field)
-                }
-                draft.items.zip(selectedFields).forEach { (item, fields) ->
-                    if (item.description.original.status != PresentedFieldStatus.EXTRACTED) add(fields.first.field)
-                    if (item.quantity.original.status != PresentedFieldStatus.EXTRACTED) add(fields.second.field)
-                }
-            }
-            sections.issues(evidenceIssues)
-            val feedback = bodyText("").apply {
-                visibility = View.GONE
-                setTextColor(ui.color(R.color.pantry_error))
-                accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-            }
-            add(feedback)
-            sticky(ui.actionButton(getString(R.string.live_review_selection_action), PantryActionStyle.PRIMARY) {
-                if (liveReviewDraft !== draft || liveReviewConfirmation != null) return@actionButton
-                when (val selection = draft.selection(state.currentLocalDate())) {
-                    is LiveReceiptReviewDraft.Selection.Ready -> {
-                        sections.issues(evidenceIssues)
-                        feedback.visibility = View.GONE
-                        confirmLiveReview(draft, selection) { message ->
-                            if (message == R.string.purchase_date_future || message == R.string.v51_date_invalid ||
-                                message == R.string.v51_date_incomplete
-                            ) {
-                                sections.issues(evidenceIssues + date.field)
-                                sections.reveal(date.field)
-                                focusInvalidField(date)
-                                date.field.error = getString(message)
-                                return@confirmLiveReview
-                            }
-                            feedback.text = getString(message)
-                            feedback.visibility = View.VISIBLE
-                            feedback.post { feedback.requestRectangleOnScreen(
-                                Rect(0, 0, feedback.width, feedback.height), true,
-                            ) }
-                        }
-                    }
-                    is LiveReceiptReviewDraft.Selection.Invalid -> {
-                        if (selection.problem == LiveReceiptReviewDraft.Problem.PURCHASE_DATE) {
-                            feedback.visibility = View.GONE
-                            sections.issues(evidenceIssues + date.field)
-                            sections.reveal(date.field)
-                            focusInvalidField(date)
-                            date.field.error = getString(liveDateError(draft.purchaseDate.value))
-                            return@actionButton
-                        }
-                        feedback.text = when (selection.problem) {
-                            LiveReceiptReviewDraft.Problem.INACTIVE, LiveReceiptReviewDraft.Problem.PURCHASE_DATE ->
-                                return@actionButton
-                            LiveReceiptReviewDraft.Problem.NO_ITEMS -> getString(R.string.live_review_no_items)
-                            LiveReceiptReviewDraft.Problem.DESCRIPTION ->
-                                getString(R.string.live_review_invalid_description, selection.itemNumber)
-                            LiveReceiptReviewDraft.Problem.QUANTITY ->
-                                getString(R.string.live_review_invalid_quantity, selection.itemNumber)
-                        }
-                        feedback.visibility = View.VISIBLE
-                        val binding = selection.itemNumber?.let { index ->
-                            selectedFields.getOrNull(index - 1)?.let { fields ->
-                                if (selection.problem == LiveReceiptReviewDraft.Problem.DESCRIPTION) fields.first else fields.second
-                            }
-                        }
-                        if (binding != null) {
-                            sections.issues(evidenceIssues + binding.field)
-                            sections.reveal(binding.field)
-                            focusInvalidField(binding)
-                            binding.field.error = feedback.text
-                        } else {
-                            checkboxes.firstOrNull()?.let { checkbox ->
-                                sections.reveal(checkbox)
-                                checkbox.isFocusableInTouchMode = true
-                                checkbox.requestFocus()
-                            }
-                        }
-                    }
-                }
+            add(CheckBox(this@MainActivity).apply {
+                text = "A purchased item is missing from this review"
+                isChecked = draft.omittedPurchasedRow
+                minHeight = dp(48)
+                setOnCheckedChangeListener { _, checked -> draft.omittedPurchasedRow = checked }
             })
-            add(ui.actionButton(getString(R.string.live_review_cancel), PantryActionStyle.DESTRUCTIVE) {
-                if (liveReviewDraft === draft) handleBackNavigation()
-            })
+            add(ui.actionButton("Review values for bulk acceptance", PantryActionStyle.SECONDARY) { showBulkOffer(draft) })
+            sticky(ui.actionButton("Choose confirmation mode", PantryActionStyle.PRIMARY) { chooseReceiptConfirmation(draft) })
         }
 
-    private fun liveReviewField(label: Int, field: LiveReceiptReviewDraft.Field, currency: String? = null,
-        optional: Boolean = false): ReviewFieldUi {
-        val original = field.original
-        val evidence = when (original.status) {
-            PresentedFieldStatus.EXTRACTED -> getString(
-                R.string.live_review_extracted, original.originalAutomaticValue ?: field.initialValue,
-            )
-            PresentedFieldStatus.MISSING -> getString(
-                if (optional) R.string.details_unit_price_missing else R.string.live_review_missing,
-            )
-            PresentedFieldStatus.UNRESOLVED -> getString(R.string.live_review_unresolved)
+    private fun reviewRoleLabel(role: ReceiptFieldRole): String = getString(when (role) {
+        ReceiptFieldRole.STORE_NAME -> R.string.field_store_name
+        ReceiptFieldRole.PURCHASE_DATE -> R.string.field_purchase_date
+        ReceiptFieldRole.RECEIPT_TOTAL -> R.string.field_receipt_total
+        ReceiptFieldRole.ITEM_DESCRIPTION -> R.string.field_description
+        ReceiptFieldRole.QUANTITY -> R.string.field_quantity
+        ReceiptFieldRole.UNIT_PRICE -> R.string.field_unit_price
+        ReceiptFieldRole.LINE_TOTAL -> R.string.field_line_total
+    })
+
+    private fun reviewFieldRow(draft: LiveReceiptReviewDraft, field: LiveReceiptReviewDraft.Field): View {
+        val backend = requireNotNull(field.backend)
+        val status = when (field.reviewState) {
+            LiveReceiptReviewDraft.UserReviewState.UNREVIEWED -> when (backend.disposition.name) {
+                "AUTO_ACCEPTED" -> "Policy accepted"
+                "REVIEW_REQUIRED" -> "Review required"
+                else -> "Unverified"
+            }
+            LiveReceiptReviewDraft.UserReviewState.USER_CONFIRMED -> "You approved"
+            LiveReceiptReviewDraft.UserReviewState.USER_MODIFIED -> "You edited"
+            LiveReceiptReviewDraft.UserReviewState.USER_REJECTED -> "You rejected"
+            LiveReceiptReviewDraft.UserReviewState.UNRESOLVED -> "Left unresolved"
         }
-        val purchaseDate = label == R.string.field_purchase_date
-        val control = reviewField("", getString(label), if (purchaseDate) PurchaseDateInput.display(field.value)
-            else field.value, evidence, prefix = currency, sessionOnly = true)
-        fun updateHelper() {
-            val evidenceText = if (field.value == field.initialValue) evidence
-            else getString(R.string.live_review_corrected, evidence)
-            val future = purchaseDate && ReceiptValidator.purchaseDateProblem(
-                ReceiptValidator.parsePurchaseDate(field.value), state.currentLocalDate(),
-            ) == ReceiptValidator.PurchaseDateProblem.FUTURE
-            control.helper.text = if (future) evidenceText + "\n" + getString(R.string.purchase_date_future)
-            else evidenceText
-            if (purchaseDate && !future) control.field.error = null
-            val warning = original.status == PresentedFieldStatus.UNRESOLVED ||
-                original.status == PresentedFieldStatus.MISSING && !optional
-            control.helper.setTextColor(ui.color(when {
-                future -> R.color.pantry_error
-                warning -> R.color.pantry_secondary
-                else -> R.color.pantry_on_surface_variant
-            }))
-        }
-        updateHelper()
-        control.field.addTextChangedListener(simpleTextWatcher {
-            val entered = control.field.text.toString()
-            field.value = if (purchaseDate) PurchaseDateInput.draftValue(entered) else entered
-            updateHelper()
-        })
-        return control
+        val value = field.displayed?.let { current ->
+            when (backend.role) {
+                ReceiptFieldRole.UNIT_PRICE, ReceiptFieldRole.LINE_TOTAL, ReceiptFieldRole.RECEIPT_TOTAL -> "RM\u00A0$current"
+                else -> current
+            }
+        } ?: if (field.legitimateAbsence() != null) "No unit price printed" else "No approved value"
+        val conflict = if (backend.price.status == "PRICE_CONFLICT") " · Price conflict" else ""
+        return ui.actionRow(reviewRoleLabel(backend.role), "$value · $status$conflict",
+            resource = null, chevron = ui.icon(R.drawable.ic_sage_right), action = { showFieldEvidence(draft, field) })
     }
 
-    private fun confirmLiveReview(
-        draft: LiveReceiptReviewDraft,
-        selection: LiveReceiptReviewDraft.Selection.Ready,
-        showFailure: (Int) -> Unit,
-    ) {
-        val summary = selection.rows.joinToString("\n") { row ->
-            getString(R.string.live_review_confirm_row, row.name, row.quantity)
+    private fun preserveReviewScroll() {
+        val position = screenScrollView?.scrollY ?: 0
+        render()
+        screenScrollView?.let { it.post { it.scrollTo(0, position) } }
+    }
+
+    private fun showFieldEvidence(draft: LiveReceiptReviewDraft, field: LiveReceiptReviewDraft.Field) {
+        val backend = requireNotNull(field.backend)
+        val today = state.currentLocalDate()
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
         }
+        val dialog = AlertDialog.Builder(this).setTitle(reviewRoleLabel(backend.role))
+            .setView(ScrollView(this).apply { addView(content) })
+            .setNegativeButton(android.R.string.cancel, null).create()
+        fun text(value: String) { content.addView(bodyText(value)) }
+        fun action(label: String, block: () -> Unit) {
+            content.addView(ui.actionButton(label, PantryActionStyle.SECONDARY) {
+                if (liveReviewDraft !== draft) return@actionButton
+                dialog.dismiss()
+                block()
+            })
+        }
+        fun candidate(label: String, source: LiveReceiptReviewDraft.CandidateSource, candidateId: String, raw: String?) {
+            text("$label · ${raw ?: "Missing"}")
+            val offer = field.offer(source, candidateId, today)
+            if (offer != null) action("Accept $label") {
+                if (field.accept(offer, state.currentLocalDate())) preserveReviewScroll()
+            }
+        }
+        candidate("Selected pre-review value", LiveReceiptReviewDraft.CandidateSource.SELECTED_PRE_REVIEW,
+            backend.selected.id, backend.selected.raw)
+        candidate("Original B2 value", LiveReceiptReviewDraft.CandidateSource.ORIGINAL_B2_C0,
+            backend.original.value.id, backend.original.value.raw)
+        backend.recommendation?.let {
+            val recommendation = (listOf(backend.original.value) + backend.alternatives.map { item -> item.value })
+                .first { item -> item.id == it.candidateId }
+            text("Development recommendation · ${it.recommendation} · ${recommendation.raw ?: "Missing"} · ${it.reason}")
+        }
+        text("Backend decision · ${backend.disposition.name}")
+        text("Calibrated probability · ${backend.probability?.toPlainString() ?: "Unavailable · ${backend.probabilityUnavailableReason}"}")
+        text("Correction reason · ${backend.correctionReason}")
+        if (backend.suspicionReasons.isNotEmpty()) text("Review cues · ${backend.suspicionReasons.joinToString()}")
+        if (backend.conflict == true) text("Backend recorded an unresolved conflict.")
+        text("Retailer evidence · ${backend.retailer.status} · ${backend.retailer.reason}")
+        backend.retailer.refs.forEach { text("${it.entryId} · ${it.resource}") }
+        text(priceEvidenceLabel(backend.price))
+        addFieldSource(content, draft, backend.selected.tokenIds, "Selected OCR evidence")
+        if (backend.original.value.tokenIds != backend.selected.tokenIds) {
+            addFieldSource(content, draft, backend.original.value.tokenIds, "Original B2 OCR evidence")
+        }
+        backend.alternatives.forEachIndexed { index, alternative ->
+            content.addView(divider())
+            candidate("Alternative ${index + 1}", LiveReceiptReviewDraft.CandidateSource.ALTERNATIVE,
+                alternative.value.id, alternative.value.raw)
+            text("${alternative.status} · Calibrated probability ${alternative.probability?.toPlainString() ?: "unavailable"}")
+            if (alternative.constraints.isNotEmpty()) text(alternative.constraints.joinToString())
+            if (alternative.replacementSupport.isNotEmpty()) text(alternative.replacementSupport.joinToString())
+            text("Retailer evidence · ${alternative.retailer.status} · ${alternative.retailer.reason}")
+            text(priceEvidenceLabel(alternative.price))
+            alternative.references.forEach { ref ->
+                ref.observed?.let { text("Observed · $it") }
+                ref.spans.forEach { text("OCR span · ${it.text}") }
+            }
+            addFieldSource(content, draft, alternative.value.tokenIds, "Alternative OCR evidence")
+        }
+        content.addView(divider())
+        action("Edit value") { editLiveReviewField(field) }
+        if (backend.role == ReceiptFieldRole.UNIT_PRICE) {
+            action("I checked that no unit price was printed") { field.markPriceNotPrinted(); preserveReviewScroll() }
+        }
+        action("Reject this field") { field.reject(); preserveReviewScroll() }
+        action("Leave unresolved") { field.leaveUnresolved(); preserveReviewScroll() }
+        dialog.show()
+    }
+
+    private fun priceEvidenceLabel(price: com.pantryproof.prototype.contract.review.PriceEvidence): String =
+        listOfNotNull("Price evidence · ${price.status} · ${price.reason}",
+            price.observed?.let { "Observed RM $it" }, price.basis?.let { "Comparison basis $it" },
+            price.low?.let { "Reference band RM $it–${price.high}" }).joinToString(" · ")
+
+    private fun submittedImageView(bitmap: Bitmap) = android.widget.ImageView(this).apply {
+        setImageBitmap(bitmap)
+        adjustViewBounds = true
+        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+        maxHeight = dp(340)
+        contentDescription = "Submitted receipt image"
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    private fun addFieldSource(content: LinearLayout, draft: LiveReceiptReviewDraft, ids: List<String>, label: String) {
+        val ocr = draft.wrapper?.review?.ocr ?: return
+        val indexed = ocr.tokens.associateBy { it.id }
+        val tokens = ids.mapNotNull(indexed::get)
+        if (tokens.isEmpty()) return
+        content.addView(bodyText("$label · ${tokens.joinToString(" ") { it.text }}"))
+        val bitmap = preparedLiveImage?.bitmap
+        val current = selectedProcessingController?.state as? ReceiptProcessingLifecycle.State.Finished
+        if (current?.request !== draft.request || bitmap == null || bitmap.width != ocr.width || bitmap.height != ocr.height) {
+            content.addView(bodyText("Submitted image unavailable. The OCR text is shown above."))
+            return
+        }
+        content.addView(ui.actionButton("View source region", PantryActionStyle.TERTIARY) {
+            if (liveReviewDraft !== draft) return@actionButton
+            val points = tokens.flatMap { it.polygon }
+            val left = (kotlin.math.floor(points.minOf { it.x }.toDouble()).toInt() - 8).coerceIn(0, bitmap.width - 1)
+            val top = (kotlin.math.floor(points.minOf { it.y }.toDouble()).toInt() - 8).coerceIn(0, bitmap.height - 1)
+            val right = (kotlin.math.ceil(points.maxOf { it.x }.toDouble()).toInt() + 8).coerceIn(left + 1, bitmap.width)
+            val bottom = (kotlin.math.ceil(points.maxOf { it.y }.toDouble()).toInt() + 8).coerceIn(top + 1, bitmap.height)
+            val crop = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+            showReceiptImageDialog(R.string.submitted_source_region, submittedImageView(crop))
+        })
+    }
+
+    private fun editLiveReviewField(field: LiveReceiptReviewDraft.Field) {
+        val role = requireNotNull(field.backend).role
+        val control = EditText(this).apply {
+            isSaveEnabled = false
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+            imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+            setSingleLine()
+            setText(field.displayed ?: field.backend.selected.canonical.orEmpty())
+            if (role in setOf(ReceiptFieldRole.QUANTITY, ReceiptFieldRole.UNIT_PRICE, ReceiptFieldRole.LINE_TOTAL, ReceiptFieldRole.RECEIPT_TOTAL)) {
+                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            }
+            if (role == ReceiptFieldRole.PURCHASE_DATE) hint = "YYYY-MM-DD"
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("Edit ${reviewRoleLabel(role).lowercase(Locale.ROOT)}")
+            .setView(control).setPositiveButton("Apply edit", null).setNegativeButton(android.R.string.cancel, null).show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            if (!field.edit(control.text.toString(), state.currentLocalDate())) {
+                control.error = when (role) {
+                    ReceiptFieldRole.PURCHASE_DATE -> "Enter a valid purchase date in YYYY-MM-DD."
+                    ReceiptFieldRole.QUANTITY -> "Enter a positive decimal with up to three fractional places."
+                    ReceiptFieldRole.STORE_NAME, ReceiptFieldRole.ITEM_DESCRIPTION -> "Enter a value."
+                    else -> "Enter an MYR amount with two decimal places."
+                }
+                return@setOnClickListener
+            }
+            dialog.dismiss()
+            preserveReviewScroll()
+        }
+    }
+
+    private fun showBulkOffer(draft: LiveReceiptReviewDraft) {
+        val shown = draft.bulkOffer(state.currentLocalDate())
+        val fields = draft.allFields.associateBy { it.original.id }
+        val explanation = if (shown.offers.isEmpty()) "There are no displayed values eligible for bulk acceptance."
+        else shown.offers.joinToString("\n") { offer ->
+            val field = requireNotNull(fields.getValue(offer.fieldId).backend)
+            val row = field.rowId?.let { id -> "Item ${draft.items.indexOfFirst { it.rowId == id } + 1} · " }.orEmpty()
+            "$row${reviewRoleLabel(field.role)} · ${offer.value} · Selected pre-review"
+        }
+        AlertDialog.Builder(this).setTitle("Approve displayed values").setMessage(explanation)
+            .setNegativeButton(android.R.string.cancel, null).apply {
+                if (shown.offers.isNotEmpty()) setPositiveButton("Approve listed values") { _, _ ->
+                    if (liveReviewDraft === draft && draft.acceptBulk(shown, state.currentLocalDate())) preserveReviewScroll()
+                    else showReviewMessage("The draft changed. Review the updated list.")
+                }
+            }.show()
+    }
+
+    private fun chooseReceiptConfirmation(draft: LiveReceiptReviewDraft) {
+        val count = draft.items.count { it.selected }
+        AlertDialog.Builder(this).setTitle("Choose confirmation mode")
+            .setMessage("$count included · ${draft.items.size - count} excluded from inventory")
+            .setNegativeButton(android.R.string.cancel, null)
+            .setNeutralButton("Inventory only") { _, _ -> showFinalConfirmation(draft, ReceiptConfirmationMode.INVENTORY_ONLY) }
+            .setPositiveButton("Inventory and receipt") { _, _ -> showFinalConfirmation(draft, ReceiptConfirmationMode.INVENTORY_AND_RECEIPT) }
+            .show()
+    }
+
+    private fun showFinalConfirmation(draft: LiveReceiptReviewDraft, mode: ReceiptConfirmationMode) {
+        if (liveReviewDraft !== draft || liveReviewConfirmation != null) return
+        val selection = draft.confirmation(mode, state.currentLocalDate(), acknowledged = false)
+        if (selection is LiveReceiptReviewDraft.ConfirmationCheck.Blocked) return showReviewMessage(selection.explanation)
+        val check = selection as LiveReceiptReviewDraft.ConfirmationCheck.Ready
+        val plan = check.confirmation
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), 0, dp(20), 0)
+            addView(bodyText("${plan.stock.size} included · ${plan.decisions.size - plan.stock.size} excluded from inventory"))
+            plan.stock.forEach { addView(bodyText("${it.name} · ${it.quantityLabel}")) }
+            draft.items.forEachIndexed { index, item ->
+                if (!plan.decisions[index].second) {
+                    val name = item.description.displayed ?: getString(R.string.review_item_number, index + 1)
+                    addView(bodyText(getString(R.string.confirmation_item_excluded, name)))
+                }
+            }
+            plan.history?.let { addView(bodyText("${purchaseCount(it)} · RM ${it.total.toPlainString()}"))
+                addView(bodyText(if (plan.keepOriginal) "Save image to receipt history" else "Save receipt details only")) }
+        }
+        val acknowledgement = if (check.needsIncompleteAcknowledgement) CheckBox(this).apply {
+            text = "I understand the purchase information is incomplete."
+            minHeight = dp(48)
+            content.addView(this)
+        } else null
         val dialog = AlertDialog.Builder(this)
-            .setTitle(R.string.live_review_confirm_title)
-            .setMessage(getString(R.string.live_review_confirm_body, summary))
+            .setTitle(if (plan.history == null) "Confirm inventory only" else "Confirm inventory and save receipt")
+            .setView(ScrollView(this).apply { addView(content) })
             .setNegativeButton(R.string.review_keep_editing, null)
-            .setPositiveButton(R.string.live_review_confirm_action) { _, _ ->
-                val current = selectedProcessingController?.state as? ReceiptProcessingLifecycle.State.Finished
-                if (currentScreen != Screen.T09_PROCESSING || liveReviewDraft !== draft ||
-                    current?.request !== draft.request
-                ) return@setPositiveButton
-                when (state.confirmLiveReceipt(draft, selection)) {
-                    PantryUiState.LiveConfirmation.INVALID -> showFailure(R.string.live_review_selection_changed)
-                    PantryUiState.LiveConfirmation.INVALID_DATE -> showFailure(liveDateError(draft.purchaseDate.value))
-                    PantryUiState.LiveConfirmation.ALREADY_SAVED -> showFailure(R.string.live_review_already_saved)
-                    PantryUiState.LiveConfirmation.SAVE_FAILED -> showFailure(R.string.live_review_save_failed)
-                    PantryUiState.LiveConfirmation.SAVED -> {
-                        pendingInventorySuccess = receiptSuccess(selection.rows.map { it.id })
-                        returnToInventory()
+            .setPositiveButton("Confirm", null)
+            .create()
+        liveReviewConfirmation = dialog
+        dialog.setOnDismissListener { if (liveReviewConfirmation === dialog) liveReviewConfirmation = null }
+        dialog.show()
+        val confirm = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        confirm.isEnabled = acknowledgement == null
+        acknowledgement?.setOnCheckedChangeListener { _, checked -> confirm.isEnabled = checked }
+        confirm.setOnClickListener {
+            val current = selectedProcessingController?.state as? ReceiptProcessingLifecycle.State.Finished
+            if (liveReviewDraft !== draft || current?.request !== draft.request || receiptCommitInProgress) return@setOnClickListener
+            val approved = plan.copy(incompleteAcknowledged = acknowledgement?.isChecked == true)
+            val original = if (approved.keepOriginal) preparedLiveImage?.originalBytes() else null
+            dialog.dismiss()
+            if (approved.keepOriginal && original == null) return@setOnClickListener showReviewMessage("The original image is unavailable. Review the retention choice or scan again.")
+            val worker = selectedProcessingWorker ?: return@setOnClickListener
+            receiptCommitInProgress = true
+            val saving = AlertDialog.Builder(this).setTitle("Saving confirmation")
+                .setMessage("Saving the approved items on this device.")
+                .setCancelable(false).show()
+            liveReviewConfirmation = saving
+            enqueueProcessingWorker(worker) {
+                val outcome = try { state.commitReview(draft, approved, original) } finally { original?.fill(0) }
+                runOnUiThread {
+                    receiptCommitInProgress = false
+                    if (liveReviewConfirmation === saving) liveReviewConfirmation = null
+                    saving.dismiss()
+                    if (isDestroyed || isFinishing) return@runOnUiThread
+                    when (outcome) {
+                        ManualInventoryStore.Commit.COMMITTED, ManualInventoryStore.Commit.REPLAYED -> {
+                            state.refreshDurableInventory()
+                            if (liveReviewDraft === draft && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                                pendingInventorySuccess = receiptSuccess(approved.stock.map { it.id })
+                                returnToInventory()
+                                state.acknowledgeConfirmations(setOf(approved.identity))
+                            } else {
+                                pendingReceiptAcknowledgements = state.recoverConfirmations().orEmpty()
+                                if (currentScreen == Screen.INVENTORY) render()
+                            }
+                        }
+                        ManualInventoryStore.Commit.FAILED -> if (liveReviewDraft === draft) {
+                            showReviewMessage("The confirmation could not be saved. Try again.")
+                        }
+                        ManualInventoryStore.Commit.CONFLICT -> if (liveReviewDraft === draft) {
+                            showReviewMessage("The confirmation changed or was already used. Review the current values.")
+                        }
                     }
                 }
             }
-            .create()
-        liveReviewConfirmation = dialog
-        dialog.setOnDismissListener {
-            if (liveReviewConfirmation === dialog) liveReviewConfirmation = null
         }
-        dialog.show()
+    }
+
+    private fun showReviewMessage(message: String) {
+        AlertDialog.Builder(this).setTitle("Receipt review").setMessage(message)
+            .setPositiveButton(android.R.string.ok, null).show()
     }
 
     private fun liveProcessingPanel(current: ReceiptProcessingLifecycle.State): View {
@@ -1230,6 +1430,14 @@ class MainActivity : ComponentActivity() {
                             PantryBannerTone.SUCCESS,
                         )
                     } else presentationStatePanel(outcome.result, live = true)
+                is ReceiptProcessingLifecycle.Outcome.HttpRefusal -> httpRefusalPanel(outcome.status)
+                ReceiptProcessingLifecycle.Outcome.LocalFailure.PROTOCOL_FAILURE -> ui.statePanel(
+                    "Invalid backend response", "Confirm the backend build supports receipt-review v1 before retrying.",
+                    PantryBannerTone.ERROR,
+                )
+                ReceiptProcessingLifecycle.Outcome.LocalFailure.IMAGE_LIMIT -> ui.statePanel(
+                    "Image cannot be sent", "Go back and recrop or choose a smaller receipt image.", PantryBannerTone.ERROR,
+                )
                 ReceiptProcessingLifecycle.Outcome.LocalFailure.TIMEOUT -> ui.statePanel(
                     getString(R.string.t09_processing_timeout), getString(R.string.t09_processing_recovery),
                     PantryBannerTone.INFO,
@@ -1253,6 +1461,23 @@ class MainActivity : ComponentActivity() {
             else -> R.string.t09_processing_ready_body
         }
         return ui.statePanel(getString(title), getString(body), PantryBannerTone.INFO)
+    }
+
+    private fun httpRefusalPanel(status: Int): View {
+        val message = when (status) {
+            400 -> "The backend refused this request. Go back, reopen the submitted frame and try again."
+            401 -> "The session credential was refused. Open Development Tools and enter the current approved credential."
+            406 -> "This backend does not offer receipt-review v1. Ask the operator to verify the approved backend build."
+            413 -> "The image is too large. Go back and crop it more tightly."
+            415 -> "The backend refused the image format. Try importing or capturing a fresh image."
+            422 -> "The backend could not read the submitted image. Recrop, replace it, or enter the receipt manually."
+            429 -> "The backend is busy and may still be releasing the prior attempt. Wait, then tap Process to retry."
+            500 -> "The backend failed to produce a result. Retry once it is ready, or enter the receipt manually."
+            503 -> "The backend is unavailable. Ask the operator to confirm cleanup and session authorization, then configure the fresh credential."
+            504 -> "The backend reached its time limit. Wait for cleanup before making a new explicit attempt."
+            else -> "Go back and check the approved local backend."
+        }
+        return ui.statePanel("Receipt processing · HTTP $status", message, PantryBannerTone.INFO)
     }
 
     private fun showReceiptSources() {
@@ -1547,11 +1772,27 @@ class MainActivity : ComponentActivity() {
                 val test = ui.actionButton(getString(R.string.selected_processing_action),
                     if (liveAvailable) PantryActionStyle.SECONDARY else PantryActionStyle.PRIMARY,
                     viewId = R.id.preview_process_selected) { navigate(Screen.SELECTED_PROCESSING) }
+                if (T09ProcessingConfig.isCapable(packageName)) {
+                    fun retentionLabel(enabled: Boolean) = if (enabled) "Save image to receipt history" else "Save receipt details only"
+                    val explanation = bodyText(retentionLabel(keepOriginal))
+                    add(android.widget.Switch(this@MainActivity).apply {
+                        id = R.id.keep_receipt_original
+                        text = "Keep original receipt"
+                        minHeight = dp(48)
+                        isChecked = keepOriginal
+                        setOnCheckedChangeListener { _, enabled ->
+                            keepOriginal = enabled
+                            reviewPreferences.edit().putBoolean("keepOriginal", enabled).apply()
+                            explanation.text = retentionLabel(enabled)
+                        }
+                    })
+                    add(explanation)
+                }
                 if (liveAvailable) {
                     add(space(8))
                     add(test)
                     sticky(ui.actionButton(getString(R.string.t09_processing_action), PantryActionStyle.PRIMARY) {
-                        T09ProcessingConfig.take()?.let { session ->
+                        T09ProcessingConfig.current()?.let { session ->
                             liveSession = session
                             livePhase = T09HttpTransport.Phase.PREPARING
                             liveCancelled = false
@@ -2737,6 +2978,7 @@ class MainActivity : ComponentActivity() {
                 gravity = Gravity.CENTER_VERTICAL
                 addView(count, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 if (developmentAvailable) addView(developmentEntry())
+                addView(receiptHistoryEntry())
                 addView(addInventoryEntry())
             })
         } else {
@@ -2749,6 +2991,16 @@ class MainActivity : ComponentActivity() {
         imageInputNotice?.let { notice ->
             add(imageInputNoticePanel(notice).apply { id = R.id.image_input_notice })
             add(space(6))
+        }
+        if (pendingReceiptAcknowledgements.isNotEmpty()) {
+            add(ui.banner("Receipt confirmation recovered", "The saved inventory and any receipt history are available.",
+                PantryBannerTone.SUCCESS))
+            add(ui.actionButton("Dismiss", PantryActionStyle.TERTIARY) {
+                if (state.acknowledgeConfirmations(pendingReceiptAcknowledgements)) {
+                    pendingReceiptAcknowledgements = emptySet()
+                    render()
+                }
+            })
         }
         val temporary = state.inventory.any { !ManualInventoryStore.isDurableRowId(it.id) }
         when {
@@ -2774,6 +3026,126 @@ class MainActivity : ComponentActivity() {
             inventoryResults = this
         })
         updateInventoryBrowseResults(announceImmediately = true)
+    }
+
+    private fun receiptHistoryEntry(): View = ui.iconButton(R.drawable.ic_sage_receipt, "Receipt history", R.id.receipt_history) {
+        historyIdentity = null
+        navigate(Screen.HISTORY)
+    }.apply { isEnabled = !state.manualInventoryLoadFailed }
+
+    private fun renderReceiptHistory() = setScreen("Receipt History", true) {
+        val records = state.receiptHistory()
+        if (records == null) {
+            add(ui.statePanel("Receipt history unavailable", "Return to inventory and try opening history again.", PantryBannerTone.ERROR))
+            return@setScreen
+        }
+        val count = records.size
+        add(bodyText(resources.getQuantityString(R.plurals.saved_receipts, count, count)))
+        if (records.isEmpty()) {
+            add(ui.statePanel("No saved receipts yet", "Receipts you confirm and save appear here.", PantryBannerTone.INFO))
+            return@setScreen
+        }
+        val search = EditText(this@MainActivity).apply {
+            id = R.id.receipt_history_search
+            hint = "Search stores and purchased items"
+            setSingleLine()
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+            imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+            minHeight = dp(48)
+            setText(historyQuery)
+        }
+        add(search)
+        val matches = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        add(matches)
+        val summaries = receiptHistoryMonths(records, "").associateBy { it.month }
+        fun updateHistory() {
+            matches.removeAllViews()
+            val groups = receiptHistoryMonths(records, historyQuery)
+            if (groups.isEmpty()) matches.addView(bodyText("No receipts match your search."))
+            groups.forEach { group ->
+                val summary = summaries.getValue(group.month)
+                matches.addView(sectionTitle(group.month.format(java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()))))
+                val monthly = resources.getQuantityString(R.plurals.saved_receipts, summary.purchases.size, summary.purchases.size)
+                matches.addView(bodyText("$monthly · RM ${summary.spending.toPlainString()} recorded spending"))
+                group.purchases.forEach { receipt ->
+                    matches.addView(space(8))
+                    matches.addView(ui.card {
+                        addView(ui.actionRow(receipt.store,
+                            "${receipt.date} · ${purchaseCount(receipt)} · RM\u00A0${receipt.total.toPlainString()}",
+                            R.drawable.ic_sage_receipt, ui.icon(R.drawable.ic_sage_right)) {
+                            historyIdentity = receipt.confirmationId
+                            navigate(Screen.HISTORY_DETAIL)
+                        })
+                    })
+                }
+                matches.addView(space(12))
+            }
+        }
+        updateHistory()
+        search.addTextChangedListener(simpleTextWatcher {
+            historyQuery = search.text.toString()
+            updateHistory()
+        })
+    }
+
+    private fun purchaseCount(receipt: PurchaseRecord): String =
+        resources.getQuantityString(R.plurals.purchased_items, receipt.rows.size, receipt.rows.size)
+
+    private fun renderReceiptHistoryDetail() = setScreen("Receipt details", true) {
+        val receipt = state.receiptHistory()?.firstOrNull { it.confirmationId == historyIdentity }
+        if (receipt == null) {
+            add(ui.statePanel("Receipt unavailable", "Go back to see the available receipts.", PantryBannerTone.INFO))
+            return@setScreen
+        }
+        add(ui.card {
+            addView(sectionTitle(receipt.store))
+            addView(bodyText("${receipt.date} · ${purchaseCount(receipt)}"))
+            addView(bodyText("Receipt total · RM ${receipt.total.toPlainString()}"))
+        })
+        add(space(10))
+        if (receipt.originalFile != null && state.originalReceipt(receipt.confirmationId) != null) {
+            add(receiptImageAction(R.string.sage_original_receipt) {
+                val file = state.originalReceipt(receipt.confirmationId)
+                val image = file?.let { decodePreviewBitmap(Uri.fromFile(it)) }?.let(::submittedImageView)
+                    ?.apply { contentDescription = "Retained original receipt" }
+                showReceiptImageDialog(R.string.sage_original_receipt, image)
+            })
+        } else {
+            add(bodyText(if (receipt.originalFile == null) "Receipt details saved." else "Original receipt image unavailable."))
+        }
+        add(space(10))
+        add(sectionTitle("Purchased items"))
+        receipt.rows.forEach { row ->
+            add(ui.card {
+                addView(sectionTitle(row.description))
+                val unit = row.inventoryUnit?.symbol?.takeIf(String::isNotEmpty)
+                addView(bodyText("Purchased quantity · ${row.quantity.toPlainString()}"))
+                if (row.included) addView(bodyText("Included in inventory · ${unit.orEmpty()}"))
+                else addView(bodyText("Excluded from inventory"))
+                if (row.unitPrice != null) addView(bodyText("Unit price · RM ${row.unitPrice.toPlainString()}"))
+                else addView(bodyText("Unit price absent"))
+                addView(bodyText("Line total · RM ${row.lineTotal.toPlainString()}"))
+            })
+            add(space(8))
+        }
+        add(ui.actionButton("Delete receipt", PantryActionStyle.DESTRUCTIVE, iconResource = R.drawable.ic_sage_trash) {
+            confirmReceiptDeletion(receipt)
+        })
+    }
+
+    private fun confirmReceiptDeletion(receipt: PurchaseRecord) {
+        AlertDialog.Builder(this).setTitle("Delete this receipt?")
+            .setMessage("This removes the purchase record, any saved image and private review evidence. Inventory stays as it is. The confirmation remains used.")
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton("Delete receipt") { _, _ ->
+                if (state.deleteReceipt(receipt.confirmationId)) {
+                    historyIdentity = null
+                    goBack()
+                } else showReviewMessage("The receipt could not be deleted. Try again.")
+            }.show()
     }
 
     private fun inventorySearchRow(): View {
@@ -3281,12 +3653,12 @@ class MainActivity : ComponentActivity() {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         addView(TextView(this@MainActivity, null, 0, R.style.TextAppearance_PantryProof_ItemTitle).apply {
-            text = item.quantity.toString()
+            text = item.quantityLabel
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             setPaddingRelative(dp(8), 0, dp(4), 0)
         })
         addView(ui.icon(R.drawable.ic_sage_right), LinearLayout.LayoutParams(dp(24), dp(24)))
-        contentDescription = listOf(item.name, source, getString(R.string.inventory_quantity_label, item.quantity)).joinToString(". ")
+        contentDescription = listOf(item.name, source, getString(R.string.inventory_quantity_label, item.quantityLabel)).joinToString(". ")
         ui.markButton(this, inventoryRow = true)
         setOnClickListener { showInventoryItemDetails(item.id) }
     }
@@ -3328,24 +3700,26 @@ class MainActivity : ComponentActivity() {
         }
         val label = bodyText(getString(R.string.sage_quantity))
         body.addView(label)
-        val minimum = PantryUiState.MIN_INVENTORY_QUANTITY
-        val maximum = PantryUiState.MAX_INVENTORY_QUANTITY
+        val maximum = item.unit.maximum
         lateinit var decrease: View
         lateinit var increase: View
         fun updateQuantity() {
             val current = state.inventory.firstOrNull { it.id == id } ?: return
             val value = current.quantity
-            quantity.text = value.toString()
-            val boundary = when (value) {
-                minimum -> getString(R.string.inventory_minimum_hint)
-                maximum -> getString(R.string.inventory_maximum_hint)
+            quantity.text = current.quantityLabel
+            val canDecrease = value >= current.unit.step
+            val canIncrease = value + current.unit.step <= maximum
+            val boundary = when {
+                !canDecrease -> getString(R.string.inventory_minimum_hint)
+                !canIncrease -> getString(R.string.inventory_maximum_hint)
                 else -> null
             }
-            quantity.contentDescription = listOfNotNull(getString(R.string.inventory_quantity_label, value), boundary)
-                .joinToString(". ")
-            val focused = decrease.hasFocus() && value == minimum || increase.hasFocus() && value == maximum
-            decrease.isEnabled = value > minimum
-            increase.isEnabled = value < maximum
+            quantity.contentDescription = listOfNotNull(
+                getString(R.string.inventory_quantity_label, current.quantityLabel), boundary,
+            ).joinToString(". ")
+            val focused = decrease.hasFocus() && !canDecrease || increase.hasFocus() && !canIncrease
+            decrease.isEnabled = canDecrease
+            increase.isEnabled = canIncrease
             if (focused) {
                 quantity.isFocusableInTouchMode = true
                 quantity.requestFocus()
@@ -3387,6 +3761,28 @@ class MainActivity : ComponentActivity() {
         sheet = showInventorySheet(item.name, body, onDismiss = { restoreInventoryRowFocus(id, restoreKeyboard, restoreReader) })
     }
 
+    private fun inventoryUnitChoice(
+        initial: InventoryUnit,
+        onChanged: (InventoryUnit) -> Unit,
+    ): View {
+        val units = InventoryUnit.entries
+        fun label(unit: InventoryUnit): String = unit.symbol.ifEmpty { getString(R.string.inventory_unit_unspecified) }
+        var selected = initial
+        lateinit var control: Button
+        control = ui.actionButton(
+            getString(R.string.inventory_unit_value, label(initial)), PantryActionStyle.SECONDARY,
+        ) {
+            ui.showChoicePopup(control, units.map(::label).toTypedArray(), selected.ordinal) { index ->
+                selected = units[index]
+                val value = getString(R.string.inventory_unit_value, label(selected))
+                control.text = value
+                control.contentDescription = value
+                onChanged(selected)
+            }
+        }
+        return control
+    }
+
     private fun showInventoryItemEditor(item: InventoryItem? = null, onSaved: (() -> Unit)? = null) {
         val form = LinearLayout(this).apply {
             id = R.id.sage_inventory_editor
@@ -3400,9 +3796,10 @@ class MainActivity : ComponentActivity() {
             it.field.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
             it.field.imeOptions = EditorInfo.IME_ACTION_NEXT or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
         }
+        var unit = item?.unit ?: InventoryUnit.UNKNOWN
         val quantity = EditText(this).apply {
             id = R.id.inventory_item_quantity
-            inputType = InputType.TYPE_CLASS_NUMBER
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             setSingleLine(true)
             minHeight = dp(48)
             gravity = Gravity.CENTER
@@ -3410,21 +3807,17 @@ class MainActivity : ComponentActivity() {
             imeOptions = EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
             background = null
             setTextAppearance(R.style.TextAppearance_PantryProof_Display)
-            setText(item?.quantity?.toString().orEmpty())
+            setText(item?.quantity?.toPlainString().orEmpty())
         }
         form.addView(name.container)
         form.addView(space(8))
-        form.addView(bodyText(getString(R.string.inventory_item_quantity)).apply { labelFor = quantity.id })
-        val minimum = PantryUiState.MIN_INVENTORY_QUANTITY
-        val maximum = PantryUiState.MAX_INVENTORY_QUANTITY
-        fun amount() = quantity.text.toString().trim().toIntOrNull()
+        fun maximum() = unit.maximum
+        fun amount() = unit.parse(quantity.text.toString())?.takeIf(unit::stores)
         fun changeDraft(delta: Int) {
-            val raw = quantity.text.toString()
-            val current = amount()
-            if (raw.isNotBlank() && (current == null || current !in minimum..maximum)) return
-            val next = (current ?: minimum) + delta
-            if (next in minimum..maximum) {
-                quantity.setText(next.toString())
+            val current = if (quantity.text.isBlank()) BigDecimal.ZERO else amount() ?: return
+            val next = current + unit.step.multiply(delta.toBigDecimal())
+            if (next.signum() >= 0 && next <= maximum()) {
+                quantity.setText(next.toPlainString())
                 quantity.setSelection(quantity.length())
             }
         }
@@ -3434,9 +3827,19 @@ class MainActivity : ComponentActivity() {
             getString(R.string.inventory_item_quantity)), true) { changeDraft(1) }
         fun stepperState() {
             val count = amount()
-            decrease.isEnabled = count != null && count in (minimum + 1)..maximum
-            increase.isEnabled = quantity.text.isBlank() || count != null && count in minimum until maximum
+            decrease.isEnabled = count != null && count >= unit.step
+            increase.isEnabled = quantity.text.isBlank() || count != null && count + unit.step <= maximum()
         }
+        if (unit == InventoryUnit.UNKNOWN) {
+            form.addView(inventoryUnitChoice(unit) {
+                unit = it
+                quantity.error = null
+                stepperState()
+            })
+        } else {
+            form.addView(bodyText(getString(R.string.inventory_unit_value, unit.symbol)))
+        }
+        form.addView(bodyText(getString(R.string.inventory_item_quantity)).apply { labelFor = quantity.id })
         quantity.addTextChangedListener(simpleTextWatcher(::stepperState))
         stepperState()
         form.addView(LinearLayout(this).apply {
@@ -3468,15 +3871,21 @@ class MainActivity : ComponentActivity() {
             val rawName = name.field.text.toString()
             val rawQuantity = quantity.text.toString()
             val previouslySaved = if (item == null) state.inventory.mapTo(hashSetOf()) { it.id } else emptySet()
-            val result = if (item == null) state.addInventoryItem(rawName, rawQuantity)
-                else state.editInventoryItem(item.id, rawName, rawQuantity)
+            val result = if (item == null) state.addInventoryItem(rawName, rawQuantity, unit)
+                else state.editInventoryItem(item.id, rawName, rawQuantity, unit)
             when (result) {
                 PantryUiState.InventoryChange.INVALID_NAME -> focusInvalidField(name.also {
                     applyReviewFieldError(it, getString(R.string.inventory_name_required))
                 })
                 PantryUiState.InventoryChange.INVALID_QUANTITY -> {
                     applyReviewFieldError(name, null)
-                    quantity.error = getString(R.string.inventory_quantity_invalid)
+                    quantity.error = if (unit == InventoryUnit.UNKNOWN) {
+                        getString(R.string.inventory_quantity_invalid)
+                    } else if (unit.fractionalPlaces == 0) {
+                        getString(R.string.inventory_count_quantity_invalid, unit.maximum.toPlainString())
+                    } else {
+                        getString(R.string.inventory_decimal_quantity_invalid, unit.maximum.toPlainString())
+                    }
                     quantity.requestFocus()
                 }
                 PantryUiState.InventoryChange.NOT_SAVED -> {
@@ -3574,6 +3983,7 @@ class MainActivity : ComponentActivity() {
                 Screen.INVENTORY -> R.id.screen_inventory
                 Screen.PROCESSING_DEMO -> R.id.screen_processing_demo
                 Screen.SELECTED_PROCESSING, Screen.T09_PROCESSING -> R.id.screen_selected_processing
+                Screen.HISTORY, Screen.HISTORY_DETAIL -> View.NO_ID
             }
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(ui.color(R.color.pantry_surface))
@@ -3612,6 +4022,7 @@ class MainActivity : ComponentActivity() {
         )
         val headerActions = if (inventory && !ui.stacked()) LinearLayout(this).apply {
             if (developmentAvailable) addView(developmentEntry())
+            addView(receiptHistoryEntry())
             addView(addInventoryEntry())
         } else null
         root.addView(FrameLayout(this).apply {
@@ -3736,18 +4147,28 @@ class MainActivity : ComponentActivity() {
     private fun writeInventory(bundle: Bundle, inventory: List<InventoryItem>) {
         bundle.putStringArrayList("inventoryIds", ArrayList(inventory.map(InventoryItem::id)))
         bundle.putStringArrayList("inventoryNames", ArrayList(inventory.map(InventoryItem::name)))
-        bundle.putIntArray("inventoryQuantities", inventory.map(InventoryItem::quantity).toIntArray())
+        bundle.putStringArrayList("inventoryDecimalQuantities", ArrayList(inventory.map { it.quantity.toPlainString() }))
+        bundle.putStringArrayList("inventoryUnits", ArrayList(inventory.map { it.unit.code }))
         bundle.putStringArrayList("inventoryStates", ArrayList(inventory.map(InventoryItem::state)))
     }
 
     private fun readInventory(bundle: Bundle): List<InventoryItem>? = runCatching {
         val ids = requireNotNull(bundle.getStringArrayList("inventoryIds"))
         val names = requireNotNull(bundle.getStringArrayList("inventoryNames"))
-        val quantities = requireNotNull(bundle.getIntArray("inventoryQuantities"))
+        val quantities = if (bundle.containsKey("inventoryDecimalQuantities")) {
+            requireNotNull(bundle.getStringArrayList("inventoryDecimalQuantities")).map(::BigDecimal)
+        } else {
+            requireNotNull(bundle.getIntArray("inventoryQuantities")).map { it.toBigDecimal() }
+        }
         val states = requireNotNull(bundle.getStringArrayList("inventoryStates"))
-        require(listOf(names.size, quantities.size, states.size).all { it == ids.size })
+        val units = if (bundle.containsKey("inventoryDecimalQuantities")) {
+            requireNotNull(bundle.getStringArrayList("inventoryUnits")).map { requireNotNull(InventoryUnit.fromCode(it)) }
+        } else {
+            List(ids.size) { InventoryUnit.UNKNOWN }
+        }
+        require(listOf(names.size, quantities.size, states.size, units.size).all { it == ids.size })
         ids.indices.map { index ->
-            InventoryItem(ids[index], names[index], quantities[index], states[index])
+            InventoryItem(ids[index], names[index], quantities[index], states[index], units[index])
         }
     }.getOrNull()
 

@@ -59,6 +59,12 @@ internal class T09DebugConfigurationActivity : Activity() {
             addView(ui.actionButton(getString(R.string.t09_debug_configure), PantryActionStyle.PRIMARY) {
                 applyConfiguration()
             })
+            if (T09ProcessingConfig.isConfigured()) {
+                addView(ui.actionButton("Clear session credential", PantryActionStyle.SECONDARY) {
+                    T09ProcessingConfig.clear()
+                    finish()
+                })
+            }
         }
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL

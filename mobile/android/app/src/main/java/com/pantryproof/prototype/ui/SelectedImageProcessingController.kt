@@ -295,11 +295,26 @@ internal class SelectedImageProcessingController private constructor(
         publish()
     }
 
-    /** LIVE owns one captured URI/crop. Its bounded preparation runs after Start. */
-    fun selectLiveInput() {
+    /** Prepare and preview the same bytes the explicit Start will submit. */
+    fun selectLiveInput(prepare: () -> Boolean) {
         check(!disposed && consumerMode == PresentationConsumerMode.LIVE && inputState == InputState.EMPTY)
-        inputState = InputState.READY
+        inputState = InputState.PREPARING
         processing.selectInput()
+        postWorker {
+            val ready = runCatching(prepare).getOrDefault(false)
+            postUi {
+                if (!disposed) {
+                    inputState = if (ready) InputState.READY else InputState.ERROR
+                    publish()
+                }
+            }
+        }
+    }
+
+    fun allowExplicitRetry() {
+        if (!disposed && consumerMode == PresentationConsumerMode.LIVE &&
+            inputState == InputState.READY && state is ReceiptProcessingLifecycle.State.Finished
+        ) processing.selectInput()
     }
 
     fun start() {

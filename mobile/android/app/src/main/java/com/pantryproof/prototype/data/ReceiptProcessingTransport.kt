@@ -21,7 +21,21 @@ internal sealed interface ReceiptProcessingDelivery {
 
         @Synchronized
         fun takeBytes(): ByteArray = checkNotNull(snapshot).also { snapshot = null }
+
+        @Synchronized
+        fun discard() {
+            snapshot?.fill(0)
+            snapshot = null
+        }
     }
+
+    class ReviewEnvelope(bytes: ByteArray, val width: Int, val height: Int) : ReceiptProcessingDelivery {
+        val body = Envelope(bytes)
+    }
+
+    data class HttpRefusal(val status: Int) : ReceiptProcessingDelivery
+    data object ProtocolFailure : ReceiptProcessingDelivery
+    data object ImageLimit : ReceiptProcessingDelivery
 
     data object NoEnvelope : ReceiptProcessingDelivery
     data object ExecutionFailure : ReceiptProcessingDelivery

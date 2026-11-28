@@ -21,6 +21,13 @@ data class Receipt(
 data class InventoryItem(
     val id: String,
     val name: String,
-    val quantity: Int,
+    val quantity: BigDecimal,
     val state: String,
-)
+    val unit: InventoryUnit = InventoryUnit.UNKNOWN,
+) {
+    constructor(id: String, name: String, quantity: Int, state: String) :
+        this(id, name, quantity.toBigDecimal(), state)
+
+    val quantityLabel: String
+        get() = listOf(quantity.toPlainString(), unit.symbol).filter(String::isNotEmpty).joinToString(" ")
+}

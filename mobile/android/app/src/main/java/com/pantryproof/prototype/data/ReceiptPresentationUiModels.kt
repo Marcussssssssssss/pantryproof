@@ -67,7 +67,10 @@ data class PresentedReceipt(
         value?.takeIf { status == PresentedFieldStatus.EXTRACTED }
 }
 
-class LiveReceiptEvidence internal constructor(val envelope: ReceiptPresentationV1)
+class LiveReceiptEvidence internal constructor(
+    val envelope: ReceiptPresentationV1,
+    internal val wrapper: com.pantryproof.prototype.contract.review.ReceiptReviewV1? = null,
+)
 
 sealed interface ReceiptPresentationUiResult {
     val canReview: Boolean get() = this is Available

@@ -1,6 +1,7 @@
 package com.pantryproof.prototype.ui
 
 import com.pantryproof.prototype.data.InventoryItem
+import com.pantryproof.prototype.data.InventoryUnit
 import com.pantryproof.prototype.data.ManualInventoryStore
 import com.pantryproof.prototype.data.MockReceiptPresentationSource
 import org.junit.Assert.*
@@ -44,6 +45,18 @@ class InventoryBrowseProjectionTest {
         assertEquals(listOf("stock-a", "stock-other"), result.map { it.id })
         assertSame(duplicates[0], result[0]); assertSame(duplicates[1], result[1])
     }
+    @Test fun decimalQuantitySortComparesNumericValuesAndKeepsTiesInSourceOrder() {
+        val row = items.first()
+        val unit = InventoryUnit.KILOGRAM
+        val a = row.copy(id = "a", quantity = "10".toBigDecimal(), unit = unit)
+        val b = row.copy(id = "b", quantity = "2.50".toBigDecimal(), unit = unit)
+        val c = row.copy(id = "c", quantity = "2.500".toBigDecimal(), unit = unit)
+        val projection = InventoryBrowseProjection(sort = InventoryBrowseProjection.Sort.QUANTITY_ASCENDING)
+        assertEquals(listOf(b, c, a), projection.project(listOf(a, b, c)))
+        projection.sort = InventoryBrowseProjection.Sort.QUANTITY_DESCENDING
+        assertEquals(listOf(a, b, c), projection.project(listOf(a, b, c)))
+    }
+
     @Test fun quantityAscendingKeepsOriginalPositionForTies() {
         assertEquals(listOf("stock-a", "manual-receipt-one", "stock-duplicate", "stock-z", "receipt-one"), ids(InventoryBrowseProjection(sort = InventoryBrowseProjection.Sort.QUANTITY_ASCENDING)))
     }
@@ -104,9 +117,9 @@ class InventoryBrowseProjectionTest {
         }
     }
     @Test fun quantitiesAreNotNormalizedOrChangedByProjection() {
-        val values = listOf(items[0].copy(quantity = 0), items[1].copy(quantity = 99))
-        assertEquals(listOf(99, 0), InventoryBrowseProjection(sort = InventoryBrowseProjection.Sort.QUANTITY_DESCENDING).project(values).map { it.quantity })
-        assertEquals(listOf(0, 99), values.map { it.quantity })
+        val values = listOf(items[0].copy(quantity = 0.toBigDecimal()), items[1].copy(quantity = 99.toBigDecimal()))
+        assertEquals(listOf(99.toBigDecimal(), 0.toBigDecimal()), InventoryBrowseProjection(sort = InventoryBrowseProjection.Sort.QUANTITY_DESCENDING).project(values).map { it.quantity })
+        assertEquals(listOf(0.toBigDecimal(), 99.toBigDecimal()), values.map { it.quantity })
     }
     @Test fun projectionDoesNotConfirmOrChangePantryReceiptOrStock() {
         val state = PantryUiState(MockReceiptPresentationSource())
@@ -122,7 +135,7 @@ class InventoryBrowseProjectionTest {
         assertEquals("stock-eggs", before.first().id)
         state.adjustInventory("stock-rice", 5)
         assertEquals("stock-rice", p.project(state.inventory).first().id)
-        assertEquals(1, before.first { it.id == "stock-rice" }.quantity)
-        assertEquals(6, state.inventory.first { it.id == "stock-rice" }.quantity)
+        assertEquals(1.toBigDecimal(), before.first { it.id == "stock-rice" }.quantity)
+        assertEquals(6.toBigDecimal(), state.inventory.first { it.id == "stock-rice" }.quantity)
     }
 }

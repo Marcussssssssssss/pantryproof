@@ -118,7 +118,7 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
         assertEquals(confirmed, session())
         onView(withTagValue(equalTo("inventory-increase:${milk.id}"))).perform(scrollTo(), click())
         val adjusted = confirmed.copy(inventory = confirmed.inventory.map {
-            if (it.id == milk.id) it.copy(quantity = it.quantity + 1) else it
+            if (it.id == milk.id) it.copy(quantity = it.quantity + 1.toBigDecimal()) else it
         })
         assertEquals(adjusted, session())
         onView(withText(R.string.inventory_add_receipt)).perform(scrollTo(), click())
@@ -180,7 +180,7 @@ class PantryProofSessionJourneyAssuranceInstrumentedTest {
         assertEquals(initial.inventory, admitted.inventory.take(initial.inventory.size))
         val row = admitted.inventory.single { it.id.startsWith(PantryUiState.MANUAL_ROW_PREFIX) }
         assertEquals("I2E manual oats", row.name)
-        assertEquals(2, row.quantity)
+        assertEquals(2.toBigDecimal(), row.quantity)
         assertEquals(initial.inventory.size + 1, admitted.inventory.size)
         browse(" oats ", "Quantity high to low", "Manually entered receipt items")
         assertRows(row.id)

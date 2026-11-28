@@ -3,6 +3,7 @@ package com.pantryproof.prototype.ui
 import com.pantryproof.prototype.contract.v1.PresentationConsumerMode
 import com.pantryproof.prototype.contract.v1.PresentationSourceType
 import com.pantryproof.prototype.data.InventoryItem
+import com.pantryproof.prototype.data.InventoryUnit
 import com.pantryproof.prototype.data.M3eReceiptPresentationAdapter
 import com.pantryproof.prototype.data.ManualInventoryStore
 import com.pantryproof.prototype.data.MockReceiptPresentationSource
@@ -125,7 +126,7 @@ class LiveReceiptReviewTest {
     }
 
     @Test
-    fun decimalQuantityNeedsExplicitCorrectionOrExclusion() {
+    fun decimalQuantityNeedsACompatibleExplicitUnitOrExclusion() {
         val draft = requireNotNull(LiveReceiptReviewDraft.from(finished(decimal = true)))
         val item = draft.items.first()
         assertEquals("0.750", item.quantity.value)
@@ -136,8 +137,21 @@ class LiveReceiptReviewTest {
         item.selected = false
         assertEquals(2, ready(draft).rows.size)
         item.selected = true
-        item.quantity.value = "1"
-        assertEquals(1, ready(draft).rows.first().quantity)
+        item.inventoryUnit = InventoryUnit.EACH
+        assertEquals(LiveReceiptReviewDraft.Selection.Invalid(LiveReceiptReviewDraft.Problem.QUANTITY, 1), draft.selection())
+        item.inventoryUnit = InventoryUnit.KILOGRAM
+        val selection = ready(draft)
+        val row = selection.rows.first()
+        assertEquals("0.750".toBigDecimal(), row.quantity)
+        assertEquals(InventoryUnit.KILOGRAM, row.unit)
+        val store = TestManualInventoryPersistence()
+        val state = PantryUiState(source, store)
+        item.inventoryUnit = InventoryUnit.GRAM
+        assertEquals(LiveConfirmation.INVALID, state.confirmLiveReceipt(draft, selection))
+        assertTrue(store.committed.isEmpty())
+        item.inventoryUnit = InventoryUnit.KILOGRAM
+        assertEquals(LiveConfirmation.SAVED, state.confirmLiveReceipt(draft, selection))
+        assertEquals(row, PantryUiState(source, store).inventory.single { it.id == row.id })
         assertEquals("0.750", item.quantity.original.value)
     }
 
@@ -199,7 +213,7 @@ class LiveReceiptReviewTest {
         val reopened = PantryUiState(source, store)
         reopened.restore(null, source.syntheticInventory() + liveRow, false)
         assertEquals(source.syntheticInventory() + store.committed, reopened.inventory)
-        assertEquals(4, reopened.inventory.single { it.id == liveRow.id }.quantity)
+        assertEquals(4.toBigDecimal(), reopened.inventory.single { it.id == liveRow.id }.quantity)
         val liveStock = InventoryBrowseProjection(source = InventoryBrowseProjection.Source.LIVE).project(reopened.inventory)
         assertEquals(selection.rows.map(InventoryItem::id), liveStock.map(InventoryItem::id))
     }
@@ -271,7 +285,7 @@ class LiveReceiptReviewTest {
         filter.source = InventoryBrowseProjection.Source.STANDALONE
         assertEquals(listOf(standalone), filter.project(reopened.inventory))
         assertTrue(reopened.adjustInventory(standalone.id, 1))
-        assertEquals(99, store.committed.single { it.id == standalone.id }.quantity)
+        assertEquals(99.toBigDecimal(), store.committed.single { it.id == standalone.id }.quantity)
         assertEquals(PantryUiState.InventoryChange.SAVED, reopened.editInventoryItem(standalone.id, "Flour", "0"))
         assertTrue(reopened.deleteInventoryItem(standalone.id))
         assertEquals(listOf(originalStock, liveRow), store.committed)

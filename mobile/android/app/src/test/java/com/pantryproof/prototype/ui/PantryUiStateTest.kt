@@ -2,6 +2,7 @@ package com.pantryproof.prototype.ui
 
 import com.pantryproof.prototype.data.MockReceiptPresentationSource
 import com.pantryproof.prototype.data.InventoryItem
+import com.pantryproof.prototype.data.InventoryUnit
 import com.pantryproof.prototype.data.ManualInventoryStore
 import com.pantryproof.prototype.data.PresentedFieldStatus
 import com.pantryproof.prototype.data.ReceiptPresentationSource
@@ -31,7 +32,7 @@ class PantryUiStateTest {
 
         state.adjustInventory(first.id, -100)
 
-        assertEquals(0, state.inventory.first().quantity)
+        assertEquals(0.toBigDecimal(), state.inventory.first().quantity)
     }
 
     @Test
@@ -41,7 +42,7 @@ class PantryUiStateTest {
 
         state.adjustInventory(first.id, 1000)
 
-        assertEquals(PantryUiState.MAX_INVENTORY_QUANTITY, state.inventory.first().quantity)
+        assertEquals(PantryUiState.MAX_INVENTORY_QUANTITY.toBigDecimal(), state.inventory.first().quantity)
     }
 
     @Test
@@ -56,7 +57,7 @@ class PantryUiStateTest {
 
         assertEquals(firstSize, state.inventory.size)
         assertEquals(3, state.inventory.count { it.id.startsWith("receipt-") })
-        assertEquals(0, state.inventory.first { it.id == baselineId }.quantity)
+        assertEquals(0.toBigDecimal(), state.inventory.first { it.id == baselineId }.quantity)
     }
 
     @Test
@@ -89,9 +90,9 @@ class PantryUiStateTest {
         state.restore(restoredReceipt, confirmedState.inventory, restoredDemoConfirmed = true)
 
         assertEquals("Restored temporary store", state.receipt?.storeName)
-        assertEquals(7, state.inventory.first().quantity)
+        assertEquals(7.toBigDecimal(), state.inventory.first().quantity)
         assertEquals(3, state.inventory.count { it.id.startsWith("receipt-") })
-        assertEquals(4, state.inventory.first { it.id == adjustedReceiptRowId }.quantity)
+        assertEquals(4.toBigDecimal(), state.inventory.first { it.id == adjustedReceiptRowId }.quantity)
         assertTrue(state.demoConfirmed)
     }
 
@@ -127,7 +128,7 @@ class PantryUiStateTest {
 
             assertEquals(null, state.receipt)
             assertFalse(state.demoConfirmed)
-            assertEquals(7, state.inventory.single().quantity)
+            assertEquals(7.toBigDecimal(), state.inventory.single().quantity)
             assertTrue(state.inventory.none { it.id.startsWith("receipt-") })
         }
     }
@@ -155,7 +156,7 @@ class PantryUiStateTest {
 
         assertEquals(null, state.receipt)
         assertFalse(state.demoConfirmed)
-        assertEquals(4, state.inventory.single().quantity)
+        assertEquals(4.toBigDecimal(), state.inventory.single().quantity)
         assertTrue(state.inventory.none { it.id.startsWith("receipt-") })
     }
 
@@ -185,7 +186,7 @@ class PantryUiStateTest {
 
         assertEquals(null, state.receipt)
         assertFalse(state.demoConfirmed)
-        assertEquals(5, state.inventory.single().quantity)
+        assertEquals(5.toBigDecimal(), state.inventory.single().quantity)
         assertTrue(state.inventory.none { it.id.startsWith("receipt-") })
     }
 
@@ -205,7 +206,7 @@ class PantryUiStateTest {
 
         assertEquals(source.syntheticReceipt(), state.receipt)
         assertFalse(state.demoConfirmed)
-        assertEquals(8, state.inventory.single().quantity)
+        assertEquals(8.toBigDecimal(), state.inventory.single().quantity)
         assertTrue(state.inventory.none { it.id.startsWith("receipt-") })
     }
 
@@ -320,13 +321,13 @@ class PantryUiStateTest {
             state.applyReceipt(reviewed)
             assertTrue(state.confirmForInventoryPreview())
             val rowId = "receipt-${reviewed.items[0].id}"
-            assertEquals(quantity, state.inventory.single { it.id == rowId }.quantity)
+            assertEquals(quantity.toBigDecimal(), state.inventory.single { it.id == rowId }.quantity)
             state.adjustInventory(rowId, 1)
-            assertEquals(99, state.inventory.single { it.id == rowId }.quantity)
+            assertEquals(99.toBigDecimal(), state.inventory.single { it.id == rowId }.quantity)
             state.adjustInventory(rowId, 1)
-            assertEquals(99, state.inventory.single { it.id == rowId }.quantity)
+            assertEquals(99.toBigDecimal(), state.inventory.single { it.id == rowId }.quantity)
             state.adjustInventory(rowId, -1)
-            assertEquals(98, state.inventory.single { it.id == rowId }.quantity)
+            assertEquals(98.toBigDecimal(), state.inventory.single { it.id == rowId }.quantity)
             assertEquals(quantity, state.receipt!!.items[0].quantity)
             val restored = PantryUiState(source)
             restored.restore(state.receipt, state.inventory, state.demoConfirmed)
@@ -364,15 +365,15 @@ class PantryUiStateTest {
         val state = PantryUiState(MockReceiptPresentationSource())
         val id = state.inventory.first().id
         state.adjustInventory(id, 98)
-        assertEquals(99, state.inventory.single { it.id == id }.quantity)
+        assertEquals(99.toBigDecimal(), state.inventory.single { it.id == id }.quantity)
         state.adjustInventory(id, Int.MAX_VALUE)
-        assertEquals(99, state.inventory.single { it.id == id }.quantity)
+        assertEquals(99.toBigDecimal(), state.inventory.single { it.id == id }.quantity)
         state.adjustInventory(id, Int.MIN_VALUE)
-        assertEquals(0, state.inventory.single { it.id == id }.quantity)
+        assertEquals(0.toBigDecimal(), state.inventory.single { it.id == id }.quantity)
         state.adjustInventory(id, Int.MAX_VALUE)
-        assertEquals(99, state.inventory.single { it.id == id }.quantity)
+        assertEquals(99.toBigDecimal(), state.inventory.single { it.id == id }.quantity)
         state.adjustInventory(id, -1)
-        assertEquals(98, state.inventory.single { it.id == id }.quantity)
+        assertEquals(98.toBigDecimal(), state.inventory.single { it.id == id }.quantity)
     }
 
     @Test
@@ -385,7 +386,7 @@ class PantryUiStateTest {
             val originalRows = inventory.toList()
             val receipt = state.receipt
             val invalid = originalRows.mapIndexed { index, item ->
-                if (index == 0) item.copy(quantity = quantity) else item
+                if (index == 0) item.copy(quantity = quantity.toBigDecimal()) else item
             }
             state.restore(source.syntheticReceipt(), invalid, restoredDemoConfirmed = true)
             org.junit.Assert.assertSame(inventory, state.inventory)
@@ -400,7 +401,7 @@ class PantryUiStateTest {
         val savedStock = savedPreviewStock(99)
         val firstRowId = "receipt-${savedReceipt.items.first().id}"
         assertEquals(3, savedStock.count { it.id.startsWith("receipt-") })
-        assertEquals(99, savedStock.single { it.id == firstRowId }.quantity)
+        assertEquals(99.toBigDecimal(), savedStock.single { it.id == firstRowId }.quantity)
         val restored = PantryUiState(MockReceiptPresentationSource())
 
         restored.restore(savedReceipt, savedStock, restoredDemoConfirmed = true)
@@ -475,7 +476,7 @@ class PantryUiStateTest {
             org.junit.Assert.assertSame(savedReceipt, restored.receipt)
             assertEquals(savedStock.filterNot { it.id.startsWith("receipt-") }, restored.inventory)
             assertTrue(restored.confirmForInventoryPreview())
-            assertEquals(quantity, restored.inventory.single {
+            assertEquals(quantity.toBigDecimal(), restored.inventory.single {
                 it.id == "receipt-${savedReceipt.items.first().id}"
             }.quantity)
             assertTrue(restored.inventory.any { it.id == "manual-receipt-saved-manual" })
@@ -508,7 +509,7 @@ class PantryUiStateTest {
         for (quantity in listOf(1, 99, 100)) {
             for (stockQuantity in listOf(-1, 100, Int.MIN_VALUE, Int.MAX_VALUE)) {
                 val invalidStock = savedPreviewStock(99).mapIndexed { index, item ->
-                    if (index == 0) item.copy(quantity = stockQuantity) else item
+                    if (index == 0) item.copy(quantity = stockQuantity.toBigDecimal()) else item
                 }
                 val restored = PantryUiState(MockReceiptPresentationSource())
                 assertTrue(restored.confirmForInventoryPreview())
@@ -546,7 +547,7 @@ class PantryUiStateTest {
         assertEquals(listOf(row), store.committed)
         assertEquals(original, state.inventory)
         assertTrue(state.adjustInventory(row.id, -2))
-        assertEquals(row.copy(quantity = 0), PantryUiState(source, store).inventory.last())
+        assertEquals(row.copy(quantity = 0.toBigDecimal()), PantryUiState(source, store).inventory.last())
     }
 
     @Test
@@ -555,8 +556,8 @@ class PantryUiStateTest {
         val row = InventoryItem("manual-receipt-pasta", "Pasta", 8, "Manually entered receipt")
         val store = TestManualInventoryPersistence(listOf(row))
         val state = PantryUiState(source, store)
-        val sessionRows = source.syntheticInventory().map { it.copy(quantity = 5) }
-        val staleRows = listOf(row.copy(quantity = 2), row.copy(id = "manual-receipt-old", quantity = 100))
+        val sessionRows = source.syntheticInventory().map { it.copy(quantity = 5.toBigDecimal()) }
+        val staleRows = listOf(row.copy(quantity = 2.toBigDecimal()), row.copy(id = "manual-receipt-old", quantity = 100.toBigDecimal()))
 
         state.restore(source.syntheticReceipt(), sessionRows + staleRows, restoredDemoConfirmed = false)
 
@@ -595,14 +596,14 @@ class PantryUiStateTest {
         val rows = store.committed
         assertEquals(listOf("manual-inventory-$firstId", "manual-inventory-$secondId"), rows.map { it.id })
         assertEquals(listOf("Rice", "Rice"), rows.map { it.name })
-        assertEquals(listOf(0, 99), rows.map { it.quantity })
+        assertEquals(listOf(0.toBigDecimal(), 99.toBigDecimal()), rows.map { it.quantity })
 
         assertEquals(InventoryChange.NOT_SAVED, state.addInventoryItem("Duplicate ID", "1") { firstId })
         assertEquals(InventoryChange.INVALID_NAME, state.editInventoryItem(rows[0].id, "", "9"))
         assertEquals(InventoryChange.INVALID_QUANTITY, state.editInventoryItem(rows[0].id, "Rice", "100"))
         assertEquals(rows, store.committed)
         assertEquals(InventoryChange.SAVED, state.editInventoryItem(rows[0].id, " Brown rice ", "99"))
-        assertEquals(listOf(rows[0].copy(name = "Brown rice", quantity = 99), rows[1]), store.committed)
+        assertEquals(listOf(rows[0].copy(name = "Brown rice", quantity = 99.toBigDecimal()), rows[1]), store.committed)
     }
 
     @Test
@@ -627,7 +628,7 @@ class PantryUiStateTest {
         assertTrue(state.adjustInventory("manual-inventory-$id", 1))
         assertEquals(
             listOf(
-                receiptRow.copy(name = "New pasta", quantity = 7),
+                receiptRow.copy(name = "New pasta", quantity = 7.toBigDecimal()),
                 InventoryItem("manual-inventory-$id", "Rice", 2, ManualInventoryStore.STANDALONE_ROW_STATE),
             ),
             store.committed,
@@ -680,6 +681,24 @@ class PantryUiStateTest {
         state.revertReceipt()
         assertEquals(saved, store.committed)
         assertEquals(source.syntheticInventory() + saved, PantryUiState(source, store).inventory)
+    }
+
+    @Test
+    fun decimalStockKeepsItsExactUnitAndRejectsAnEditorWithAStaleUnit() {
+        val source = MockReceiptPresentationSource()
+        val store = TestManualInventoryPersistence()
+        val current = PantryUiState(source, store)
+        assertEquals(InventoryChange.INVALID_QUANTITY, current.addInventoryItem("Flour", "0.750", InventoryUnit.EACH))
+        assertEquals(InventoryChange.SAVED, current.addInventoryItem("Flour", "1"))
+        val row = store.committed.single()
+        val stale = PantryUiState(source, store)
+        assertEquals(InventoryChange.SAVED,
+            current.editInventoryItem(row.id, row.name, "0.750", InventoryUnit.KILOGRAM))
+        assertEquals(InventoryChange.NOT_SAVED,
+            stale.editInventoryItem(row.id, row.name, "750", InventoryUnit.GRAM))
+        assertTrue(current.adjustInventory(row.id, 1))
+        assertEquals(row.copy(quantity = "0.751".toBigDecimal(), unit = InventoryUnit.KILOGRAM),
+            PantryUiState(source, store).inventory.single { it.id == row.id })
     }
 
     private fun savedReceiptWithQuantity(quantity: Int) =

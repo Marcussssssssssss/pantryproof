@@ -42,11 +42,11 @@ class SelectedImageProcessingControllerTest {
         assertEquals(0, h.submissions)
     }
 
-    @Test fun liveSelectionDefersPreparationAndCancelBeforeHandoffClearsTheSessionOnDispose() {
+    @Test fun liveSelectionDefersPreparationAndCancellationLeavesTheSessionAvailable() {
         val worker = Queue()
         val ui = Queue()
         val timerDelays = mutableListOf<Long>()
-        val session = T09ProcessingConfig.Session("http", "10.0.2.2", 8765, "test-only")
+        val session = T09ProcessingConfig.Session("http", "10.0.2.2", 8765, "a".repeat(64))
         var prepared = false
         val transport = T09HttpTransport(session, { 50L }, { prepared = true; byteArrayOf() })
         val controller = SelectedImageProcessingController(
@@ -54,15 +54,21 @@ class SelectedImageProcessingControllerTest {
             { "image-live" }, { "request-live" }, {},
         )
         try {
-            controller.selectLiveInput()
-            assertTrue(controller.canStart)
+            var previewPrepared = false
+            controller.selectLiveInput { previewPrepared = true; true }
+            assertFalse(controller.canStart)
+            assertFalse(previewPrepared)
             assertFalse(prepared)
-            assertTrue(worker.tasks.isEmpty())
+            worker.drain()
+            assertTrue(previewPrepared)
+            assertFalse(controller.canStart)
+            ui.drain()
+            assertTrue(controller.canStart)
             controller.start()
             val request = (controller.state as State.Pending).request
             assertEquals(PresentationConsumerMode.LIVE, request.context.mode)
-            assertEquals(130_050L, request.deadlineElapsedMillis)
-            assertEquals(listOf(130_000L), timerDelays)
+            assertEquals(125_050L, request.deadlineElapsedMillis)
+            assertEquals(listOf(125_000L), timerDelays)
             controller.cancel()
             worker.drain()
             ui.drain()
@@ -71,6 +77,8 @@ class SelectedImageProcessingControllerTest {
         } finally {
             controller.dispose()
         }
+        assertNotNull(session.credential())
+        session.clear()
         assertNull(session.credential())
     }
 

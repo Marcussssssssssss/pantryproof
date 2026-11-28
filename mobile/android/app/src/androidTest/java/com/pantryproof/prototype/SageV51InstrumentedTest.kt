@@ -128,7 +128,7 @@ class SageV51InstrumentedTest {
         onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
         onView(withText(R.string.sage_receipt_confirmed)).check(matches(isDisplayed()))
         assertEquals("Fictional oats", requireNotNull(store.load()).single().name)
-        assertEquals(2, requireNotNull(store.load()).single().quantity)
+        assertEquals(2.toBigDecimal(), requireNotNull(store.load()).single().quantity)
         recordSageScreen("11-v51-receipt-success")
         onView(withId(R.id.inventory_success_dismiss)).perform(click())
         onView(withId(R.id.inventory_success)).check(doesNotExist())
@@ -368,7 +368,7 @@ class SageV51InstrumentedTest {
         recordSageScreen("10-v52-valid-review")
         onView(withId(R.id.manual_confirm)).perform(click())
         onView(withText(R.string.sage_receipt_confirmed)).check(matches(isDisplayed()))
-        assertEquals(2, requireNotNull(store.load()).single().quantity)
+        assertEquals(2.toBigDecimal(), requireNotNull(store.load()).single().quantity)
         recordSageScreen("10b-v52-valid-confirmation")
     }
 
