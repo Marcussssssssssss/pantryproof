@@ -66,3 +66,8 @@ mobile/android/local.properties
 *.db-wal
 *.db-shm
 data/SROIE2019/
+
+# Local prototype authorization and Android build artifacts
+/config/prototype_manifest.draft.json
+*.apk
+*.aab

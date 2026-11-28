@@ -1,0 +1,28 @@
+{
+  "scope": "LOCAL_GROCERY_RECEIPTS_V1",
+  "source_pins": [],
+  "gate_policy_sha256": "7911c21a79b3efaeef139769d515c64b6f08c1e75efabfc3a2df3d887318a0c8",
+  "profile": {
+    "launch": {
+      "executable": null, "working_directory": null, "import_paths": [],
+      "environment": [["SystemRoot", "<actual Windows system directory>"]]
+    },
+    "launcher": null, "worker": null, "runtime": [],
+    "detector": [], "recognizer": [], "configuration": null,
+    "controls_manifest": null,
+    "memory_bytes": null, "scratch_bytes": null,
+    "minimum_work_ns": null, "teardown_reserve_ns": null, "cpu_threads": 2
+  },
+  "receipt_method": {
+    "method_id": "PROPOSED_RECEIPT_V1",
+    "region": "W.P. Kuala Lumpur",
+    "resource_snapshot": {
+      "path": "resources/receipt_pricecatcher_kl_v1.json",
+      "length": 14994,
+      "sha256": "47f224c9a020cfa31f5692f3289f14e5080638ab777a2683900ca3beda18dda6"
+    },
+    "price_rule": null,
+    "correction_config": {"candidate_limit": 4, "proposal_limit": 24, "confidence_floor": "0.50"},
+    "verification": null
+  }
+}
