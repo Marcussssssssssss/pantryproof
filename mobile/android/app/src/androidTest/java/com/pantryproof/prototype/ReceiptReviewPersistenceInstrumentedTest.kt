@@ -18,6 +18,9 @@ import com.pantryproof.prototype.contract.v1.PresentationConsumerContext
 import com.pantryproof.prototype.contract.v1.PresentationConsumerMode
 import com.pantryproof.prototype.contract.v1.ReceiptPresentationResult
 import com.pantryproof.prototype.contract.v1.ReceiptPresentationV1Decoder
+import com.pantryproof.prototype.data.InventoryCategory
+import com.pantryproof.prototype.data.InventoryItem
+import com.pantryproof.prototype.data.InventoryMetadata
 import com.pantryproof.prototype.data.InventoryUnit
 import com.pantryproof.prototype.data.M3eReceiptPresentationAdapter
 import com.pantryproof.prototype.data.ManualInventoryStore
@@ -266,13 +269,18 @@ class ReceiptReviewPersistenceInstrumentedTest {
             onView(withText("Confirm inventory and save receipt")).check(matches(isDisplayed()))
             screenshot("confirmation")
         }
-        assertEquals(ManualInventoryStore.Commit.COMMITTED, store.commit(plan, fixture.bytes, null))
-        assertTrue(store.acknowledge(setOf(plan.identity)))
+        val seeded = InventoryItem("manual-inventory-v532-scan-seed", "Fixture beans", 1, ManualInventoryStore.STANDALONE_ROW_STATE)
+            .copy(household = InventoryMetadata(InventoryCategory.DRY_FOOD))
+        assertNotNull(store.update { it + seeded })
         try {
+            assertEquals(ManualInventoryStore.Commit.COMMITTED, store.commit(plan, fixture.bytes, null))
+            assertTrue(store.acknowledge(setOf(plan.identity)))
             ActivityScenario.launch<MainActivity>(launchIntent).use {
                 val group = context.getString(R.string.category_uncategorized)
                 onView(withText(group)).perform(sageScrollTo(), click())
                 onView(withText("0.750 kg")).perform(sageScrollTo()).check(matches(isDisplayed()))
+                onView(withText(R.string.category_dry_food)).perform(sageScrollTo()).check(matches(isDisplayed()))
+                assertEquals(listOf(seeded) + plan.stock, store.load())
                 screenshot("weighted-inventory")
                 onView(withId(R.id.receipt_history)).perform(click())
                 onView(withText("Receipt History")).check(matches(isDisplayed()))
@@ -292,7 +300,8 @@ class ReceiptReviewPersistenceInstrumentedTest {
             if (store.history()!!.any { it.confirmationId == plan.identity }) {
                 assertTrue(store.deleteHistory(plan.identity))
             }
-            assertNotNull(store.update { it.filterNot { row -> row.id in plan.stock.map { item -> item.id } } })
+            val fixtureIds = plan.stock.map { it.id } + seeded.id
+            assertNotNull(store.update { it.filterNot { row -> row.id in fixtureIds } })
         }
     }
 

@@ -60,6 +60,11 @@ class HouseholdFunctionalInstrumentedTest {
     private val fruit = InventoryCategory.VEGETABLES_FRUITS
 
     @Test fun manualPurchaseWithoutImageAppearsInSearchSpendingAndDetailsAndDeletesWithoutStockReversal() {
+        val existing = listOf(
+            row("original-fruit", "Fixture dates", "1.000", InventoryMetadata(fruit)),
+            row("original-dry", "Fixture oats", "1.000", InventoryMetadata(InventoryCategory.DRY_FOOD)),
+        )
+        assertNotNull(store.update { it + existing })
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scene ->
                 onView(withId(R.id.home_add_receipt)).perform(click())
@@ -79,6 +84,11 @@ class HouseholdFunctionalInstrumentedTest {
                 screenshot("01-manual-confirmation")
                 onView(withId(R.id.manual_confirm)).perform(click())
                 awaitHouseholdInventory(scene)
+                onView(withText(R.string.sage_receipt_confirmed)).check(matches(isDisplayed()))
+                scene.onActivity(::assertInventorySuccessPlacement)
+                onView(withId(R.id.inventory_success_dismiss)).perform(click())
+                onView(withText(R.string.category_vegetables_fruits)).perform(sageScrollTo(), click())
+                onView(withText("Task14 pears")).perform(sageScrollTo()).check(matches(isDisplayed()))
                 val purchase = store.history()!!.single()
                 assertEquals(PurchaseSource.MANUAL, purchase.source)
                 assertTrue(purchase.arithmeticAcknowledged)
@@ -86,8 +96,9 @@ class HouseholdFunctionalInstrumentedTest {
                 assertNull(purchase.rows.single().unitPrice)
                 assertEquals("8.30", purchase.rows.single().lineTotal.toPlainString())
                 assertEquals("8.31", purchase.total.toPlainString())
-                val row = store.load()!!.single()
+                val row = store.load()!!.single { it.name == "Task14 pears" }
                 assertEquals(fruit, row.household.category)
+                assertEquals(existing + row, store.load())
 
                 onView(withId(R.id.receipt_history)).perform(click())
                 onView(withText("1 receipt \u00B7 RM 8.31 recorded spending")).check(matches(isDisplayed()))
@@ -100,11 +111,12 @@ class HouseholdFunctionalInstrumentedTest {
                 onView(withText("Delete receipt")).perform(sageScrollTo(), click())
                 onView(withText("Delete receipt")).inRoot(isDialog()).perform(click())
                 onView(withText("No saved receipts yet")).check(matches(isDisplayed()))
-                assertEquals(listOf(row), store.load())
+                assertEquals(existing + row, store.load())
             }
         } finally {
             store.history().orEmpty().filter { it.store == example }.forEach { store.deleteHistory(it.confirmationId) }
-            assertNotNull(store.update { rows -> rows.filterNot { it.name == "Task14 pears" } })
+            val fixtureIds = existing.map { it.id }
+            assertNotNull(store.update { rows -> rows.filterNot { it.name == "Task14 pears" || it.id in fixtureIds } })
         }
     }
 

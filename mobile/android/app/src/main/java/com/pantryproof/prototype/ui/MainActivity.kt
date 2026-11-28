@@ -209,6 +209,7 @@ class MainActivity : ComponentActivity() {
     private var screenScrollView: ScrollView? = null
     private var screenPrimary: View? = null
     private val inventoryGroupOverrides = mutableMapOf<InventoryCategory, Boolean>()
+    private val matchingInventoryGroupOverrides = mutableMapOf<InventoryCategory, Boolean>()
     private var inventoryWarningDate: LocalDate? = null
     private val inventoryDateRefresh = Runnable {
         if (currentScreen == Screen.INVENTORY && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
@@ -393,7 +394,10 @@ class MainActivity : ComponentActivity() {
         outState.putInt("inventoryScrollY", browseScroll ?: inventoryScrollY)
         outState.putStringArrayList("sageSyntheticCollapsed", ArrayList(syntheticCollapsed))
         outState.putStringArrayList("sageManualCollapsed", ArrayList(manualCollapsed))
-        inventoryGroupOverrides.forEach { (source, open) -> outState.putBoolean("inventoryCategory." + source.code, open) }
+        inventoryGroupOverrides.forEach { (category, open) -> outState.putBoolean("inventoryCategory." + category.code, open) }
+        matchingInventoryGroupOverrides.forEach { (category, open) ->
+            outState.putBoolean("matchingInventoryCategory." + category.code, open)
+        }
         outState.putString("inventoryBrowseQuery", inventoryBrowse.query)
         outState.putString("inventoryBrowseSort", inventoryBrowse.sort.name)
         outState.putString("inventoryBrowseSource", inventoryBrowse.source.name)
@@ -3052,18 +3056,8 @@ class MainActivity : ComponentActivity() {
             id = R.id.inventory_summary
             text = resources.getQuantityString(R.plurals.inventory_summary, state.inventory.size, state.inventory.size)
         }
-        if (ui.stacked()) {
-            add(LinearLayout(this@MainActivity).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                addView(count, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                if (developmentAvailable) addView(developmentEntry())
-                addView(receiptHistoryEntry())
-                addView(addInventoryEntry())
-            })
-        } else {
-            add(count)
-            add(space(8))
-        }
+        add(count)
+        if (!ui.stacked()) add(space(8))
         add(inventorySearchRow())
         add(space(6))
     }) {
@@ -3289,7 +3283,7 @@ class MainActivity : ComponentActivity() {
                 val query = text?.toString().orEmpty()
                 if (query == inventoryBrowse.query) return
                 inventoryBrowse.query = query
-                inventoryGroupOverrides.clear()
+                matchingInventoryGroupOverrides.clear()
                 updateClear()
                 updateInventoryBrowseResults()
             }
@@ -3306,7 +3300,7 @@ class MainActivity : ComponentActivity() {
                 val selected = InventoryBrowseProjection.Source.values()[position]
                 if (selected != inventoryBrowse.source) {
                     inventoryBrowse.source = selected
-                    inventoryGroupOverrides.clear()
+                    matchingInventoryGroupOverrides.clear()
                     styleSourceFilter(anchor)
                     updateInventoryBrowseResults()
                 }
@@ -3378,12 +3372,21 @@ class MainActivity : ComponentActivity() {
 
     private fun updateScanVisibility() {
         val obscured = inventoryImeVisible || inventorySheet != null
-        findViewById<View>(R.id.home_add_receipt)?.visibility = if (obscured) View.INVISIBLE else View.VISIBLE
+        val visibility = if (obscured) View.INVISIBLE else View.VISIBLE
+        findViewById<View>(R.id.home_add_receipt)?.let { scan ->
+            if (scan.visibility != visibility) {
+                scan.visibility = visibility
+                val clearance = if (obscured) 0 else inventoryScanClearance(scan.layoutParams as FrameLayout.LayoutParams)
+                screenScrollView?.setPadding(0, 0, 0, clearance)
+            }
+        }
         findViewById<FrameLayout>(R.id.inventory_success_host)?.let { host ->
             host.visibility = if (!obscured && host.childCount > 0) View.VISIBLE else View.GONE
         }
         if (!obscured) renderPendingInventorySuccess()
     }
+
+    private fun inventoryScanClearance(layout: FrameLayout.LayoutParams): Int = layout.height + layout.bottomMargin + dp(8)
 
     private fun updateInventoryBrowseResults(announceImmediately: Boolean = false) {
         val results = inventoryResults ?: return
@@ -3671,26 +3674,22 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun renderInventoryRows(container: LinearLayout, visible: List<InventoryItem>, today: LocalDate) {
-        fun rows(items: List<InventoryItem>, dividedFromHeader: Boolean = false) = LinearLayout(this).apply {
+        fun rows(items: List<InventoryItem>) = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            if (dividedFromHeader) addView(divider())
+            addView(divider())
             items.forEachIndexed { index, item ->
                 if (index > 0) addView(divider())
                 addView(inventoryItemRow(item, today))
             }
         }
 
-        val groups = sageCategoryGroups(visible)
-        if (groups == null) {
-            container.addView(ui.card { addView(rows(visible)) })
-            return
-        }
-        val active = inventoryBrowse.query.isNotBlank() ||
-            inventoryBrowse.source != InventoryBrowseProjection.Source.ALL ||
-            inventoryBrowse.sort != InventoryBrowseProjection.Sort.ORIGINAL
-        val collapsed = groups.keys.filterNot { inventoryGroupOverrides[it] ?: active }.map { it.name }.toMutableSet()
+        val groups = sageCategoryGroups(state.inventory, visible)
+        val matching = inventoryBrowse.query.isNotBlank() || inventoryBrowse.source != InventoryBrowseProjection.Source.ALL
+        val overrides = if (matching) matchingInventoryGroupOverrides else inventoryGroupOverrides
+        val initiallyOpen = matching || inventoryBrowse.sort != InventoryBrowseProjection.Sort.ORIGINAL
+        val collapsed = groups.keys.filterNot { overrides[it] ?: initiallyOpen }.map { it.code }.toMutableSet()
         val sections = SageExpandableSections(this, ui, collapsed) { key, open ->
-            inventoryGroupOverrides[InventoryCategory.valueOf(key)] = open
+            overrides[checkNotNull(InventoryCategory.fromCode(key))] = open
         }
         container.addView(LinearLayout(this).apply {
             id = R.id.sage_inventory_groups
@@ -3699,8 +3698,7 @@ class MainActivity : ComponentActivity() {
             groups.entries.forEachIndexed { index, (category, items) ->
                 if (index > 0) addView(space(10))
                 val count = resources.getQuantityString(R.plurals.home_inventory_count, items.size, items.size)
-                addView(sections.add(category.name, inventoryCategoryLabel(category),
-                    rows(items, dividedFromHeader = true), subtitle = count,
+                addView(sections.add(category.code, inventoryCategoryLabel(category), rows(items), subtitle = count,
                     icon = inventoryCategoryIcon(category), compact = true, inventoryRow = true))
             }
             addView(space(6))
@@ -4236,43 +4234,53 @@ class MainActivity : ComponentActivity() {
             if (width >= maximumDp) maximum else ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL,
         )
-        val headerActions = if (inventory && !ui.stacked()) LinearLayout(this).apply {
+        val stackedActions = inventory && ui.stacked()
+        val headerActions = if (inventory) LinearLayout(this).apply {
             if (developmentAvailable) addView(developmentEntry())
             addView(receiptHistoryEntry())
             addView(addInventoryEntry())
         } else null
         root.addView(FrameLayout(this).apply {
-            addView(ui.appBar(title, showBack, inventory, headerActions, onBack = ::handleBackNavigation), centered())
+            addView(ui.appBar(title, showBack, inventory, headerActions.takeUnless { stackedActions },
+                onBack = ::handleBackNavigation), centered())
         })
-        if (inventory) {
-            root.addView(FrameLayout(this).apply {
-                addView(FrameLayout(this@MainActivity).apply {
-                    id = R.id.inventory_success_host
-                    setPadding(gutter, dp(4), gutter, dp(6))
-                    visibility = View.GONE
-                }, centered())
-            })
-        }
         pinned?.let { build ->
             root.addView(FrameLayout(this).apply {
                 addView(LinearLayout(this@MainActivity).apply {
                     id = R.id.inventory_pinned_controls
                     orientation = LinearLayout.VERTICAL
                     setPadding(gutter, 0, gutter, 0)
+                    if (stackedActions) addView(headerActions, LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { gravity = Gravity.END })
+                    addView(FrameLayout(this@MainActivity).apply {
+                        id = R.id.inventory_success_host
+                        setPadding(0, dp(4), 0, dp(6))
+                        visibility = View.GONE
+                    })
                     build()
                 }, centered())
             })
         }
         screenPrimary = null
+        val scanLayout = if (inventory) FrameLayout.LayoutParams(dp(56), dp(56), Gravity.BOTTOM or Gravity.END).apply {
+            marginEnd = gutter
+            bottomMargin = dp(16)
+        } else null
         val body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(gutter, 0, gutter, dp(if (inventory) 80 else 16))
+            setPadding(gutter, 0, gutter, if (inventory) 0 else dp(16))
             content()
         }
         val bodyHolder = FrameLayout(this).apply { addView(body, centered()) }
         val scrollView = ScrollView(this).apply {
             isFillViewport = true
             isSmoothScrollingEnabled = false
+            scanLayout?.let {
+                // The root already excludes system/IME insets. Clip scrolling content above the floating action.
+                setPadding(0, 0, 0, inventoryScanClearance(it))
+                clipToPadding = true
+            }
             addView(bodyHolder)
         }
         screenScrollView = scrollView
@@ -4280,14 +4288,7 @@ class MainActivity : ComponentActivity() {
             addView(scrollView, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
             ))
-            if (inventory) {
-                addView(ui.floatingScanAction(::showReceiptSources), FrameLayout.LayoutParams(
-                    dp(56), dp(56), Gravity.BOTTOM or Gravity.END,
-                ).apply {
-                    marginEnd = gutter
-                    bottomMargin = dp(16)
-                })
-            }
+            scanLayout?.let { addView(ui.floatingScanAction(::showReceiptSources), it) }
         }
         root.addView(viewport, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         screenPrimary?.let { action ->
@@ -4452,6 +4453,8 @@ class MainActivity : ComponentActivity() {
         InventoryCategory.entries.forEach { category ->
             val key = "inventoryCategory." + category.code
             if (bundle.containsKey(key)) inventoryGroupOverrides[category] = bundle.getBoolean(key)
+            val matchingKey = "matchingInventoryCategory." + category.code
+            if (bundle.containsKey(matchingKey)) matchingInventoryGroupOverrides[category] = bundle.getBoolean(matchingKey)
         }
         inventoryBrowse.query = bundle.getString("inventoryBrowseQuery").orEmpty()
         inventoryBrowse.sort = runCatching {
