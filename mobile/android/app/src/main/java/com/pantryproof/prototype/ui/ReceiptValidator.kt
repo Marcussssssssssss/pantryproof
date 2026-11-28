@@ -1,5 +1,6 @@
 package com.pantryproof.prototype.ui
 
+import com.pantryproof.prototype.data.InventoryCategory
 import com.pantryproof.prototype.data.Receipt
 import com.pantryproof.prototype.data.ReceiptItem
 import com.pantryproof.prototype.data.PresentedReceipt
@@ -13,6 +14,7 @@ data class EditableReceiptItem(
     var quantity: String,
     var unitPrice: String,
     var lineTotal: String,
+    var category: InventoryCategory = InventoryCategory.UNCATEGORIZED,
 )
 
 data class EditableReceipt(
@@ -20,6 +22,7 @@ data class EditableReceipt(
     var purchaseDate: String,
     val items: MutableList<EditableReceiptItem>,
     var receiptTotal: String,
+    val manualConfirmationId: String? = null,
 ) {
     fun deepCopy() = copy(items = items.map(EditableReceiptItem::copy).toMutableList())
 

@@ -70,6 +70,10 @@
         <item name="android:textStyle">bold</item>
     </style>
 
+    <style name="TextAppearance.PantryProof.InventoryCategoryTitle" parent="TextAppearance.PantryProof.ItemTitle">
+        <item name="android:textSize">18sp</item>
+    </style>
+
     <style name="TextAppearance.PantryProof.Body" parent="android:style/TextAppearance.Material.Body1">
         <item name="android:fontFamily">sans-serif</item>
         <item name="android:textColor">@color/pantry_on_surface</item>

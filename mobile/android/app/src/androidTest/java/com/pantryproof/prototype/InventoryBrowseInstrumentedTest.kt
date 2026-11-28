@@ -147,9 +147,12 @@ class InventoryBrowseInstrumentedTest {
         launch(); filter("Existing baseline/demo inventory")
         assertRows("stock-z", "stock-a", "stock-duplicate")
         filter("Temporary receipt-preview items"); assertRows("receipt-one")
-        onView(withText(R.string.inventory_item_source)).perform(scrollTo()).check(matches(isDisplayed()))
+        onView(withText(R.string.inventory_source_preview)).perform(sageScrollTo()).check(matches(isDisplayed()))
         filter("Manually entered receipt items"); assertRows("manual-receipt-one")
-        onView(withText(R.string.manual_inventory_source)).perform(scrollTo()).check(matches(isDisplayed()))
+        onView(withText(R.string.manual_inventory_source)).check(doesNotExist())
+        openSageInventoryDetails("manual-receipt-one")
+        onView(withText("Source: Manual receipt")).check(matches(isDisplayed()))
+        pressBack()
         filter("All items"); assertRows(*fixture.map { it.id }.toTypedArray())
     }
 
@@ -342,7 +345,7 @@ class InventoryBrowseInstrumentedTest {
         filter("Confirmed receipt scan items")
         assertRows(live.id)
         openSageInventoryDetails(live.id)
-        onView(withText(R.string.live_inventory_source)).perform(scrollTo()).check(matches(isDisplayed()))
+        onView(withText("Source: Scanned receipt")).check(matches(isDisplayed()))
         onView(withTagValue(equalTo("inventory-edit:" + live.id))).check(doesNotExist())
         onView(withTagValue(equalTo("inventory-delete:" + live.id))).check(doesNotExist())
         pressBack()
@@ -354,7 +357,7 @@ class InventoryBrowseInstrumentedTest {
         filter("Items added directly")
         assertRows(standalone.id)
         openSageInventoryDetails(standalone.id)
-        onView(withText(R.string.inventory_standalone_source)).perform(scrollTo()).check(matches(isDisplayed()))
+        onView(withText("Source: Direct inventory addition")).check(matches(isDisplayed()))
         onView(withTagValue(equalTo("inventory-delete:" + standalone.id))).perform(scrollTo()).check(matches(isDisplayed()))
         assertEquals(committed, committedRows())
     }
@@ -649,6 +652,29 @@ class InventoryBrowseInstrumentedTest {
                 val row = a.findViewById<ViewGroup>(R.id.inventory_browse_results).findViewWithTag<View>("stock-duplicate")
                 assertTrue(row.isAccessibilityFocused)
                 assertTrue(row.isFocused)
+            }
+        }
+    }
+
+    @Test fun touchManagementDismissalRestoresAccessibilityFocusWithoutTakingKeyboardFocus() {
+        launch(); sort("Quantity low to high")
+        automatedReaderProbe("v53-touch-accessibility.json") { observe ->
+            scenario!!.onActivity { activity ->
+                val row = activity.findViewById<ViewGroup>(R.id.inventory_browse_results)
+                    .findViewWithTag<View>("stock-duplicate")
+                assertTrue(row.isInTouchMode)
+                assertTrue(row.performAccessibilityAction(
+                    android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null))
+            }
+            openSageInventoryDetails("stock-duplicate")
+            pressBack()
+            observe("reader-focus-restored-after-touch")
+            scenario!!.onActivity { activity ->
+                val row = activity.findViewById<ViewGroup>(R.id.inventory_browse_results)
+                    .findViewWithTag<View>("stock-duplicate")
+                assertTrue(row.isAccessibilityFocused)
+                assertFalse(row.isFocused)
+                assertFalse(row.isPressed || row.isSelected || row.isActivated)
             }
         }
     }

@@ -7,6 +7,14 @@ import java.time.YearMonth
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal enum class PurchaseSource(val code: String) {
+    SCANNED("scanned"), MANUAL("manual");
+
+    companion object {
+        fun fromCode(code: String) = entries.firstOrNull { it.code == code }
+    }
+}
+
 internal enum class ReceiptConfirmationMode { INVENTORY_ONLY, INVENTORY_AND_RECEIPT }
 
 internal data class PurchasedRow(
@@ -34,11 +42,20 @@ internal data class PurchaseRecord(
     val evidenceFile: String? = null,
     val originalFile: String? = null,
     val fieldAudit: List<ApprovedField> = emptyList(),
+    val source: PurchaseSource = PurchaseSource.SCANNED,
+    val arithmeticAcknowledged: Boolean = false,
 ) {
     fun json() = JSONObject().put("confirmationId", confirmationId).put("store", store).put("date", date.toString())
         .put("total", total.toPlainString()).put("rows", JSONArray(rows.map(PurchasedRow::json)))
         .put("evidence", evidenceFile ?: JSONObject.NULL).put("original", originalFile ?: JSONObject.NULL)
         .put("fieldAudit", JSONArray(fieldAudit.map(ApprovedField::json)))
+        .apply {
+            // Keep the pre-existing scanned representation and ledger fingerprints byte-compatible.
+            if (source == PurchaseSource.MANUAL) {
+                put("source", source.code)
+                put("arithmeticAcknowledged", arithmeticAcknowledged)
+            }
+        }
 
     companion object {
         fun read(j: JSONObject): PurchaseRecord = PurchaseRecord(
@@ -50,6 +67,8 @@ internal data class PurchaseRecord(
                     it.getString("lineTotal").toBigDecimal())
             },
             j.textOrNull("evidence"), j.textOrNull("original"), j.getJSONArray("fieldAudit").objects().map(ApprovedField::read),
+            if (j.has("source")) requireNotNull(PurchaseSource.fromCode(j.get("source") as String)) else PurchaseSource.SCANNED,
+            if (j.has("arithmeticAcknowledged")) j.get("arithmeticAcknowledged") as Boolean else false,
         )
     }
 }
@@ -64,7 +83,8 @@ internal data class ReceiptConfirmation(
     val history: PurchaseRecord?,
     val keepOriginal: Boolean,
     val incompleteAcknowledged: Boolean,
-    val evidenceDigest: String,
+    val evidenceDigest: String?,
+    val originalDigest: String? = null,
 ) {
     fun fingerprint(): String {
         val payload = JSONObject()
@@ -73,6 +93,9 @@ internal data class ReceiptConfirmation(
             .put("stock", JSONArray(stock.map {
                 JSONObject().put("id", it.id).put("description", it.name)
                     .put("quantity", it.quantity.toPlainString()).put("unit", it.unit.code)
+                    .apply {
+                        if (history?.source == PurchaseSource.MANUAL) put("category", it.household.category.code)
+                    }
             }))
             .put("decisions", JSONArray(decisions.map { (row, included) -> JSONArray(listOf(row, included)) }))
             .put("approvals", JSONArray(fieldAudit.map(ApprovedField::json)))
@@ -80,6 +103,7 @@ internal data class ReceiptConfirmation(
             .put("keepOriginal", keepOriginal)
             .put("incompleteAcknowledged", incompleteAcknowledged)
             .put("evidenceDigest", evidenceDigest)
+            .apply { originalDigest?.let { put("originalDigest", it) } }
         return sha256(payload.toString().encodeToByteArray())
     }
 }

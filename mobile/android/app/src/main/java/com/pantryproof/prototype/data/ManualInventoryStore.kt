@@ -10,6 +10,7 @@ import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.nio.channels.FileChannel
 import java.nio.file.StandardOpenOption.READ
 import java.time.DateTimeException
+import java.time.LocalDate
 import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONException
@@ -35,7 +36,8 @@ internal class ManualInventoryStore(
     companion object {
         private const val FILE_NAME = "manual-inventory.json"
         private const val LEGACY_VERSION = 1
-        private const val VERSION = 2
+        private const val REVIEW_VERSION = 2
+        private const val VERSION = 3
         private val lock = Any()
         private val digestSyntax = Regex("[0-9a-f]{64}")
         private val oldLiveRow = Regex("live-receipt-([0-9a-f]{64})-.+")
@@ -84,17 +86,21 @@ internal class ManualInventoryStore(
             }
         }
 
-    fun commit(plan: ReceiptConfirmation, evidence: ByteArray, original: ByteArray?): Commit = synchronized(lock) {
+    fun commit(plan: ReceiptConfirmation, evidence: ByteArray?, original: ByteArray?): Commit = synchronized(lock) {
         storageResult {
             val current = readSnapshot()
             val fingerprint = plan.fingerprint()
             current.ledger[plan.identity]?.let { return@storageResult if (it == fingerprint) Commit.REPLAYED else Commit.CONFLICT }
             if (plan.legacyIdentity in current.legacy) return@storageResult Commit.CONFLICT
             require(digestSyntax.matches(plan.identity) && digestSyntax.matches(plan.legacyIdentity))
-            require(plan.stock.isNotEmpty() && plan.stock.all { it.id.startsWith("$LIVE_ROW_PREFIX${plan.identity}-") &&
-                it.unit != InventoryUnit.UNKNOWN && it.quantity.signum() > 0 })
-            require(plan.decisions.filter { it.second }.map { "$LIVE_ROW_PREFIX${plan.identity}-${it.first}" } == plan.stock.map { it.id })
-            require(plan.evidenceDigest == sha256(evidence))
+            val manual = plan.history?.source == PurchaseSource.MANUAL
+            val prefix = if (manual) ROW_PREFIX else "$LIVE_ROW_PREFIX${plan.identity}-"
+            require(plan.stock.isNotEmpty() && plan.stock.all {
+                it.quantity.signum() > 0 && (manual || it.unit != InventoryUnit.UNKNOWN)
+            })
+            require(plan.decisions.filter { it.second }.map { prefix + it.first } == plan.stock.map { it.id })
+            require(plan.evidenceDigest == evidence?.let(::sha256) && (evidence == null) == manual)
+            if (manual) require(plan.originalDigest == original?.let(::sha256))
             require((plan.mode == ReceiptConfirmationMode.INVENTORY_AND_RECEIPT) == (plan.history != null))
             require(!plan.keepOriginal || plan.history != null && original != null)
             val staged = mutableListOf<Path>()
@@ -102,7 +108,7 @@ internal class ManualInventoryStore(
             try {
                 val history = plan.history?.let { record ->
                     require(record.confirmationId == plan.identity && record.evidenceFile == null && record.originalFile == null)
-                    val evidenceFile = stage("review", evidence, staged)
+                    val evidenceFile = evidence?.let { stage("review", it, staged) }
                     val originalFile = if (plan.keepOriginal) stage("original", requireNotNull(original), staged) else null
                     syncDirectory()
                     record.copy(evidenceFile = evidenceFile, originalFile = originalFile)
@@ -201,7 +207,7 @@ internal class ManualInventoryStore(
         val document = input.nextValue() as? JSONObject ?: throw JSONException("Expected an object")
         require(input.nextClean() == '\u0000')
         val version = document.get("version")
-        require(version == LEGACY_VERSION || version == VERSION)
+        require(version == LEGACY_VERSION || version == REVIEW_VERSION || version == VERSION)
         val rows = document.getJSONArray("rows")
         val inventory = List(rows.length()) { index ->
             val row = rows.getJSONObject(index)
@@ -223,6 +229,14 @@ internal class ManualInventoryStore(
                 quantity = quantity,
                 state = rowState(id) ?: throw JSONException("Unrecognized item ID"),
                 unit = unit,
+                household = if (version == VERSION) InventoryMetadata(
+                    requireNotNull(InventoryCategory.fromCode(row.get("category") as String)),
+                    row.textOrNull("expiryDate")?.let(LocalDate::parse),
+                    row.textOrNull("minimumStock")?.let { text ->
+                        unit.parse(text)?.takeIf { it.toPlainString() == text }
+                            ?: throw JSONException("Invalid minimum stock quantity")
+                    },
+                ) else InventoryMetadata(),
             )
         }.also(::validate)
         if (version == LEGACY_VERSION) {
@@ -240,7 +254,10 @@ internal class ManualInventoryStore(
         val encodedRows = JSONArray()
         snapshot.rows.forEach { row ->
             encodedRows.put(JSONObject().put("id", row.id).put("name", row.name)
-                .put("quantity", row.quantity.toPlainString()).put("unit", row.unit.code))
+                .put("quantity", row.quantity.toPlainString()).put("unit", row.unit.code)
+                .put("category", row.household.category.code)
+                .put("expiryDate", row.household.expiryDate?.toString() ?: JSONObject.NULL)
+                .put("minimumStock", row.household.minimumStock?.toPlainString() ?: JSONObject.NULL))
         }
         val bytes = JSONObject().put("version", VERSION).put("rows", encodedRows)
             .put("history", JSONArray(snapshot.history.map(PurchaseRecord::json)))
@@ -285,9 +302,19 @@ internal class ManualInventoryStore(
                     row.quantity.scale() in 0..3 && validMoney(row.lineTotal))
                 require((row.unitPrice == null) == !row.unitPriceAbsence.isNullOrBlank() &&
                     (row.unitPrice == null || validMoney(row.unitPrice)))
-                require(!row.included || row.inventoryUnit?.let { it != InventoryUnit.UNKNOWN && it.represents(row.quantity) } == true)
+                val unit = row.inventoryUnit
+                require(!row.included || if (record.source == PurchaseSource.MANUAL) {
+                    (unit ?: InventoryUnit.UNKNOWN).represents(row.quantity)
+                } else {
+                    unit != null && unit != InventoryUnit.UNKNOWN && unit.represents(row.quantity)
+                })
             }
-            require(record.evidenceFile?.let { sidecar.matches(it) && it.endsWith(".review") && files.add(it) } == true)
+            if (record.source == PurchaseSource.MANUAL) {
+                require(record.evidenceFile == null && record.fieldAudit.isEmpty())
+            } else {
+                require(!record.arithmeticAcknowledged)
+                require(record.evidenceFile?.let { sidecar.matches(it) && it.endsWith(".review") && files.add(it) } == true)
+            }
             require(record.originalFile?.let { sidecar.matches(it) && it.endsWith(".original") && files.add(it) } != false)
         }
     }
@@ -300,7 +327,7 @@ internal class ManualInventoryStore(
         val ids = mutableSetOf<String>()
         for (row in rows) {
             require(ids.add(row.id))
-            require(row.name.isNotBlank() && row.unit.stores(row.quantity))
+            require(row.name.isNotBlank() && row.unit.stores(row.quantity) && row.household.validFor(row.unit))
             require(row.state == rowState(row.id))
         }
     }

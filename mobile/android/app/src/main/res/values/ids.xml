@@ -134,4 +134,10 @@
     <item name="receipt_history" type="id" />
     <item name="receipt_history_search" type="id" />
     <item name="keep_receipt_original" type="id" />
+    <item name="manual_without_image" type="id" />
+    <item name="inventory_category" type="id" />
+    <item name="inventory_category_choices" type="id" />
+    <item name="inventory_expiry" type="id" />
+    <item name="inventory_expiry_calendar" type="id" />
+    <item name="inventory_minimum" type="id" />
 </resources>

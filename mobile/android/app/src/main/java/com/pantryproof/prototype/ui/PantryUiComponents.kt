@@ -525,8 +525,10 @@ class PantryUiComponents(private val context: Context) {
             resource?.let { addView(icon(it, tile = true)) }
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                if (resource != null) setPaddingRelative(space(3), 0, 0, 0)
-                addView(TextView(context, null, 0, R.style.TextAppearance_PantryProof_ItemTitle).apply {
+                if (resource != null) setPaddingRelative(space(if (inventoryRow) 4 else 3), 0, 0, 0)
+                val titleAppearance = if (inventoryRow) R.style.TextAppearance_PantryProof_InventoryCategoryTitle
+                    else R.style.TextAppearance_PantryProof_ItemTitle
+                addView(TextView(context, null, 0, titleAppearance).apply {
                     id = R.id.sage_action_title
                     text = title
                 })
@@ -541,6 +543,7 @@ class PantryUiComponents(private val context: Context) {
             addView(chevron, squareParams(R.dimen.pantry_space_6).apply { marginStart = space(2) })
             contentDescription = listOfNotNull(title, subtitle).joinToString(". ")
             markButton(this, inventoryRow)
+            if (inventoryRow) setPaddingRelative(paddingStart, space(1), paddingEnd, space(1))
             setOnClickListener { action() }
         }
 

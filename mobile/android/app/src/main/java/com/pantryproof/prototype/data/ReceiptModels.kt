@@ -24,6 +24,7 @@ data class InventoryItem(
     val quantity: BigDecimal,
     val state: String,
     val unit: InventoryUnit = InventoryUnit.UNKNOWN,
+    val household: InventoryMetadata = InventoryMetadata(),
 ) {
     constructor(id: String, name: String, quantity: Int, state: String) :
         this(id, name, quantity.toBigDecimal(), state)

@@ -1,18 +1,17 @@
 package com.pantryproof.prototype.ui
 
+import com.pantryproof.prototype.data.InventoryCategory
 import com.pantryproof.prototype.data.InventoryItem
 
-/** Returns source groups only when flattening them reproduces the projected order. */
-internal fun sageSourceGroups(
-    projected: List<InventoryItem>,
-): Map<InventoryBrowseProjection.Source, List<InventoryItem>>? {
-    val groups = linkedMapOf<InventoryBrowseProjection.Source, MutableList<InventoryItem>>()
-    var previous: InventoryBrowseProjection.Source? = null
+/** A category's single card can preserve global order only when its rows are contiguous. */
+internal fun sageCategoryGroups(projected: List<InventoryItem>): Map<InventoryCategory, List<InventoryItem>>? {
+    val groups = linkedMapOf<InventoryCategory, MutableList<InventoryItem>>()
+    var previous: InventoryCategory? = null
     for (row in projected) {
-        val source = InventoryBrowseProjection.sourceOf(row)
-        if (source != previous && source in groups) return null
-        groups.getOrPut(source) { mutableListOf() }.add(row)
-        previous = source
+        val category = row.household.category
+        if (category != previous && category in groups) return null
+        groups.getOrPut(category) { mutableListOf() }.add(row)
+        previous = category
     }
     return groups
 }

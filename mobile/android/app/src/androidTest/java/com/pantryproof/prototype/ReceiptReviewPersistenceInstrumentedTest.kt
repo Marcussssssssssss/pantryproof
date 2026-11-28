@@ -270,7 +270,7 @@ class ReceiptReviewPersistenceInstrumentedTest {
         assertTrue(store.acknowledge(setOf(plan.identity)))
         try {
             ActivityScenario.launch<MainActivity>(launchIntent).use {
-                val group = context.resources.getStringArray(R.array.v5_inventory_group_labels)[InventoryBrowseProjection.Source.LIVE.ordinal]
+                val group = context.getString(R.string.category_uncategorized)
                 onView(withText(group)).perform(sageScrollTo(), click())
                 onView(withText("0.750 kg")).perform(sageScrollTo()).check(matches(isDisplayed()))
                 screenshot("weighted-inventory")
