@@ -374,11 +374,13 @@ class SageV51InstrumentedTest {
 
     @Test fun v52InventoryTouchUsesLightBackgroundWithoutFadingContent() {
         ActivityScenario.launch(MainActivity::class.java).use {
-            val demo = onView(withText("Demo inventory"))
+            val demo = onView(withText("Other / Uncategorized"))
+            demo.perform(sageScrollTo())
             recordSageScreen("01-v52-collapsed")
             heldInventoryTouch(demo, "02-v52-group-pressed")
             onView(withText("Jasmine Rice 5kg")).check(matches(isDisplayed()))
             recordSageScreen("03-v52-expanded")
+            captureV53InventoryFrame("v52-expanded-released")
             demo.perform(click(), click(), click())
             onView(withText("Jasmine Rice 5kg")).check(matches(not(isDisplayed())))
             demo.perform(click())
@@ -394,13 +396,18 @@ class SageV51InstrumentedTest {
                 assertEquals(1f, view.alpha, 0f)
             }
             recordSageScreen("05-v52-row-after")
+            captureV53InventoryFrame("v52-row-after-dismissal")
 
             onView(withId(R.id.inventory_add_item)).perform(click())
             onView(withId(R.id.inventory_item_name)).perform(replaceText("Fictional oats"), closeSoftKeyboard())
             onView(withId(R.id.inventory_item_quantity)).perform(replaceText("3"), closeSoftKeyboard())
+            onView(withId(R.id.inventory_category)).perform(sageScrollTo(), click())
+            androidx.test.espresso.Espresso.onData(equalTo("Dry Food"))
+                .inRoot(androidx.test.espresso.matcher.RootMatchers.isPlatformPopup())
+                .inAdapterView(withId(R.id.inventory_category_choices)).perform(click())
             onView(withId(android.R.id.button1)).perform(click())
             onView(withId(R.id.inventory_success_dismiss)).perform(click())
-            val direct = onView(withText("Added directly"))
+            val direct = onView(withText("Dry Food"))
             direct.perform(sageScrollTo(), click())
             onView(withText("Fictional oats")).check(matches(isDisplayed()))
             direct.perform(click())
@@ -420,8 +427,24 @@ class SageV51InstrumentedTest {
             tap = generateSequence(view) { it.parent as? View }.first { it.isClickable }
             assertTrue(tap.getGlobalVisibleRect(bounds))
         }
+        instrumentation.waitForIdleSync()
         val automation = instrumentation.uiAutomation
+        // Allow native window and system-bar transitions to settle before comparing pixels.
+        SystemClock.sleep(1_000)
+        instrumentation.runOnMainSync { assertTrue(tap.getGlobalVisibleRect(bounds)) }
         val before = checkNotNull(automation.takeScreenshot())
+        fun frame(bitmap: Bitmap, suffix: String) {
+            val args = InstrumentationRegistry.getArguments()
+            val prefix = when {
+                args.getString("sage53Screenshots") == "true" -> "sage53"
+                args.getString("task14Screenshots") == "true" -> "task14"
+                else -> return
+            }
+            File(context.filesDir, "$prefix-$name-$suffix.png").outputStream().use {
+                assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
+            }
+        }
+        frame(before, "normal")
         val downTime = SystemClock.uptimeMillis()
         fun send(action: Int) {
             val e = android.view.MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action,
@@ -433,10 +456,18 @@ class SageV51InstrumentedTest {
             send(android.view.MotionEvent.ACTION_DOWN)
             SystemClock.sleep(150)
             instrumentation.runOnMainSync { assertTrue(tap.isPressed); assertEquals(1f, tap.alpha, 0f) }
-            val pressed = checkNotNull(automation.takeScreenshot())
+            var pressed = checkNotNull(automation.takeScreenshot())
+            val tint = Color.parseColor("#EDF2E9")
+            repeat(6) {
+                if (pressed.getPixel(bounds.left + bounds.width() / 4, bounds.bottom - 6) != tint) {
+                    SystemClock.sleep(60)
+                    pressed.recycle()
+                    pressed = checkNotNull(automation.takeScreenshot())
+                }
+            }
+            frame(pressed, "held")
             val colors = listOf(Color.parseColor("#304C38"), Color.parseColor("#697665"), Color.parseColor("#426348"))
             val unchanged = IntArray(colors.size)
-            val tint = Color.parseColor("#EDF2E9")
             var backgroundPixels = 0
             for (y in bounds.top until bounds.bottom) for (x in bounds.left until bounds.right) {
                 val initial = before.getPixel(x, y)
@@ -456,6 +487,20 @@ class SageV51InstrumentedTest {
         } finally {
             send(android.view.MotionEvent.ACTION_UP)
             before.recycle()
+        }
+    }
+
+    private fun captureV53InventoryFrame(name: String) {
+        if (InstrumentationRegistry.getArguments().getString("sage53Screenshots") != "true") return
+        instrumentation.waitForIdleSync()
+        SystemClock.sleep(350)
+        val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+        try {
+            File(context.filesDir, "sage53-$name.png").outputStream().use {
+                assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
+            }
+        } finally {
+            bitmap.recycle()
         }
     }
 

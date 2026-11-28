@@ -36,6 +36,7 @@ import org.hamcrest.Matchers.equalTo
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -85,14 +86,18 @@ class ManualInventoryPersistenceInstrumentedTest {
                     onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
                     onView(withId(R.id.app_bar_back)).perform(click())
                     assertEquals(emptyList<InventoryItem>(), store.load())
+                    assertTrue(store.history()!!.isEmpty())
                     scenario.onActivity { activity ->
                         activity.findViewById<EditText>(R.id.review_item_0_description).setText("Example oats")
                     }
                     onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
+                    onView(withId(R.id.keep_receipt_original)).perform(sageScrollTo(), click())
                     onView(withId(R.id.manual_confirm)).perform(click())
-                    onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
+                    awaitHouseholdInventory(scenario)
                     val row = requireNotNull(store.load()).single()
-                    assertTrue(requireNotNull(store.history()).isEmpty())
+                    val saved = requireNotNull(store.history()).single()
+                    assertEquals("Example oats", saved.rows.single().description)
+                    assertArrayEquals(imageFile.readBytes(), store.originalFile(saved.confirmationId)!!.readBytes())
                     assertEquals("Example oats", row.name)
                     assertEquals(2.toBigDecimal(), row.quantity)
                     openSageInventoryDetails(row.id)
@@ -113,7 +118,14 @@ class ManualInventoryPersistenceInstrumentedTest {
                 assertEquals(listOf(committed), ManualInventoryStore(context).load())
             }
         } finally {
+            assertTrue(imageFile.isFile)
             imageFile.delete()
+            context.getSharedPreferences("receipt-review-preferences", 0).edit().remove("keepOriginal").commit()
+            val store = ManualInventoryStore(context)
+            val saved = store.history().orEmpty().filter { it.store == "Example Market" }
+            saved.forEach { assertTrue(store.deleteHistory(it.confirmationId)) }
+            val added = saved.flatMap { it.rows }.mapTo(hashSetOf()) { ManualInventoryStore.ROW_PREFIX + it.id }
+            if (added.isNotEmpty()) assertNotNull(store.update { rows -> rows.filterNot { it.id in added } })
         }
     }
 
@@ -183,7 +195,7 @@ class ManualInventoryPersistenceInstrumentedTest {
     fun unrecognizedStorageVersionIsNeverOverwritten() {
         val snapshot = Files.createTempFile(context.cacheDir.toPath(), "manual-stock-", ".json")
         try {
-            val original = """{"version":3,"rows":[]}""".toByteArray(Charsets.UTF_8)
+            val original = """{"version":4,"rows":[]}""".toByteArray(Charsets.UTF_8)
             Files.write(snapshot, original)
             val store = ManualInventoryStore(snapshot)
 

@@ -59,7 +59,12 @@ import com.pantryproof.prototype.image.SelectedImageSnapshotEncoder
 import com.pantryproof.prototype.ui.SelectedImageProcessingController
 import com.pantryproof.prototype.data.MockReceiptPresentationSource
 import com.pantryproof.prototype.data.InventoryItem
+import com.pantryproof.prototype.data.InventoryCategory
+import com.pantryproof.prototype.data.InventoryMetadata
+import com.pantryproof.prototype.data.InventoryWarning
+import com.pantryproof.prototype.data.warnings
 import com.pantryproof.prototype.data.InventoryUnit
+import com.pantryproof.prototype.data.PurchaseSource
 import com.pantryproof.prototype.data.ReceiptConfirmationMode
 import com.pantryproof.prototype.data.PurchaseRecord
 import com.pantryproof.prototype.data.receiptHistoryMonths
@@ -85,6 +90,8 @@ import com.pantryproof.prototype.image.ReceiptCrop
 import com.pantryproof.prototype.image.ReceiptZoom
 import com.pantryproof.prototype.image.ZoomReceiptView
 import com.pantryproof.prototype.ui.InventoryBrowseProjection
+import com.pantryproof.prototype.ui.InventoryRowContent
+import com.pantryproof.prototype.ui.sageCategoryGroups
 import com.pantryproof.prototype.ui.EditableReceipt
 import com.pantryproof.prototype.ui.EditableReceiptItem
 import com.pantryproof.prototype.ui.LiveReceiptReviewDraft
@@ -96,7 +103,6 @@ import com.pantryproof.prototype.ui.PantryUiComponents
 import com.pantryproof.prototype.ui.SageExpandableSections
 import com.pantryproof.prototype.ui.showSageCropEditor
 import com.pantryproof.prototype.ui.SageReceiptScanView
-import com.pantryproof.prototype.ui.sageSourceGroups
 import com.pantryproof.prototype.ui.PurchaseDateInput
 import com.pantryproof.prototype.ui.ReceiptValidator
 import com.pantryproof.prototype.ui.ReceiptValidationResult
@@ -104,6 +110,8 @@ import com.pantryproof.prototype.ui.ReceiptReviewAnnotationPolicy
 import com.pantryproof.prototype.ui.ReceiptProcessingUiController
 import java.math.BigDecimal
 import java.time.LocalDate
+import java.time.Duration
+import java.time.ZonedDateTime
 import java.util.ArrayDeque
 import java.util.GregorianCalendar
 import java.util.Locale
@@ -200,7 +208,15 @@ class MainActivity : ComponentActivity() {
     private var inventoryCountAnnouncement: Runnable? = null
     private var screenScrollView: ScrollView? = null
     private var screenPrimary: View? = null
-    private val inventoryGroupOverrides = mutableMapOf<InventoryBrowseProjection.Source, Boolean>()
+    private val inventoryGroupOverrides = mutableMapOf<InventoryCategory, Boolean>()
+    private val matchingInventoryGroupOverrides = mutableMapOf<InventoryCategory, Boolean>()
+    private var inventoryWarningDate: LocalDate? = null
+    private val inventoryDateRefresh = Runnable {
+        if (currentScreen == Screen.INVENTORY && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            if (inventoryWarningDate != state.currentLocalDate()) updateInventoryBrowseResults()
+            else scheduleInventoryDateRefresh()
+        }
+    }
     private data class InventorySuccess(val title: Int, val message: String = "", val addedIds: List<String> = emptyList())
     private var pendingInventorySuccess: InventorySuccess? = null
     private var inventorySuccessDismissal: Runnable? = null
@@ -290,7 +306,7 @@ class MainActivity : ComponentActivity() {
         savedInstanceState?.let(::restoreSessionState)
         if (currentScreen == Screen.MANUAL || currentScreen == Screen.MANUAL_REVIEW) {
             manualDraft = savedInstanceState?.getBundle("manualDraft")?.let(::readDraft)
-            if (manualDraft == null || selectedImageUri?.let(::canReadSelectedImage) != true) {
+            if (manualDraft == null) {
                 manualDraft = null
                 if (backStack.peekLast() == Screen.MANUAL) backStack.removeLast()
                 currentScreen = backStack.pollLast() ?: Screen.PREVIEW
@@ -334,11 +350,22 @@ class MainActivity : ComponentActivity() {
             (currentScreen == Screen.PROCESSING_DEMO && processingController == null) ||
             (currentScreen == Screen.SELECTED_PROCESSING && selectedProcessingController == null)
         ) render()
-        if (currentScreen == Screen.INVENTORY) updateInventoryBrowseResults(announceImmediately = true)
+        if (currentScreen == Screen.INVENTORY) {
+            updateInventoryBrowseResults(announceImmediately = true)
+        }
+    }
+
+    private fun scheduleInventoryDateRefresh() {
+        inventoryBrowseHandler.removeCallbacks(inventoryDateRefresh)
+        val now = ZonedDateTime.now()
+        val midnight = now.toLocalDate().plusDays(1).atStartOfDay(now.zone)
+        val delay = Duration.between(now, midnight).toMillis().coerceIn(1L, 60_000L)
+        inventoryBrowseHandler.postDelayed(inventoryDateRefresh, delay)
     }
 
     override fun onStop() {
         inventoryCountAnnouncement?.let(inventoryBrowseHandler::removeCallbacks)
+        inventoryBrowseHandler.removeCallbacks(inventoryDateRefresh)
         disposeProcessingDemo()
         val hadFixture = selectedProcessingController?.isFixture == true
         val hadLive = currentScreen == Screen.T09_PROCESSING
@@ -367,7 +394,10 @@ class MainActivity : ComponentActivity() {
         outState.putInt("inventoryScrollY", browseScroll ?: inventoryScrollY)
         outState.putStringArrayList("sageSyntheticCollapsed", ArrayList(syntheticCollapsed))
         outState.putStringArrayList("sageManualCollapsed", ArrayList(manualCollapsed))
-        inventoryGroupOverrides.forEach { (source, open) -> outState.putBoolean("sageGroup." + source.name, open) }
+        inventoryGroupOverrides.forEach { (category, open) -> outState.putBoolean("inventoryCategory." + category.code, open) }
+        matchingInventoryGroupOverrides.forEach { (category, open) ->
+            outState.putBoolean("matchingInventoryCategory." + category.code, open)
+        }
         outState.putString("inventoryBrowseQuery", inventoryBrowse.query)
         outState.putString("inventoryBrowseSort", inventoryBrowse.sort.name)
         outState.putString("inventoryBrowseSource", inventoryBrowse.source.name)
@@ -1514,7 +1544,12 @@ class MainActivity : ComponentActivity() {
                 }
             })
             add(space(8))
-            add(bodyText(getString(R.string.v5_source_manual_hint)))
+            add(ui.actionButton(getString(R.string.manual_start_action), PantryActionStyle.SECONDARY,
+                viewId = R.id.manual_without_image) {
+                inventorySheet?.dismiss()
+                switchToSyntheticDemo()
+                startManualReceipt()
+            })
             add(space(8))
             add(ui.banner(getString(R.string.add_receipt_privacy_title),
                 getString(R.string.add_receipt_privacy_body), PantryBannerTone.INFO))
@@ -1772,22 +1807,7 @@ class MainActivity : ComponentActivity() {
                 val test = ui.actionButton(getString(R.string.selected_processing_action),
                     if (liveAvailable) PantryActionStyle.SECONDARY else PantryActionStyle.PRIMARY,
                     viewId = R.id.preview_process_selected) { navigate(Screen.SELECTED_PROCESSING) }
-                if (T09ProcessingConfig.isCapable(packageName)) {
-                    fun retentionLabel(enabled: Boolean) = if (enabled) "Save image to receipt history" else "Save receipt details only"
-                    val explanation = bodyText(retentionLabel(keepOriginal))
-                    add(android.widget.Switch(this@MainActivity).apply {
-                        id = R.id.keep_receipt_original
-                        text = "Keep original receipt"
-                        minHeight = dp(48)
-                        isChecked = keepOriginal
-                        setOnCheckedChangeListener { _, enabled ->
-                            keepOriginal = enabled
-                            reviewPreferences.edit().putBoolean("keepOriginal", enabled).apply()
-                            explanation.text = retentionLabel(enabled)
-                        }
-                    })
-                    add(explanation)
-                }
+                add(originalRetentionChoice())
                 if (liveAvailable) {
                     add(space(8))
                     add(test)
@@ -1805,13 +1825,28 @@ class MainActivity : ComponentActivity() {
                 add(space(8))
                 add(ui.actionButton(getString(R.string.manual_start_action), PantryActionStyle.TERTIARY,
                     viewId = R.id.preview_continue) {
-                    manualDraft = EditableReceipt("", "", mutableListOf(blankManualItem()), "")
-                    manualCollapsed.clear()
-                    manualValidationAttempted = false
-                    navigate(Screen.MANUAL)
+                    startManualReceipt()
                 })
             }
         }
+    }
+
+    private fun originalRetentionChoice(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        fun explanation() = getString(if (keepOriginal) R.string.keep_original_on else R.string.keep_original_off)
+        val details = bodyText(explanation())
+        addView(android.widget.Switch(this@MainActivity).apply {
+            id = R.id.keep_receipt_original
+            text = getString(R.string.keep_original_label)
+            minHeight = dp(48)
+            isChecked = keepOriginal
+            setOnCheckedChangeListener { _, enabled ->
+                keepOriginal = enabled
+                reviewPreferences.edit().putBoolean("keepOriginal", enabled).apply()
+                details.text = explanation()
+            }
+        })
+        addView(details)
     }
 
     private fun syntheticReceiptPreview(receipt: PresentedReceipt): View = ui.card {
@@ -2579,6 +2614,15 @@ class MainActivity : ComponentActivity() {
         addView(action)
     }
 
+    private fun startManualReceipt() {
+        manualDraft = EditableReceipt("", "", mutableListOf(blankManualItem()), "", UUID.randomUUID().toString())
+        manualReviewedDraft = null
+        manualReviewError = null
+        manualCollapsed.clear()
+        manualValidationAttempted = false
+        navigate(Screen.MANUAL)
+    }
+
     private fun blankManualItem() = EditableReceiptItem(UUID.randomUUID().toString(), "", "", "", "")
 
     private fun renderManualReceipt() =
@@ -2700,6 +2744,7 @@ class MainActivity : ComponentActivity() {
                     addView(field("$key.description", R.string.field_description, item.description))
                     addView(field("$key.quantity", R.string.field_quantity, item.quantity,
                         R.string.manual_quantity_helper, InputType.TYPE_CLASS_NUMBER))
+                    addView(inventoryCategoryChoice(item.category) { item.category = it })
                     val unitPrice = field("$key.unitPrice", R.string.v51_unit_price, item.unitPrice,
                         R.string.v51_unit_price_help, type = amountType)
                     val lineTotal = field("$key.lineTotal", R.string.v51_line_total, item.lineTotal,
@@ -2793,7 +2838,7 @@ class MainActivity : ComponentActivity() {
         applyReviewFieldError(binding, error?.let(::getString))
     }
 
-    private fun configureManualDatePicker(binding: ReviewFieldUi) {
+    private fun configureManualDatePicker(binding: ReviewFieldUi, expiry: Boolean = false) {
         val field = binding.field
         field.isSaveEnabled = false
         field.hint = getString(R.string.v51_date_hint)
@@ -2809,14 +2854,16 @@ class MainActivity : ComponentActivity() {
         })
         PurchaseDateInput.install(field)
         binding.inputSurface.addView(ui.iconButton(R.drawable.ic_receipt_calendar,
-            getString(R.string.manual_choose_date), R.id.manual_calendar) {
+            getString(if (expiry) R.string.inventory_choose_expiry else R.string.manual_choose_date),
+            if (expiry) R.id.inventory_expiry_calendar else R.id.manual_calendar) {
             val first = LocalDate.of(1582, 10, 15)
-            val last = minOf(state.currentLocalDate(), LocalDate.of(9999, 12, 31))
+            val last = if (expiry) LocalDate.of(9999, 12, 31)
+                else minOf(state.currentLocalDate(), LocalDate.of(9999, 12, 31))
             val saved = PurchaseDateInput.parse(field.text.toString())
-            val initial = saved?.coerceIn(first, last) ?: last
+            val initial = (saved ?: state.currentLocalDate()).coerceIn(first, last)
             DatePickerDialog(this, { _, year, month, day ->
                 val chosen = LocalDate.of(year, month + 1, day)
-                if (!chosen.isAfter(state.currentLocalDate())) {
+                if (expiry || !chosen.isAfter(state.currentLocalDate())) {
                     field.setText(PurchaseDateInput.display(chosen))
                     field.setSelection(field.length())
                 }
@@ -2868,6 +2915,7 @@ class MainActivity : ComponentActivity() {
         val validation = snapshot?.takeIf { it == manualDraft }?.let { ReceiptValidator.validateManual(it, state.currentLocalDate()) }
         val receipt = validation?.receipt
         add(bodyText(getString(R.string.v51_manual_source)))
+        if (selectedImageUri != null) add(originalRetentionChoice())
         add(space(8))
         val error = when {
             validation?.errors?.get("purchaseDate") == ReceiptValidator.FUTURE_PURCHASE_DATE_ERROR ->
@@ -2927,18 +2975,53 @@ class MainActivity : ComponentActivity() {
             if (snapshot == null || snapshot != manualDraft || receipt == null) {
                 manualReviewError = R.string.manual_review_changed
                 render()
-            } else if (!state.confirmManualReceipt(snapshot)) {
-                manualReviewError = if (ReceiptValidator.purchaseDateProblem(receipt.purchaseDate, state.currentLocalDate()) ==
-                    ReceiptValidator.PurchaseDateProblem.FUTURE
-                ) R.string.purchase_date_future else R.string.manual_confirmation_failed
-                render()
             } else {
-                pendingInventorySuccess = receiptSuccess(receipt.items.map { PantryUiState.MANUAL_ROW_PREFIX + it.id })
-                manualReviewedDraft = null
-                manualReviewError = null
-                returnToInventory()
+                saveManualPurchase(snapshot, receipt, hasWarnings)
             }
         })
+    }
+
+    private fun saveManualPurchase(draft: EditableReceipt, receipt: Receipt, acknowledged: Boolean) {
+        if (receiptCommitInProgress) return
+        receiptCommitInProgress = true
+        val uri = selectedImageUri.takeIf { keepOriginal }
+        val saving = AlertDialog.Builder(this).setMessage(R.string.manual_saving_purchase).setCancelable(false).show()
+        val worker = Executors.newSingleThreadExecutor()
+        worker.execute {
+            val original = uri?.let {
+                runCatching { SelectedImageSnapshotEncoder(applicationContext.contentResolver).readOriginal(it) }.getOrNull()
+            }
+            val result = try {
+                if (uri != null && original == null) ManualInventoryStore.Commit.FAILED
+                else state.commitManualReceipt(draft, acknowledged, original)
+            } finally {
+                original?.fill(0)
+            }
+            runOnUiThread {
+                receiptCommitInProgress = false
+                saving.dismiss()
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                when (result) {
+                    ManualInventoryStore.Commit.COMMITTED, ManualInventoryStore.Commit.REPLAYED -> {
+                        state.refreshDurableInventory()
+                        pendingInventorySuccess = receiptSuccess(receipt.items.map { PantryUiState.MANUAL_ROW_PREFIX + it.id })
+                        manualReviewedDraft = null
+                        manualReviewError = null
+                        returnToInventory()
+                        state.acknowledgeConfirmations(setOf(state.manualReceiptIdentity(draft)))
+                    }
+                    else -> {
+                        manualReviewError = when {
+                            receipt.purchaseDate.isAfter(state.currentLocalDate()) -> R.string.purchase_date_future
+                            uri != null && original == null -> R.string.manual_original_unavailable
+                            else -> R.string.manual_confirmation_failed
+                        }
+                        render()
+                    }
+                }
+            }
+        }
+        worker.shutdown()
     }
 
     private fun manualReceiptPresentation(receipt: Receipt): PresentedReceipt {
@@ -2973,18 +3056,8 @@ class MainActivity : ComponentActivity() {
             id = R.id.inventory_summary
             text = resources.getQuantityString(R.plurals.inventory_summary, state.inventory.size, state.inventory.size)
         }
-        if (ui.stacked()) {
-            add(LinearLayout(this@MainActivity).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                addView(count, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                if (developmentAvailable) addView(developmentEntry())
-                addView(receiptHistoryEntry())
-                addView(addInventoryEntry())
-            })
-        } else {
-            add(count)
-            add(space(8))
-        }
+        add(count)
+        if (!ui.stacked()) add(space(8))
         add(inventorySearchRow())
         add(space(6))
     }) {
@@ -3074,7 +3147,9 @@ class MainActivity : ComponentActivity() {
                     matches.addView(space(8))
                     matches.addView(ui.card {
                         addView(ui.actionRow(receipt.store,
-                            "${receipt.date} · ${purchaseCount(receipt)} · RM\u00A0${receipt.total.toPlainString()}",
+                            listOfNotNull("${receipt.date} · ${purchaseCount(receipt)} · RM\u00A0${receipt.total.toPlainString()}",
+                                getString(R.string.history_manual_source).takeIf { receipt.source == PurchaseSource.MANUAL })
+                                .joinToString(" · "),
                             R.drawable.ic_sage_receipt, ui.icon(R.drawable.ic_sage_right)) {
                             historyIdentity = receipt.confirmationId
                             navigate(Screen.HISTORY_DETAIL)
@@ -3103,6 +3178,7 @@ class MainActivity : ComponentActivity() {
         add(ui.card {
             addView(sectionTitle(receipt.store))
             addView(bodyText("${receipt.date} · ${purchaseCount(receipt)}"))
+            if (receipt.source == PurchaseSource.MANUAL) addView(bodyText(getString(R.string.history_manual_source)))
             addView(bodyText("Receipt total · RM ${receipt.total.toPlainString()}"))
         })
         add(space(10))
@@ -3123,7 +3199,7 @@ class MainActivity : ComponentActivity() {
                 addView(sectionTitle(row.description))
                 val unit = row.inventoryUnit?.symbol?.takeIf(String::isNotEmpty)
                 addView(bodyText("Purchased quantity · ${row.quantity.toPlainString()}"))
-                if (row.included) addView(bodyText("Included in inventory · ${unit.orEmpty()}"))
+                if (row.included) addView(bodyText(listOfNotNull("Included in inventory", unit).joinToString(" · ")))
                 else addView(bodyText("Excluded from inventory"))
                 if (row.unitPrice != null) addView(bodyText("Unit price · RM ${row.unitPrice.toPlainString()}"))
                 else addView(bodyText("Unit price absent"))
@@ -3207,7 +3283,7 @@ class MainActivity : ComponentActivity() {
                 val query = text?.toString().orEmpty()
                 if (query == inventoryBrowse.query) return
                 inventoryBrowse.query = query
-                inventoryGroupOverrides.clear()
+                matchingInventoryGroupOverrides.clear()
                 updateClear()
                 updateInventoryBrowseResults()
             }
@@ -3224,7 +3300,7 @@ class MainActivity : ComponentActivity() {
                 val selected = InventoryBrowseProjection.Source.values()[position]
                 if (selected != inventoryBrowse.source) {
                     inventoryBrowse.source = selected
-                    inventoryGroupOverrides.clear()
+                    matchingInventoryGroupOverrides.clear()
                     styleSourceFilter(anchor)
                     updateInventoryBrowseResults()
                 }
@@ -3296,12 +3372,21 @@ class MainActivity : ComponentActivity() {
 
     private fun updateScanVisibility() {
         val obscured = inventoryImeVisible || inventorySheet != null
-        findViewById<View>(R.id.home_add_receipt)?.visibility = if (obscured) View.INVISIBLE else View.VISIBLE
+        val visibility = if (obscured) View.INVISIBLE else View.VISIBLE
+        findViewById<View>(R.id.home_add_receipt)?.let { scan ->
+            if (scan.visibility != visibility) {
+                scan.visibility = visibility
+                val clearance = if (obscured) 0 else inventoryScanClearance(scan.layoutParams as FrameLayout.LayoutParams)
+                screenScrollView?.setPadding(0, 0, 0, clearance)
+            }
+        }
         findViewById<FrameLayout>(R.id.inventory_success_host)?.let { host ->
             host.visibility = if (!obscured && host.childCount > 0) View.VISIBLE else View.GONE
         }
         if (!obscured) renderPendingInventorySuccess()
     }
+
+    private fun inventoryScanClearance(layout: FrameLayout.LayoutParams): Int = layout.height + layout.bottomMargin + dp(8)
 
     private fun updateInventoryBrowseResults(announceImmediately: Boolean = false) {
         val results = inventoryResults ?: return
@@ -3316,6 +3401,9 @@ class MainActivity : ComponentActivity() {
         }
         val focusedReaderTag = readerTag(results)
         val visible = inventoryBrowse.project(state.inventory)
+        val today = state.currentLocalDate()
+        inventoryWarningDate = today
+        scheduleInventoryDateRefresh()
         results.removeAllViews()
         when {
             state.inventory.isEmpty() -> results.addView(inventoryEmpty(
@@ -3328,7 +3416,7 @@ class MainActivity : ComponentActivity() {
                 R.string.inventory_no_matches, R.string.inventory_no_matches_body,
                 R.string.inventory_clear_search.takeIf { inventoryBrowse.query.isNotEmpty() },
             ) { findViewById<EditText>(R.id.inventory_search)?.text?.clear() })
-            else -> renderInventoryRows(results, visible)
+            else -> renderInventoryRows(results, visible, today)
         }
         if (focusedTag != null) results.findViewWithTag<View>(focusedTag)?.takeIf { it.isShown }?.requestFocus()
         if (focusedReaderTag != null) {
@@ -3585,80 +3673,102 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun renderInventoryRows(container: LinearLayout, visible: List<InventoryItem>) {
+    private fun renderInventoryRows(container: LinearLayout, visible: List<InventoryItem>, today: LocalDate) {
         fun rows(items: List<InventoryItem>) = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            addView(divider())
             items.forEachIndexed { index, item ->
                 if (index > 0) addView(divider())
-                addView(inventoryItemRow(item))
+                addView(inventoryItemRow(item, today))
             }
         }
 
-        val groups = if (inventoryBrowse.sort == InventoryBrowseProjection.Sort.ORIGINAL)
-            sageSourceGroups(visible) else null
-        if (groups == null) {
-            container.addView(ui.card { addView(rows(visible)) })
-            return
-        }
-        val active = inventoryBrowse.query.isNotBlank() ||
-            inventoryBrowse.source != InventoryBrowseProjection.Source.ALL
-        val expanded = groups.mapNotNull { (source, _) ->
-            source.name.takeIf { inventoryGroupOverrides[source] ?: active }
-        }.toSet()
-        val collapsed = (groups.keys.map { it.name } - expanded).toMutableSet()
+        val groups = sageCategoryGroups(state.inventory, visible)
+        val matching = inventoryBrowse.query.isNotBlank() || inventoryBrowse.source != InventoryBrowseProjection.Source.ALL
+        val overrides = if (matching) matchingInventoryGroupOverrides else inventoryGroupOverrides
+        val initiallyOpen = matching || inventoryBrowse.sort != InventoryBrowseProjection.Sort.ORIGINAL
+        val collapsed = groups.keys.filterNot { overrides[it] ?: initiallyOpen }.map { it.code }.toMutableSet()
         val sections = SageExpandableSections(this, ui, collapsed) { key, open ->
-            inventoryGroupOverrides[InventoryBrowseProjection.Source.valueOf(key)] = open
+            overrides[checkNotNull(InventoryCategory.fromCode(key))] = open
         }
         container.addView(LinearLayout(this).apply {
             id = R.id.sage_inventory_groups
             orientation = LinearLayout.VERTICAL
-            addView(sectionBar(getString(R.string.sage_sources), sections.allAction()))
-            groups.forEach { (source, items) ->
-                val label = resources.getStringArray(R.array.v5_inventory_group_labels)[source.ordinal]
+            addView(sectionBar(getString(R.string.inventory_categories), sections.allAction()))
+            groups.entries.forEachIndexed { index, (category, items) ->
+                if (index > 0) addView(space(10))
                 val count = resources.getQuantityString(R.plurals.home_inventory_count, items.size, items.size)
-                addView(sections.add(source.name, label, rows(items), subtitle = count,
-                    icon = inventorySourceIcon(source), inventoryRow = true))
-                addView(space(8))
+                addView(sections.add(category.code, inventoryCategoryLabel(category), rows(items), subtitle = count,
+                    icon = inventoryCategoryIcon(category), compact = true, inventoryRow = true))
             }
+            addView(space(6))
         })
     }
 
-    private fun inventorySourceIcon(source: InventoryBrowseProjection.Source): Int = when (source) {
-        InventoryBrowseProjection.Source.RECEIPT_PREVIEW,
-        InventoryBrowseProjection.Source.MANUAL,
-        InventoryBrowseProjection.Source.LIVE -> R.drawable.ic_sage_receipt
-        InventoryBrowseProjection.Source.STANDALONE -> R.drawable.ic_sage_plus
-        else -> R.drawable.ic_sage_basket
+    private fun inventoryCategoryLabel(category: InventoryCategory): String = getString(when (category) {
+        InventoryCategory.VEGETABLES_FRUITS -> R.string.category_vegetables_fruits
+        InventoryCategory.DAIRY_EGGS -> R.string.category_dairy_eggs
+        InventoryCategory.MEAT_SEAFOOD -> R.string.category_meat_seafood
+        InventoryCategory.DRY_FOOD -> R.string.category_dry_food
+        InventoryCategory.HOUSEHOLD_SUPPLIES -> R.string.category_household_supplies
+        InventoryCategory.UNCATEGORIZED -> R.string.category_uncategorized
+    })
+
+    private fun inventoryCategoryIcon(category: InventoryCategory): Int = when (category) {
+        InventoryCategory.VEGETABLES_FRUITS -> R.drawable.ic_sage_leaf
+        InventoryCategory.DAIRY_EGGS -> R.drawable.ic_sage_milk
+        InventoryCategory.MEAT_SEAFOOD -> R.drawable.ic_sage_fish
+        InventoryCategory.DRY_FOOD -> R.drawable.ic_sage_grain
+        InventoryCategory.HOUSEHOLD_SUPPLIES -> R.drawable.ic_sage_home
+        InventoryCategory.UNCATEGORIZED -> R.drawable.ic_sage_package
     }
 
-    private fun inventorySourceLabel(item: InventoryItem): String =
-        when (InventoryBrowseProjection.sourceOf(item)) {
-            InventoryBrowseProjection.Source.MANUAL -> getString(R.string.manual_inventory_source)
-            InventoryBrowseProjection.Source.LIVE -> getString(R.string.live_inventory_source)
-            InventoryBrowseProjection.Source.STANDALONE -> getString(R.string.inventory_standalone_source)
-            InventoryBrowseProjection.Source.RECEIPT_PREVIEW -> getString(R.string.inventory_item_source)
-            else -> item.state
-        }
+    private fun inventoryWarningLabel(warning: InventoryWarning): String = getString(when (warning) {
+        InventoryWarning.EXPIRED -> R.string.inventory_expired
+        InventoryWarning.EXPIRES_TODAY -> R.string.inventory_expires_today
+        InventoryWarning.EXPIRING_SOON -> R.string.inventory_expiring_soon
+        InventoryWarning.OUT_OF_STOCK -> R.string.inventory_out_of_stock
+        InventoryWarning.LOW_STOCK -> R.string.inventory_low_stock
+    })
 
-    private fun inventoryItemRow(item: InventoryItem): View = LinearLayout(this).apply {
+    private fun inventorySourceLabel(source: InventoryBrowseProjection.Source): String? = when (source) {
+        InventoryBrowseProjection.Source.BASELINE -> getString(R.string.inventory_source_demo)
+        InventoryBrowseProjection.Source.RECEIPT_PREVIEW -> getString(R.string.inventory_source_preview)
+        InventoryBrowseProjection.Source.MANUAL -> getString(R.string.inventory_source_manual)
+        InventoryBrowseProjection.Source.LIVE -> getString(R.string.inventory_source_scanned)
+        InventoryBrowseProjection.Source.STANDALONE -> getString(R.string.inventory_source_direct)
+        InventoryBrowseProjection.Source.ALL -> null
+    }
+
+    private fun inventoryItemRow(item: InventoryItem, today: LocalDate): View = LinearLayout(this).apply {
         tag = item.id
         gravity = Gravity.CENTER_VERTICAL
         minimumHeight = dp(48)
-        setPadding(0, dp(8), 0, dp(8))
-        val source = inventorySourceLabel(item)
-        addView(LinearLayout(this@MainActivity).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(TextView(this@MainActivity, null, 0, R.style.TextAppearance_PantryProof_ItemTitle).apply { text = item.name })
-            addView(bodyText(source).apply { setTextColor(ui.color(R.color.pantry_on_surface_variant)) })
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addView(TextView(this@MainActivity, null, 0, R.style.TextAppearance_PantryProof_ItemTitle).apply {
-            text = item.quantityLabel
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            setPaddingRelative(dp(8), 0, dp(4), 0)
+        setPadding(dp(4), dp(5), dp(4), dp(5))
+        val source = InventoryBrowseProjection.sourceOf(item)
+        val sessionSource = when (source) {
+            InventoryBrowseProjection.Source.BASELINE, InventoryBrowseProjection.Source.RECEIPT_PREVIEW ->
+                inventorySourceLabel(source)
+            else -> null
+        }
+        val expiry = item.household.expiryDate?.let {
+            val label = when (it) {
+                today -> getString(R.string.inventory_expiry_today)
+                today.plusDays(1) -> getString(R.string.inventory_expiry_tomorrow)
+                else -> PurchaseDateInput.display(it)
+            }
+            getString(R.string.inventory_expiry_short, label)
+        }
+        val warnings = item.warnings(today).map { it to inventoryWarningLabel(it) }
+        addView(InventoryRowContent(this@MainActivity, ui, item.name, item.quantityLabel, expiry, sessionSource, warnings),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(ui.icon(R.drawable.ic_sage_right), LinearLayout.LayoutParams(dp(24), dp(24)).apply {
+            marginStart = dp(4)
+            topMargin = dp(6)
+            gravity = Gravity.TOP
         })
-        addView(ui.icon(R.drawable.ic_sage_right), LinearLayout.LayoutParams(dp(24), dp(24)))
-        contentDescription = listOf(item.name, source, getString(R.string.inventory_quantity_label, item.quantityLabel)).joinToString(". ")
+        contentDescription = (listOfNotNull(item.name, getString(R.string.inventory_quantity_label, item.quantityLabel),
+            expiry, inventorySourceLabel(source)) + warnings.map { it.second }).joinToString(". ")
         ui.markButton(this, inventoryRow = true)
         setOnClickListener { showInventoryItemDetails(item.id) }
     }
@@ -3692,7 +3802,22 @@ class MainActivity : ComponentActivity() {
             this.id = R.id.sage_inventory_details
             orientation = LinearLayout.VERTICAL
         }
-        body.addView(bodyText(inventorySourceLabel(item)))
+        val source = InventoryBrowseProjection.sourceOf(item)
+        val sourceLabel = inventorySourceLabel(source)
+        sourceLabel?.let { body.addView(bodyText(getString(R.string.inventory_source_field, it))) }
+        val sourceState = when (source) {
+            InventoryBrowseProjection.Source.MANUAL -> ManualInventoryStore.ROW_STATE
+            InventoryBrowseProjection.Source.LIVE -> ManualInventoryStore.LIVE_ROW_STATE
+            InventoryBrowseProjection.Source.STANDALONE -> ManualInventoryStore.STANDALONE_ROW_STATE
+            else -> sourceLabel
+        }
+        if (item.state.isNotBlank() && item.state != sourceState) body.addView(bodyText(item.state))
+        if (ManualInventoryStore.isDurableRowId(id)) {
+            body.addView(bodyText(getString(R.string.inventory_category_value, inventoryCategoryLabel(item.household.category))))
+            item.household.expiryDate?.let {
+                body.addView(bodyText(getString(R.string.inventory_expiry_summary, PurchaseDateInput.display(it))))
+            }
+        }
         body.addView(space(8))
         val quantity = TextView(this, null, 0, R.style.TextAppearance_PantryProof_Display).apply {
             this.id = if (item.id == "stock-rice") R.id.inventory_stock_rice_value else View.NO_ID
@@ -3757,6 +3882,10 @@ class MainActivity : ComponentActivity() {
                 tag = "inventory-delete:$id"
                 contentDescription = getString(R.string.inventory_delete_item_description, item.name)
             })
+        } else if (ManualInventoryStore.isDurableRowId(id)) {
+            body.addView(ui.actionButton(getString(R.string.inventory_edit_metadata), PantryActionStyle.SECONDARY) {
+                state.inventory.firstOrNull { it.id == id }?.let { current -> showStockMetadataEditor(current, sheet::dismiss) }
+            })
         }
         sheet = showInventorySheet(item.name, body, onDismiss = { restoreInventoryRowFocus(id, restoreKeyboard, restoreReader) })
     }
@@ -3781,6 +3910,87 @@ class MainActivity : ComponentActivity() {
             }
         }
         return control
+    }
+
+    private fun inventoryCategoryChoice(initial: InventoryCategory, onChanged: (InventoryCategory) -> Unit): View {
+        var selected = initial
+        lateinit var control: Button
+        fun label() = getString(R.string.inventory_category_value, inventoryCategoryLabel(selected))
+        control = ui.actionButton(label(), PantryActionStyle.SECONDARY, viewId = R.id.inventory_category) {
+            val categories = InventoryCategory.entries
+            ui.showChoicePopup(control, categories.map(::inventoryCategoryLabel).toTypedArray(), selected.ordinal,
+                R.id.inventory_category_choices) { index ->
+                selected = categories[index]
+                control.text = label()
+                control.contentDescription = label()
+                onChanged(selected)
+            }
+        }
+        return control
+    }
+
+    private inner class StockMetadataFields(form: LinearLayout, initial: InventoryMetadata) {
+        private var category = initial.category
+        private val expiry = reviewField("", getString(R.string.inventory_expiry_optional),
+            initial.expiryDate?.let(PurchaseDateInput::display).orEmpty(), "", viewId = R.id.inventory_expiry)
+        private val minimum = reviewField("", getString(R.string.inventory_minimum_optional),
+            initial.minimumStock?.toPlainString().orEmpty(), getString(R.string.inventory_minimum_help),
+            type = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL, viewId = R.id.inventory_minimum)
+
+        init {
+            configureManualDatePicker(expiry, expiry = true)
+            form.addView(space(8))
+            form.addView(inventoryCategoryChoice(category) { category = it })
+            form.addView(expiry.container)
+            val clear = ui.actionButton(getString(R.string.inventory_clear_expiry), PantryActionStyle.TERTIARY) {
+                expiry.field.text.clear()
+                applyReviewFieldError(expiry, null)
+            }
+            form.addView(clear)
+            fun updateExpiry() {
+                clear.visibility = if (expiry.field.text.isNotEmpty()) View.VISIBLE else View.GONE
+                applyReviewFieldError(expiry, null)
+            }
+            expiry.field.addTextChangedListener(simpleTextWatcher(::updateExpiry))
+            updateExpiry()
+            form.addView(minimum.container)
+        }
+
+        fun clearMinimum() { minimum.field.text.clear() }
+
+        fun read(unit: InventoryUnit): InventoryMetadata? {
+            val rawDate = expiry.field.text.toString()
+            val date = PurchaseDateInput.parse(rawDate)?.takeIf { it.year in 1..9999 }
+            val rawMinimum = minimum.field.text.toString()
+            val threshold = unit.parse(rawMinimum)?.takeIf(unit::stores)
+            val badDate = rawDate.isNotBlank() && date == null
+            val badMinimum = rawMinimum.isNotBlank() && threshold == null
+            applyReviewFieldError(expiry, getString(R.string.v51_date_invalid).takeIf { badDate })
+            applyReviewFieldError(minimum, getString(R.string.inventory_minimum_invalid).takeIf { badMinimum })
+            if (badDate || badMinimum) {
+                focusInvalidField(if (badDate) expiry else minimum)
+                return null
+            }
+            return InventoryMetadata(category, date, threshold)
+        }
+    }
+
+    private fun showStockMetadataEditor(item: InventoryItem, onSaved: () -> Unit) {
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val fields = StockMetadataFields(form, item.household)
+        lateinit var dialog: Dialog
+        val save = ui.actionButton(getString(R.string.sage_save_changes), PantryActionStyle.PRIMARY,
+            viewId = android.R.id.button1) {
+            val metadata = fields.read(item.unit) ?: return@actionButton
+            if (!state.editInventoryMetadata(item.id, item.unit, metadata)) {
+                showReviewMessage(getString(R.string.inventory_change_failed))
+                return@actionButton
+            }
+            dialog.dismiss()
+            refreshInventoryAfterChange()
+            onSaved()
+        }
+        dialog = showInventorySheet(getString(R.string.inventory_edit_metadata), form, save)
     }
 
     private fun showInventoryItemEditor(item: InventoryItem? = null, onSaved: (() -> Unit)? = null) {
@@ -3830,8 +4040,10 @@ class MainActivity : ComponentActivity() {
             decrease.isEnabled = count != null && count >= unit.step
             increase.isEnabled = quantity.text.isBlank() || count != null && count + unit.step <= maximum()
         }
+        lateinit var metadataFields: StockMetadataFields
         if (unit == InventoryUnit.UNKNOWN) {
             form.addView(inventoryUnitChoice(unit) {
+                if (unit != it) metadataFields.clearMinimum()
                 unit = it
                 quantity.error = null
                 stepperState()
@@ -3849,6 +4061,7 @@ class MainActivity : ComponentActivity() {
             addView(increase)
         })
         form.addView(bodyText(getString(R.string.sage_stepper_hint)).apply { gravity = Gravity.CENTER })
+        metadataFields = StockMetadataFields(form, item?.household ?: InventoryMetadata())
         val feedback = bodyText(getString(R.string.inventory_change_failed)).apply {
             setTextColor(ui.color(R.color.pantry_error))
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
@@ -3870,9 +4083,10 @@ class MainActivity : ComponentActivity() {
             feedback.visibility = View.GONE
             val rawName = name.field.text.toString()
             val rawQuantity = quantity.text.toString()
+            val metadata = metadataFields.read(unit) ?: return@actionButton
             val previouslySaved = if (item == null) state.inventory.mapTo(hashSetOf()) { it.id } else emptySet()
-            val result = if (item == null) state.addInventoryItem(rawName, rawQuantity, unit)
-                else state.editInventoryItem(item.id, rawName, rawQuantity, unit)
+            val result = if (item == null) state.addInventoryItem(rawName, rawQuantity, unit, metadata)
+                else state.editInventoryItem(item.id, rawName, rawQuantity, unit, metadata)
             when (result) {
                 PantryUiState.InventoryChange.INVALID_NAME -> focusInvalidField(name.also {
                     applyReviewFieldError(it, getString(R.string.inventory_name_required))
@@ -4020,43 +4234,53 @@ class MainActivity : ComponentActivity() {
             if (width >= maximumDp) maximum else ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL,
         )
-        val headerActions = if (inventory && !ui.stacked()) LinearLayout(this).apply {
+        val stackedActions = inventory && ui.stacked()
+        val headerActions = if (inventory) LinearLayout(this).apply {
             if (developmentAvailable) addView(developmentEntry())
             addView(receiptHistoryEntry())
             addView(addInventoryEntry())
         } else null
         root.addView(FrameLayout(this).apply {
-            addView(ui.appBar(title, showBack, inventory, headerActions, onBack = ::handleBackNavigation), centered())
+            addView(ui.appBar(title, showBack, inventory, headerActions.takeUnless { stackedActions },
+                onBack = ::handleBackNavigation), centered())
         })
-        if (inventory) {
-            root.addView(FrameLayout(this).apply {
-                addView(FrameLayout(this@MainActivity).apply {
-                    id = R.id.inventory_success_host
-                    setPadding(gutter, dp(4), gutter, dp(6))
-                    visibility = View.GONE
-                }, centered())
-            })
-        }
         pinned?.let { build ->
             root.addView(FrameLayout(this).apply {
                 addView(LinearLayout(this@MainActivity).apply {
                     id = R.id.inventory_pinned_controls
                     orientation = LinearLayout.VERTICAL
                     setPadding(gutter, 0, gutter, 0)
+                    if (stackedActions) addView(headerActions, LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { gravity = Gravity.END })
+                    addView(FrameLayout(this@MainActivity).apply {
+                        id = R.id.inventory_success_host
+                        setPadding(0, dp(4), 0, dp(6))
+                        visibility = View.GONE
+                    })
                     build()
                 }, centered())
             })
         }
         screenPrimary = null
+        val scanLayout = if (inventory) FrameLayout.LayoutParams(dp(56), dp(56), Gravity.BOTTOM or Gravity.END).apply {
+            marginEnd = gutter
+            bottomMargin = dp(16)
+        } else null
         val body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(gutter, 0, gutter, dp(if (inventory) 80 else 16))
+            setPadding(gutter, 0, gutter, if (inventory) 0 else dp(16))
             content()
         }
         val bodyHolder = FrameLayout(this).apply { addView(body, centered()) }
         val scrollView = ScrollView(this).apply {
             isFillViewport = true
             isSmoothScrollingEnabled = false
+            scanLayout?.let {
+                // The root already excludes system/IME insets. Clip scrolling content above the floating action.
+                setPadding(0, 0, 0, inventoryScanClearance(it))
+                clipToPadding = true
+            }
             addView(bodyHolder)
         }
         screenScrollView = scrollView
@@ -4064,14 +4288,7 @@ class MainActivity : ComponentActivity() {
             addView(scrollView, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
             ))
-            if (inventory) {
-                addView(ui.floatingScanAction(::showReceiptSources), FrameLayout.LayoutParams(
-                    dp(56), dp(56), Gravity.BOTTOM or Gravity.END,
-                ).apply {
-                    marginEnd = gutter
-                    bottomMargin = dp(16)
-                })
-            }
+            scanLayout?.let { addView(ui.floatingScanAction(::showReceiptSources), it) }
         }
         root.addView(viewport, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         screenPrimary?.let { action ->
@@ -4177,6 +4394,8 @@ class MainActivity : ComponentActivity() {
         bundle.putString("draftStoreName", draft.storeName)
         bundle.putString("draftPurchaseDate", draft.purchaseDate)
         bundle.putString("draftReceiptTotal", draft.receiptTotal)
+        bundle.putString("manualConfirmationId", draft.manualConfirmationId)
+        bundle.putStringArrayList("draftItemCategories", ArrayList(draft.items.map { it.category.code }))
         bundle.putStringArrayList("draftItemIds", ArrayList(draft.items.map(EditableReceiptItem::id)))
         bundle.putStringArrayList(
             "draftItemDescriptions",
@@ -4203,6 +4422,8 @@ class MainActivity : ComponentActivity() {
         val quantities = requireNotNull(bundle.getStringArrayList("draftItemQuantities"))
         val unitPrices = requireNotNull(bundle.getStringArrayList("draftItemUnitPrices"))
         val lineTotals = requireNotNull(bundle.getStringArrayList("draftItemLineTotals"))
+        val categories = bundle.getStringArrayList("draftItemCategories")
+        require(categories == null || categories.size == ids.size)
         require(
             listOf(descriptions.size, quantities.size, unitPrices.size, lineTotals.size)
                 .all { it == ids.size },
@@ -4217,18 +4438,23 @@ class MainActivity : ComponentActivity() {
                     quantities[index],
                     unitPrices[index],
                     lineTotals[index],
+                    categories?.get(index)?.let { requireNotNull(InventoryCategory.fromCode(it)) }
+                        ?: InventoryCategory.UNCATEGORIZED,
                 )
             }.toMutableList(),
             receiptTotal = requireNotNull(bundle.getString("draftReceiptTotal")),
+            manualConfirmationId = bundle.getString("manualConfirmationId"),
         )
     }.getOrNull()
 
     private fun restoreSessionState(bundle: Bundle) {
         syntheticCollapsed.addAll(bundle.getStringArrayList("sageSyntheticCollapsed").orEmpty())
         manualCollapsed.addAll(bundle.getStringArrayList("sageManualCollapsed").orEmpty())
-        InventoryBrowseProjection.Source.values().forEach { source ->
-            val key = "sageGroup." + source.name
-            if (bundle.containsKey(key)) inventoryGroupOverrides[source] = bundle.getBoolean(key)
+        InventoryCategory.entries.forEach { category ->
+            val key = "inventoryCategory." + category.code
+            if (bundle.containsKey(key)) inventoryGroupOverrides[category] = bundle.getBoolean(key)
+            val matchingKey = "matchingInventoryCategory." + category.code
+            if (bundle.containsKey(matchingKey)) matchingInventoryGroupOverrides[category] = bundle.getBoolean(matchingKey)
         }
         inventoryBrowse.query = bundle.getString("inventoryBrowseQuery").orEmpty()
         inventoryBrowse.sort = runCatching {

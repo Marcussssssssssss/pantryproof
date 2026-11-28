@@ -2,9 +2,15 @@ package com.pantryproof.prototype.ui
 
 import com.pantryproof.prototype.data.InventoryItem
 import com.pantryproof.prototype.data.InventoryUnit
+import com.pantryproof.prototype.data.InventoryMetadata
 import com.pantryproof.prototype.data.ManualInventoryPersistence
 import com.pantryproof.prototype.data.ManualInventoryStore
 import com.pantryproof.prototype.data.Receipt
+import com.pantryproof.prototype.data.PurchaseSource
+import com.pantryproof.prototype.data.PurchasedRow
+import com.pantryproof.prototype.data.ReceiptConfirmationMode
+import com.pantryproof.prototype.data.confirmationDigest
+import com.pantryproof.prototype.data.sha256
 import com.pantryproof.prototype.data.ReceiptPresentationUiResult
 import com.pantryproof.prototype.data.ReceiptPresentationSource
 import com.pantryproof.prototype.data.ReceiptConfirmation
@@ -126,16 +132,47 @@ class PantryUiState internal constructor(
         receiptStore?.load()?.let(::applyCommittedInventory)
     }
 
-    fun confirmManualReceipt(draft: EditableReceipt): Boolean {
-        val confirmed = ReceiptValidator.validateManual(draft, today()).receipt ?: return false
-        val rows = confirmed.items.map { item ->
-            InventoryItem(
-                id = "$MANUAL_ROW_PREFIX${item.id}",
-                name = item.description,
-                quantity = item.quantity,
-                state = ManualInventoryStore.ROW_STATE,
-            )
+    internal fun commitManualReceipt(
+        draft: EditableReceipt,
+        arithmeticAcknowledged: Boolean,
+        original: ByteArray?,
+    ): ManualInventoryStore.Commit {
+        val store = receiptStore ?: return ManualInventoryStore.Commit.FAILED
+        val receipt = ReceiptValidator.validateManual(draft, today()).receipt ?: return ManualInventoryStore.Commit.CONFLICT
+        val warnings = ReceiptValidator.manualArithmeticWarnings(receipt)
+        val mismatch = warnings.mismatchedLineNumbers.isNotEmpty() || warnings.receiptTotalMismatch
+        if (mismatch && !arithmeticAcknowledged) return ManualInventoryStore.Commit.CONFLICT
+        val identity = manualReceiptIdentity(draft)
+        val rows = manualStock(receipt).zip(draft.items) { row, item ->
+            row.copy(household = InventoryMetadata(category = item.category))
         }
+        val history = PurchaseRecord(identity, receipt.storeName, receipt.purchaseDate, receipt.receiptTotal,
+            receipt.items.map {
+                PurchasedRow(it.id, it.description, it.quantity.toBigDecimal(), null, true, it.unitPrice,
+                    if (it.unitPrice == null) "NOT_ENTERED" else null, it.lineTotal)
+            }, source = PurchaseSource.MANUAL, arithmeticAcknowledged = mismatch)
+        val plan = ReceiptConfirmation(identity, identity, ReceiptConfirmationMode.INVENTORY_AND_RECEIPT,
+            rows, receipt.items.map { it.id to true }, emptyList(), history, original != null, false,
+            evidenceDigest = null, originalDigest = original?.let(::sha256))
+        return store.commit(plan, evidence = null, original = original)
+    }
+
+    internal fun manualReceiptIdentity(draft: EditableReceipt): String =
+        confirmationDigest("manual", draft.manualConfirmationId ?: draft.items.map { it.id }.sorted().joinToString("\u0000"))
+
+    private fun manualStock(receipt: Receipt) = receipt.items.map { item ->
+        InventoryItem("$MANUAL_ROW_PREFIX${item.id}", item.description, item.quantity, ManualInventoryStore.ROW_STATE)
+    }
+
+    fun confirmManualReceipt(draft: EditableReceipt): Boolean {
+        if (receiptStore != null) {
+            val outcome = commitManualReceipt(draft, arithmeticAcknowledged = false, original = null)
+            if (outcome != ManualInventoryStore.Commit.COMMITTED && outcome != ManualInventoryStore.Commit.REPLAYED) return false
+            refreshDurableInventory()
+            return true
+        }
+        val confirmed = ReceiptValidator.validateManual(draft, today()).receipt ?: return false
+        val rows = manualStock(confirmed)
         val rowIds = rows.map(InventoryItem::id).toSet()
         if (rowIds.size != rows.size || inventory.any { it.id in rowIds }) return false
         if (manualInventory == null) {
@@ -174,12 +211,13 @@ class PantryUiState internal constructor(
         name: String,
         quantity: String,
         unit: InventoryUnit = InventoryUnit.UNKNOWN,
+        household: InventoryMetadata = InventoryMetadata(),
         newId: () -> UUID = UUID::randomUUID,
     ): InventoryChange = saveInventoryItem(name, quantity, unit) { trimmedName, parsedQuantity ->
         val id = "${ManualInventoryStore.STANDALONE_ROW_PREFIX}${newId()}"
         updateManualInventory { committed ->
-            if (committed.any { it.id == id }) null
-            else committed + InventoryItem(id, trimmedName, parsedQuantity, ManualInventoryStore.STANDALONE_ROW_STATE, unit)
+            if (!household.validFor(unit) || committed.any { it.id == id }) null
+            else committed + InventoryItem(id, trimmedName, parsedQuantity, ManualInventoryStore.STANDALONE_ROW_STATE, unit, household)
         }
     }
 
@@ -188,15 +226,23 @@ class PantryUiState internal constructor(
         name: String,
         quantity: String,
         unit: InventoryUnit? = null,
+        household: InventoryMetadata? = null,
     ): InventoryChange {
         val current = inventory.firstOrNull { it.id == id } ?: return InventoryChange.NOT_SAVED
         val updatedUnit = unit ?: current.unit
         if (current.unit != InventoryUnit.UNKNOWN && current.unit != updatedUnit) return InventoryChange.NOT_SAVED
+        if (household?.validFor(updatedUnit) == false) return InventoryChange.NOT_SAVED
         return saveInventoryItem(name, quantity, updatedUnit) { trimmedName, parsedQuantity ->
             updateExistingInventoryItem(id, expectedUnit = current.unit) {
-                it.copy(name = trimmedName, quantity = parsedQuantity, unit = updatedUnit)
+                val metadata = household ?: if (updatedUnit != it.unit) it.household.copy(minimumStock = null) else it.household
+                it.copy(name = trimmedName, quantity = parsedQuantity, unit = updatedUnit, household = metadata)
             }
         }
+    }
+
+    internal fun editInventoryMetadata(id: String, unit: InventoryUnit, household: InventoryMetadata): Boolean {
+        if (!ManualInventoryStore.isDurableRowId(id) || !household.validFor(unit)) return false
+        return updateCommittedRow(id, unit) { it.copy(household = household) }
     }
 
     internal fun deleteInventoryItem(id: String): Boolean = updateExistingInventoryItem(id) { null }
@@ -224,7 +270,14 @@ class PantryUiState internal constructor(
         if (!ManualInventoryStore.isDurableRowId(id) || id.startsWith(ManualInventoryStore.LIVE_ROW_PREFIX)) {
             return false
         }
-        return updateManualInventory { committed ->
+        return updateCommittedRow(id, expectedUnit, change)
+    }
+
+    private fun updateCommittedRow(
+        id: String,
+        expectedUnit: InventoryUnit?,
+        change: (InventoryItem) -> InventoryItem?,
+    ): Boolean = updateManualInventory { committed ->
             val index = committed.indexOfFirst { it.id == id }
             if (index < 0) return@updateManualInventory null
             val current = committed[index]
@@ -233,7 +286,6 @@ class PantryUiState internal constructor(
             committed.toMutableList().apply {
                 if (updated == null) removeAt(index) else set(index, updated)
             }
-        }
     }
 
     fun adjustInventory(id: String, delta: Int): Boolean {
