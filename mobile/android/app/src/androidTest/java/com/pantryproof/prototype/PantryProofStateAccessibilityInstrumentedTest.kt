@@ -65,29 +65,34 @@ class PantryProofStateAccessibilityInstrumentedTest {
     fun confirmationAndInventoryQuantitySurviveActivityRecreation() {
         openManualReview()
         onView(withId(R.id.review_store_name)).perform(scrollTo(), replaceText("Recreated Demo Store"))
-        onView(withId(R.id.review_confirm)).perform(scrollTo(), closeSoftKeyboard(), click())
+        onView(withId(R.id.review_confirm)).perform(sageScrollTo(), closeSoftKeyboard(), click())
         onView(withId(R.id.review_success)).check(matches(isDisplayed()))
 
         activityRule.scenario.recreate()
         onView(withId(R.id.review_success)).check(matches(isDisplayed()))
+        pressBack()
         onView(withId(R.id.review_store_name)).check(matches(withText("Recreated Demo Store")))
 
-        onView(withId(R.id.review_view_inventory)).perform(scrollTo(), click())
+        onView(withId(R.id.review_view_inventory)).perform(sageScrollTo(), click())
+        openSageInventoryDetails("stock-rice")
         onView(withId(R.id.inventory_stock_rice_decrease)).perform(scrollTo(), click())
         onView(withId(R.id.inventory_stock_rice_value)).check(matches(withText("0")))
 
         activityRule.scenario.recreate()
         onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
+        openSageInventoryDetails("stock-rice")
         onView(withId(R.id.inventory_stock_rice_value)).check(matches(withText("0")))
         onView(withId(R.id.inventory_stock_rice_decrease)).check(matches(not(isEnabled())))
 
+        pressBack()
         pressBack()
         onView(withId(R.id.review_success)).check(matches(isDisplayed()))
     }
 
     @Test
     fun inventoryControlsEnforceBothBoundariesAndExposeDescriptions() {
-        onView(withId(R.id.home_inventory)).perform(scrollTo(), click())
+        onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
+        openSageInventoryDetails("stock-rice")
         onView(withId(R.id.inventory_stock_rice_decrease)).check(
             matches(withContentDescription(context.getString(
                 R.string.inventory_decrease,

@@ -177,6 +177,7 @@ sealed interface ReceiptPresentationResult<out T> {
 }
 
 object ReceiptPresentationIssueCodes {
+    const val RESPONSE_TOO_LARGE = "REJECT_RESPONSE_TOO_LARGE"
     const val INVALID_JSON = "REJECT_INVALID_JSON"
     const val DUPLICATE_JSON_KEY = "REJECT_DUPLICATE_JSON_KEY"
     const val MISSING_MEMBER = "REJECT_MISSING_MEMBER"

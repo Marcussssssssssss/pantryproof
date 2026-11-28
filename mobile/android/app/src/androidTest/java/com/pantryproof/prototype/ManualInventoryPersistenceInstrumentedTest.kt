@@ -16,12 +16,14 @@ import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.intent.Intents
 import androidx.test.espresso.intent.matcher.IntentMatchers.hasAction
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
+import androidx.test.espresso.matcher.ViewMatchers.withContentDescription
 import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.matcher.ViewMatchers.withTagValue
 import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.pantryproof.prototype.data.InventoryItem
+import com.pantryproof.prototype.data.InventoryUnit
 import com.pantryproof.prototype.data.ManualInventoryStore
 import com.pantryproof.prototype.data.MockReceiptPresentationSource
 import com.pantryproof.prototype.ui.PantryUiState
@@ -67,9 +69,9 @@ class ManualInventoryPersistenceInstrumentedTest {
                     ActivityResult(Activity.RESULT_OK, Intent().setData(Uri.fromFile(imageFile))),
                 )
                 ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                    onView(withId(R.id.home_add_receipt)).perform(scrollTo(), click())
+                    onView(withId(R.id.home_add_receipt)).perform(sageScrollTo(), click())
                     onView(withId(R.id.add_import_image)).perform(scrollTo(), click())
-                    onView(withId(R.id.preview_continue)).perform(scrollTo(), click())
+                    onView(withId(R.id.preview_continue)).perform(sageScrollTo(), click())
                     scenario.onActivity { activity ->
                         mapOf(
                             R.id.review_store_name to "Example Market",
@@ -80,20 +82,22 @@ class ManualInventoryPersistenceInstrumentedTest {
                             R.id.review_receipt_total to "8.00",
                         ).forEach { (id, value) -> activity.findViewById<EditText>(id).setText(value) }
                     }
-                    onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
-                    onView(withText(R.string.review_keep_editing)).perform(click())
+                    onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
+                    onView(withId(R.id.app_bar_back)).perform(click())
                     assertEquals(emptyList<InventoryItem>(), store.load())
                     scenario.onActivity { activity ->
                         activity.findViewById<EditText>(R.id.review_item_0_description).setText("Example oats")
                     }
-                    onView(withId(R.id.manual_review_action)).perform(scrollTo(), click())
-                    onView(withText(R.string.manual_confirm_action)).perform(click())
+                    onView(withId(R.id.manual_review_action)).perform(sageScrollTo(), click())
+                    onView(withId(R.id.manual_confirm)).perform(click())
                     onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
                     val row = requireNotNull(store.load()).single()
+                    assertTrue(requireNotNull(store.history()).isEmpty())
                     assertEquals("Example oats", row.name)
-                    assertEquals(2, row.quantity)
-                    onView(withTagValue(equalTo("inventory-increase:${row.id}"))).perform(scrollTo(), click())
-                    row.copy(quantity = 3).also { assertEquals(listOf(it), store.load()) }
+                    assertEquals(2.toBigDecimal(), row.quantity)
+                    openSageInventoryDetails(row.id)
+                    onView(withTagValue(equalTo("inventory-increase:${row.id}"))).perform(sageScrollTo(), click())
+                    row.copy(quantity = 3.toBigDecimal()).also { assertEquals(listOf(it), store.load()) }
                 }
             } finally {
                 Intents.release()
@@ -101,10 +105,11 @@ class ManualInventoryPersistenceInstrumentedTest {
 
             // Close and launch a new Activity instead of calling recreate(), which supplies saved state.
             ActivityScenario.launch(MainActivity::class.java).use {
-                onView(withId(R.id.home_inventory)).perform(scrollTo(), click())
-                onView(withText(committed.name)).perform(scrollTo()).check(matches(isDisplayed()))
-                onView(withText(context.getString(R.string.inventory_quantity_label, 3)))
-                    .perform(scrollTo()).check(matches(isDisplayed()))
+                onView(withId(R.id.screen_inventory)).check(matches(isDisplayed()))
+                openSageInventoryDetails(committed.id)
+                onView(withText(committed.name)).check(matches(isDisplayed()))
+                onView(withContentDescription(context.getString(R.string.inventory_quantity_label, 3)))
+                    .perform(sageScrollTo()).check(matches(isDisplayed()))
                 assertEquals(listOf(committed), ManualInventoryStore(context).load())
             }
         } finally {
@@ -136,7 +141,38 @@ class ManualInventoryPersistenceInstrumentedTest {
 
             rejectReplace = false
             assertTrue(state.adjustInventory(row.id, 1))
-            assertEquals(listOf(row.copy(quantity = 3)), ManualInventoryStore(snapshot).load())
+            assertEquals(listOf(row.copy(quantity = 3.toBigDecimal())), ManualInventoryStore(snapshot).load())
+        } finally {
+            Files.deleteIfExists(snapshot)
+            Files.deleteIfExists(directory)
+        }
+    }
+
+    @Test
+    fun legacySnapshotMigratesOnSuccessfulDecimalStockWriteAndKeepsStableRows() {
+        val directory = Files.createTempDirectory(context.cacheDir.toPath(), "decimal-stock-")
+        val snapshot = directory.resolve("inventory.json")
+        try {
+            val original = """{"version":1,"rows":[{"id":"manual-inventory-legacy","name":"Oats","quantity":9}]}"""
+                .toByteArray(Charsets.UTF_8)
+            Files.write(snapshot, original)
+            val legacy = InventoryItem("manual-inventory-legacy", "Oats", 9, ManualInventoryStore.STANDALONE_ROW_STATE)
+            val weighted = InventoryItem("manual-inventory-weighted", "Rice", "0.750".toBigDecimal(),
+                ManualInventoryStore.STANDALONE_ROW_STATE, InventoryUnit.KILOGRAM)
+            var fail = true
+            val store = ManualInventoryStore(snapshot) { pending, target ->
+                if (fail) throw IOException("Injected publication failure")
+                Files.move(pending, target, ATOMIC_MOVE, REPLACE_EXISTING)
+            }
+            assertEquals(listOf(legacy), store.load())
+            assertNull(store.update { it + weighted })
+            assertArrayEquals(original, Files.readAllBytes(snapshot))
+            fail = false
+            assertEquals(listOf(legacy, weighted), store.update { it + weighted })
+            assertEquals(listOf(legacy, weighted), ManualInventoryStore(snapshot).load())
+            val reloaded = PantryUiState(MockReceiptPresentationSource(), store)
+            assertTrue(reloaded.adjustInventory(weighted.id, -1))
+            assertEquals(listOf(legacy, weighted.copy(quantity = "0.749".toBigDecimal())), store.load())
         } finally {
             Files.deleteIfExists(snapshot)
             Files.deleteIfExists(directory)
@@ -147,7 +183,7 @@ class ManualInventoryPersistenceInstrumentedTest {
     fun unrecognizedStorageVersionIsNeverOverwritten() {
         val snapshot = Files.createTempFile(context.cacheDir.toPath(), "manual-stock-", ".json")
         try {
-            val original = """{"version":2,"rows":[]}""".toByteArray(Charsets.UTF_8)
+            val original = """{"version":3,"rows":[]}""".toByteArray(Charsets.UTF_8)
             Files.write(snapshot, original)
             val store = ManualInventoryStore(snapshot)
 

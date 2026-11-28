@@ -665,7 +665,7 @@ object ReceiptPresentationV1Validator {
         }
     }
 
-    private fun validateProtocolId(
+    internal fun validateProtocolId(
         value: String,
         path: String,
         code: String = ReceiptPresentationIssueCodes.INVALID_ID,
@@ -683,7 +683,7 @@ object ReceiptPresentationV1Validator {
         return value
     }
 
-    private fun requirePrivacySafeReason(value: String, path: String) {
+    internal fun requirePrivacySafeReason(value: String, path: String) {
         if (containsUnsafePrivacyReason(value)) {
             rejectPresentation(
                 ReceiptPresentationIssueCodes.UNSAFE_PROVENANCE,

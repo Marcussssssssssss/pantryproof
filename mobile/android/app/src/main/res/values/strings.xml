@@ -11,7 +11,7 @@
     <string name="home_brand_subtitle">Local-first grocery receipt intelligence</string>
     <string name="home_add_receipt">Add receipt</string>
     <string name="home_local_note_title">Local image access</string>
-    <string name="home_local_note_body">A chosen or captured image stays on this device in the current prototype. No OCR or upload runs.</string>
+    <string name="home_local_note_body">Receipt images stay on this device unless you explicitly start an upload in the configured development build.</string>
     <string name="home_inventory_title">Household inventory</string>
     <plurals name="home_inventory_count">
         <item quantity="one">%1$d item</item>
@@ -26,7 +26,7 @@
 
     <string name="add_receipt_title">Add receipt</string>
     <string name="add_receipt_step_title">Choose a receipt source</string>
-    <string name="add_receipt_step_description">Take a photo, import an image locally or continue with the clearly labelled synthetic demo.</string>
+    <string name="add_receipt_step_description">Take a photo or choose an existing image.</string>
     <string name="add_receipt_import">Import receipt image</string>
     <string name="add_receipt_import_help">Uses Android’s system image picker. No broad storage permission is requested.</string>
     <string name="add_receipt_camera">Take a photo</string>
@@ -63,11 +63,11 @@
     <string name="preview_selected_image_description">Locally selected receipt image preview</string>
     <string name="preview_captured_image_description">Temporary camera receipt photo preview</string>
     <string name="preview_synthetic_image_description">Illustrated synthetic demo receipt for Demo Grocery Store</string>
-    <string name="progress_accessibility">Step %1$d of 4, %2$s</string>
-    <string name="progress_visible">%1$d OF 4</string>
+    <string name="progress_accessibility">Step %1$d of 3, %2$s</string>
+    <string name="progress_visible">%1$d OF 3</string>
     <string name="action_arrow">%1$s  →</string>
 
-    <string name="details_title">Sample receipt fields</string>
+    <string name="details_title">Receipt details</string>
     <string name="details_step_title">Review the sample fields</string>
     <string name="details_step_description">Check every synthetic value before making temporary corrections.</string>
     <string name="details_demo_title">Synthetic receipt source</string>
@@ -100,10 +100,10 @@
     <string name="presentation_insufficient_body">The validated synthetic source did not contain enough evidence to present receipt fields.</string>
     <string name="presentation_rejected_title">Receipt presentation rejected</string>
     <string name="presentation_rejected_body">The local contract rejected this presentation (%1$s). No receipt fields can be confirmed.</string>
-    <string name="details_review_action">Review and correct</string>
+    <string name="details_review_action">Review receipt</string>
     <string name="details_back_action">Back to image preview</string>
 
-    <string name="review_title">Manual review</string>
+    <string name="review_title">Review receipt</string>
     <string name="review_step_title">Review and correct</string>
     <string name="review_step_description">Correct the synthetic sample, then confirm it for a temporary inventory preview.</string>
     <string name="review_extraction_failed_title">Review receipt fields</string>
@@ -176,8 +176,8 @@
     <string name="manual_keep_one_title">Keep at least one item</string>
     <string name="manual_keep_one_body">A receipt must have at least one item. Add another item before removing this one.</string>
     <string name="manual_item_limit">Item limit per receipt: %1$d</string>
-    <string name="manual_review_action">Review entered values</string>
-    <string name="manual_review_title">Review your manual receipt</string>
+    <string name="manual_review_action">Review receipt</string>
+    <string name="manual_review_title">Review receipt</string>
     <string name="manual_review_quantity">Quantity: %1$d</string>
     <string name="manual_review_unit_price">Unit price: %1$s</string>
     <string name="manual_review_line_total">Line total: %1$s</string>
@@ -210,7 +210,10 @@
         <item quantity="other">%1$d items</item>
     </plurals>
     <string name="inventory_item_source">From temporary receipt preview</string>
-    <string name="inventory_quantity_label">Quantity: %1$d</string>
+    <string name="inventory_quantity_label">Quantity: %1$s</string>
+    <string name="inventory_unit_value">Inventory unit: %1$s</string>
+    <string name="inventory_unit_unspecified">Not specified</string>
+    <string name="inventory_decimal_quantity_invalid">Enter a quantity from 0 to %1$s with up to three decimal places.</string>
     <string name="inventory_decrease">Decrease %1$s quantity</string>
     <string name="inventory_increase">Increase %1$s quantity</string>
     <string name="inventory_minimum_hint">Minimum quantity reached</string>
@@ -225,10 +228,11 @@
     <string name="inventory_delete_title">Delete this item?</string>
     <string name="inventory_delete_message">Remove %1$s from your saved inventory?</string>
     <string name="inventory_item_name">Item name</string>
-    <string name="inventory_item_quantity">Quantity (0–99)</string>
+    <string name="inventory_item_quantity">Quantity</string>
     <string name="inventory_save_item">Save item</string>
     <string name="inventory_name_required">Enter an item name.</string>
     <string name="inventory_quantity_invalid">Enter a whole number from 0 to 99.</string>
+    <string name="inventory_count_quantity_invalid">Enter a whole number from 0 to %1$s.</string>
     <string name="inventory_change_failed_title">Inventory change failed</string>
     <string name="inventory_change_failed">Could not save this change. Your saved inventory is unchanged.</string>
     <string name="inventory_standalone_source">Added directly to inventory</string>
@@ -267,11 +271,11 @@
         <item>Local execution failure</item>
         <item>No response</item>
     </string-array>
-    <string name="selected_processing_action">Test selected image processing</string>
+    <string name="selected_processing_action">Test image processing</string>
     <string name="selected_processing_title">Selected Image Test</string>
     <string name="selected_processing_fictional">Synthetic test result — these fields were not extracted from your selected image.</string>
-    <string name="selected_processing_full">Full-image snapshot · sampled to at most 1600 pixels per dimension.</string>
-    <string name="selected_processing_cropped">Cropped snapshot · orientation-corrected Preview crop, sampled to at most 1600 pixels per dimension.</string>
+    <string name="selected_processing_full">Full image · up to 1600 px per dimension.</string>
+    <string name="selected_processing_cropped">Preview crop · orientation-corrected · up to 1600 px per dimension.</string>
     <string name="selected_processing_preparing">Preparing selected image locally</string>
     <string name="selected_processing_limits">Reading and encoding on a worker. No image is uploaded or saved by this test.</string>
     <string name="selected_processing_error">Selected image could not be prepared</string>
@@ -280,22 +284,31 @@
     <string name="selected_processing_ready_body">Start explicitly to test its identity binding with a fictional response.</string>
     <string name="selected_processing_start">Start selected image test</string>
     <string name="selected_processing_prepare_again">Prepare selected image again</string>
-    <string name="t09_processing_action">Open development receipt processing</string>
-    <string name="t09_processing_title">Development receipt processing</string>
-    <string name="t09_processing_notice">Start sends the selected image to the configured development backend.</string>
-    <string name="t09_processing_start">Start upload</string>
-    <string name="t09_processing_ready">Ready to prepare the receipt image</string>
-    <string name="t09_processing_ready_body">Start to prepare and send the full image or the Preview crop.</string>
+    <string name="t09_processing_action">Preview submitted frame</string>
+    <string name="t09_processing_title">Receipt processing</string>
+    <string name="t09_processing_notice">Process sends only the prepared image to the configured local backend.</string>
+    <string name="t09_processing_start">Process</string>
+    <string name="t09_processing_ready">Ready to process</string>
+    <string name="t09_processing_ready_body">Check the submitted frame, then tap Process.</string>
     <string name="t09_processing_uploading">Uploading receipt image</string>
     <string name="t09_processing_waiting">Processing receipt on the backend</string>
     <string name="t09_processing_can_cancel">You can cancel this request.</string>
     <string name="t09_processing_cancelled">Request cancelled</string>
-    <string name="t09_processing_cancelled_body">Start again if you want to send a new request.</string>
+    <string name="t09_processing_cancelled_body">Android closed this request. The backend may still be clearing it. Tap Process to make a new attempt when it is ready.</string>
     <string name="t09_processing_success">Receipt details received</string>
     <string name="t09_processing_read_only">Check the extracted details. Inventory is unchanged.</string>
     <string name="t09_processing_timeout">Receipt processing timed out</string>
     <string name="t09_processing_failure">Receipt processing failed</string>
     <string name="t09_processing_recovery">Return to Preview to choose another image or start a newly configured session.</string>
+    <string name="submitted_source_region">Receipt source region</string>
+    <plurals name="saved_receipts">
+        <item quantity="one">%d receipt</item>
+        <item quantity="other">%d receipts</item>
+    </plurals>
+    <plurals name="purchased_items">
+        <item quantity="one">%d purchased item</item>
+        <item quantity="other">%d purchased items</item>
+    </plurals>
     <string name="live_review_action">Review extracted receipt</string>
     <string name="live_review_title">Review receipt scan</string>
     <string name="live_review_notice">Check the extracted details and deselect any items you want to skip. Each selected item needs a description and a whole quantity from 1 to 99. Inventory saves only item names and quantities after you confirm.</string>
@@ -308,17 +321,18 @@
     <string name="live_review_cancel">Discard review</string>
     <string name="live_review_no_items">Select at least one item.</string>
     <string name="live_review_invalid_description">Enter a description for item %1$d or deselect it.</string>
-    <string name="live_review_invalid_quantity">Enter a whole quantity from 1 to 99 for item %1$d or deselect it.</string>
+    <string name="confirmation_item_excluded">%1$s · Excluded from inventory</string>
+    <string name="live_review_invalid_quantity">Enter a supported positive quantity for item %1$d. For a fractional quantity choose a compatible inventory unit, or deselect the item.</string>
     <string name="live_review_confirm_title">Add selected items to inventory?</string>
     <string name="live_review_confirm_body">%1$s\n\nConfirm to save these items on this device.</string>
-    <string name="live_review_confirm_row">%1$s × %2$d</string>
+    <string name="live_review_confirm_row">%1$s × %2$s</string>
     <string name="live_review_confirm_action">Confirm and save</string>
     <string name="live_review_selection_changed">The selected items changed. Review them again before confirming.</string>
     <string name="live_review_already_saved">Items from this receipt result were already saved.</string>
     <string name="live_review_save_failed">Could not save these items. Your edits are still here. Try again or discard the review.</string>
     <string name="live_inventory_source">From a confirmed receipt scan</string>
     <string name="inventory_search_label">Search inventory by product name</string>
-    <string name="inventory_search_hint">Type a product name</string>
+    <string name="inventory_search_hint">Search inventory...</string>
     <string name="inventory_clear_search">Clear search</string>
     <string name="inventory_sort_label">Sort inventory</string>
     <string name="inventory_filter_label">Filter inventory by source</string>
@@ -329,7 +343,7 @@
     <string name="inventory_no_matches">No matching inventory items</string>
     <string name="inventory_no_matches_body">Try another product name, clear search, or choose All items.</string>
     <string-array name="inventory_sort_options">
-        <item>Original inventory order</item>
+        <item>Original order</item>
         <item>Product name A–Z</item>
         <item>Quantity low to high</item>
         <item>Quantity high to low</item>
@@ -343,4 +357,105 @@
         <item>Items added directly</item>
     </string-array>
     <string name="inventory_browse_compact_title">Inventory</string>
+
+    <string name="sage_household">Your household</string>
+    <string name="sage_home">Home</string>
+    <string name="sage_inventory">Inventory</string>
+    <string name="sage_tools">Development tools</string>
+    <string-array name="sage_inventory_filter_labels">
+        <item>All</item>
+        <item>Demo</item>
+        <item>Receipt preview</item>
+        <item>Manual</item>
+        <item>Scanned</item>
+        <item>Direct</item>
+    </string-array>
+    <string name="sage_demo_stock">Fictional demo stock · This session only</string>
+    <string name="sage_mixed_stock">Items saved on this device and temporary demo stock.</string>
+    <string name="sage_durable_stock">Items saved on this device.</string>
+    <string name="sage_source_heading">Let’s add your receipt</string>
+    <string name="sage_take_photo">Take photo</string>
+    <string name="sage_import_image">Import image</string>
+    <string name="sage_camera_source">Use your camera</string>
+    <string name="sage_gallery_source">From your device</string>
+    <string name="sage_photo_tip">Use a clear, well-lit image with the entire receipt visible.</string>
+    <string name="sage_step_source">Source</string>
+    <string name="sage_step_image">Image</string>
+    <string name="sage_step_details">Details</string>
+    <string name="sage_step_review">Review</string>
+    <string name="sage_step_count">Step %1$d of 3</string>
+    <string name="sage_replace">Replace</string>
+    <string name="sage_remove">Remove</string>
+    <string name="sage_crop">Crop</string>
+    <string name="sage_reset">Reset</string>
+    <string name="sage_close">Close</string>
+    <string name="sage_dismiss">Dismiss</string>
+    <string name="sage_expand_all">Expand all</string>
+    <string name="sage_collapse_all">Collapse all</string>
+    <string name="sage_expanded">Expanded</string>
+    <string name="sage_collapsed">Collapsed</string>
+    <string name="sage_needs_review">Needs review</string>
+    <string name="sage_sources">Sources</string>
+    <string name="sage_qty_short">Qty:</string>
+    <string name="sage_each">each</string>
+    <string name="sage_field_value">%1$s: %2$s</string>
+    <string name="sage_quantity">Available quantity</string>
+    <string name="sage_stepper_hint">Tap number to edit</string>
+    <string name="sage_save_changes">Save changes</string>
+    <string name="sage_sample_receipt">Sample receipt</string>
+    <string name="sage_original_receipt">Original receipt</string>
+    <string name="sage_view_image">Tap to view image</string>
+    <string name="sage_local_receipt_image">Local receipt image</string>
+    <string name="sage_receipt_confirmed">Receipt confirmed</string>
+    <string name="sage_live_unavailable">No receipt fields are available. Status code: %1$s</string>
+    <string name="sage_live_failed">No receipt fields were accepted. Failure code: %1$s</string>
+    <string name="sage_live_insufficient">The receipt source did not contain enough evidence to present receipt fields.</string>
+    <plurals name="sage_saved_rows">
+        <item quantity="one">%1$d item added to inventory on this device.</item>
+        <item quantity="other">%1$d items added to inventory on this device.</item>
+    </plurals>
+    <string name="v4_precise_crop">Precise adjustments</string>
+    <string name="v4_crop_close">Cancel crop</string>
+    <string name="v4_qty_value">Qty: %1$s</string>
+    <string name="v4_price_each">%1$s each</string>
+    <string name="v4_unit_price_optional">Unit price not provided (optional)</string>
+    <string name="v4_test_boundary">Uses a fictional response. No upload or OCR.</string>
+    <string name="v4_test_result">Fictional receipt fields</string>
+    <string name="v4_test_success">Image test complete</string>
+    <string name="v5_inventory_add_description">Add inventory item</string>
+    <string name="v5_source_manual_hint">Choose an image to preview it or enter the receipt manually.</string>
+    <string name="v5_selected_test_source">Choose an image to test</string>
+    <string name="v5_step_preview">Preview</string>
+    <string-array name="v5_inventory_group_labels">
+        <item>All</item>
+        <item>Demo inventory</item>
+        <item>Receipt preview</item>
+        <item>Manual receipts</item>
+        <item>Scanned receipts</item>
+        <item>Added directly</item>
+    </string-array>
+    <string name="v51_manual_source">Entered manually from your receipt image.</string>
+    <string name="v51_item_count">Items (%1$d)</string>
+    <string name="v51_date_hint">DD-MM-YYYY</string>
+    <string name="v51_date_incomplete">Enter a date in DD-MM-YYYY.</string>
+    <string name="v51_date_invalid">Enter a valid calendar date.</string>
+    <string name="v51_unit_price">Unit price (RM)</string>
+    <string name="v51_unit_price_help">Optional · Price of one unit</string>
+    <string name="v51_line_total">Line total (RM)</string>
+    <string name="v51_line_total_help">Amount charged for this line</string>
+    <string name="v51_entered_amount">RM %1$s</string>
+    <string name="v51_confirm_receipt">Confirm receipt</string>
+    <string name="v51_confirmation_unavailable">Confirmation unavailable</string>
+    <string name="v51_total_difference">Receipt total differs</string>
+    <string name="v51_line_difference">Calculated %1$s · Entered %2$s</string>
+    <string name="v51_item_added">Item added</string>
+    <string name="v51_quantity_updated">Quantity updated</string>
+    <string name="v51_changes_saved">Changes saved</string>
+    <string name="v51_item_removed">Item removed</string>
+    <string name="v51_stock_hidden">Some added stock is hidden in this view.</string>
+    <plurals name="v51_price_differences">
+        <item quantity="one">%1$d price difference</item>
+        <item quantity="other">%1$d price differences</item>
+    </plurals>
+    <string name="purchase_date_future">Purchase date cannot be in the future.</string>
 </resources>

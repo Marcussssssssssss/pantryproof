@@ -1,52 +1,84 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.PantryProof" parent="android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:statusBarColor">@color/pantry_green_dark</item>
-        <item name="android:navigationBarColor">@color/pantry_green_dark</item>
+    <style name="Theme.PantryProof" parent="Theme.PantryProof.Base" />
+
+    <style name="Theme.PantryProof.Base" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textColorPrimary">@color/pantry_on_surface</item>
+        <item name="android:textColorSecondary">@color/pantry_on_surface</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">@color/pantry_surface</item>
+        <item name="android:navigationBarColor">@color/pantry_surface</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:colorAccent">@color/pantry_primary</item>
+        <item name="android:colorControlNormal">@color/pantry_primary</item>
+        <item name="android:colorControlActivated">@color/pantry_primary</item>
+        <item name="android:colorControlHighlight">@color/pantry_control_highlight</item>
+        <item name="android:textColorHighlight">@color/pantry_primary_container</item>
+        <item name="android:colorBackgroundFloating">@color/pantry_surface_bright</item>
+        <item name="android:dropDownSelector">@drawable/sage_popup_selector</item>
+        <item name="android:listChoiceBackgroundIndicator">@drawable/sage_popup_selector</item>
+        <item name="android:alertDialogTheme">@style/Theme.PantryProof.AlertDialog</item>
         <item name="android:windowBackground">@color/pantry_surface</item>
     </style>
 
+    <style name="Theme.PantryProof.Crop" parent="Theme.PantryProof.Base">
+        <item name="android:windowFullscreen">false</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <style name="Theme.PantryProof.AlertDialog" parent="android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">@color/pantry_primary</item>
+        <item name="android:colorControlNormal">@color/pantry_primary</item>
+        <item name="android:colorControlActivated">@color/pantry_primary</item>
+        <item name="android:colorControlHighlight">@color/pantry_control_highlight</item>
+        <item name="android:textColorHighlight">@color/pantry_primary_container</item>
+        <item name="android:colorBackgroundFloating">@color/pantry_surface_bright</item>
+        <item name="android:dropDownSelector">@drawable/sage_popup_selector</item>
+        <item name="android:listChoiceBackgroundIndicator">@drawable/sage_popup_selector</item>
+        <item name="android:windowBackground">@drawable/sage_dialog_background</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textColorPrimary">@color/pantry_on_surface</item>
+        <item name="android:textColorSecondary">@color/pantry_on_surface</item>
+    </style>
+
     <style name="TextAppearance.PantryProof.Display" parent="android:style/TextAppearance.Material.Headline">
-        <item name="android:fontFamily">sans</item>
+        <item name="android:fontFamily">sans-serif</item>
         <item name="android:textColor">@color/pantry_on_surface</item>
-        <item name="android:textSize">32sp</item>
+        <item name="android:textSize">26sp</item>
         <item name="android:textStyle">bold</item>
     </style>
 
     <style name="TextAppearance.PantryProof.ScreenTitle" parent="android:style/TextAppearance.Material.Title">
-        <item name="android:fontFamily">sans</item>
+        <item name="android:fontFamily">sans-serif</item>
         <item name="android:textColor">@color/pantry_on_surface</item>
         <item name="android:textSize">24sp</item>
         <item name="android:textStyle">bold</item>
     </style>
 
     <style name="TextAppearance.PantryProof.SectionTitle" parent="android:style/TextAppearance.Material.Title">
-        <item name="android:fontFamily">sans</item>
+        <item name="android:fontFamily">sans-serif</item>
         <item name="android:textColor">@color/pantry_on_surface</item>
-        <item name="android:textSize">20sp</item>
+        <item name="android:textSize">16sp</item>
         <item name="android:textStyle">bold</item>
     </style>
 
     <style name="TextAppearance.PantryProof.ItemTitle" parent="android:style/TextAppearance.Material.Subhead">
-        <item name="android:fontFamily">sans</item>
+        <item name="android:fontFamily">sans-serif</item>
         <item name="android:textColor">@color/pantry_on_surface</item>
         <item name="android:textSize">16sp</item>
         <item name="android:textStyle">bold</item>
     </style>
 
     <style name="TextAppearance.PantryProof.Body" parent="android:style/TextAppearance.Material.Body1">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:textColor">@color/pantry_on_surface_variant</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textColor">@color/pantry_on_surface</item>
         <item name="android:textSize">14sp</item>
     </style>
 
     <style name="TextAppearance.PantryProof.Label" parent="android:style/TextAppearance.Material.Caption">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:textColor">@color/pantry_on_surface_variant</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textColor">@color/pantry_on_surface</item>
         <item name="android:textSize">12sp</item>
         <item name="android:textStyle">bold</item>
     </style>

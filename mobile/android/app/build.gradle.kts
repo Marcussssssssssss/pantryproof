@@ -42,6 +42,8 @@ android {
 
     if (gradle.startParameter.projectProperties["s04FakeInstrumentation"] == "true") {
         testBuildType = "s04Fake"
+    } else if (gradle.startParameter.projectProperties["t09LiveInstrumentation"] == "true") {
+        testBuildType = "t09Live"
     }
 
     compileOptions {
@@ -53,6 +55,9 @@ android {
         execution = "ANDROIDX_TEST_ORCHESTRATOR"
     }
 
+    sourceSets.getByName("androidTest").assets.srcDir(
+        rootProject.file("../../tests/fixtures/receipt_presentation_v1/review_v1"),
+    )
 }
 
 kotlin {

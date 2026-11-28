@@ -22,8 +22,13 @@ internal class SelectedImageSnapshotEncoder(private val resolver: ContentResolve
     class ImageInputException : RuntimeException("Selected image cannot be prepared within the local limits.")
 
     fun encode(uri: Uri, crop: ReceiptCrop): ByteArray {
+        val source = readOriginal(uri)
+        return try { encodeBytes(source, crop) } finally { source.fill(0) }
+    }
+
+    fun readOriginal(uri: Uri): ByteArray {
         checkWorker()
-        val source = try {
+        return try {
             resolver.openInputStream(uri)?.use { input ->
                 val output = ByteArrayOutputStream()
                 val buffer = ByteArray(8192)
@@ -40,7 +45,6 @@ internal class SelectedImageSnapshotEncoder(private val resolver: ContentResolve
         } catch (_: OutOfMemoryError) {
             throw ImageInputException()
         }
-        return encodeBytes(source, crop)
     }
 
     /** Also used by device tests with generated fictional pixels. Caller owns source until return. */

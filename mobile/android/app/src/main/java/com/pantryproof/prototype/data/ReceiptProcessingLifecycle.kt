@@ -1,5 +1,8 @@
 package com.pantryproof.prototype.data
 
+import com.pantryproof.prototype.contract.review.ReceiptReviewV1Decoder
+import com.pantryproof.prototype.contract.review.ReviewContext
+import com.pantryproof.prototype.contract.v1.ReceiptPresentationResult
 import com.pantryproof.prototype.contract.v1.PresentationConsumerContext
 import com.pantryproof.prototype.contract.v1.PresentationConsumerMode
 import com.pantryproof.prototype.data.ReceiptPresentationRequestCoordinator.Attempt
@@ -39,7 +42,10 @@ internal class ReceiptProcessingLifecycle(
             MISSING_RESPONSE,
             TIMEOUT,
             EXECUTION_FAILURE,
+            PROTOCOL_FAILURE,
+            IMAGE_LIMIT,
         }
+        data class HttpRefusal(val status: Int) : Outcome
     }
 
     private class Submission(
@@ -48,7 +54,7 @@ internal class ReceiptProcessingLifecycle(
     ) {
         // Worker-owned. Only the serial worker can read or change these fields.
         var workerAttempt: Attempt? = null
-        var cancellation: ReceiptProcessingTransport.Cancellation? = null
+        val cancellation = java.util.concurrent.atomic.AtomicReference<ReceiptProcessingTransport.Cancellation?>()
         var terminalClaimed = false
     }
 
@@ -116,7 +122,10 @@ internal class ReceiptProcessingLifecycle(
         val previous = active
         active = null
         boundAttempt = null
-        if (previous != null) postWorker { cancelOnWorker(previous) }
+        if (previous != null) {
+            if (previous.request.context.mode == PresentationConsumerMode.LIVE) closeTransport(previous)
+            postWorker { cancelOnWorker(previous) }
+        }
     }
 
     private fun beginOnWorker(submission: Submission) {
@@ -147,9 +156,11 @@ internal class ReceiptProcessingLifecycle(
     private fun submitOnWorker(submission: Submission, attempt: Attempt) {
         if (active !== submission) return
         try {
-            submission.cancellation = transport.submit(submission.request) { delivery ->
+            val cancellation = transport.submit(submission.request) { delivery ->
                 postWorker { receiveOnWorker(submission, attempt, delivery) }
             }
+            submission.cancellation.set(cancellation)
+            if (active !== submission) closeTransport(submission)
         } catch (_: RuntimeException) {
             // Keep queue order even if the transport called back synchronously before throwing.
             postWorker { receiveOnWorker(submission, attempt, ReceiptProcessingDelivery.ExecutionFailure) }
@@ -161,14 +172,47 @@ internal class ReceiptProcessingLifecycle(
         attempt: Attempt,
         delivery: ReceiptProcessingDelivery,
     ) {
-        if (active !== submission || submission.workerAttempt !== attempt || submission.terminalClaimed) return
+        if (active !== submission || submission.workerAttempt !== attempt || submission.terminalClaimed) {
+            when (delivery) {
+                is ReceiptProcessingDelivery.Envelope -> delivery.discard()
+                is ReceiptProcessingDelivery.ReviewEnvelope -> delivery.body.discard()
+                else -> Unit
+            }
+            return
+        }
         submission.terminalClaimed = true
-        submission.cancellation = null
+        submission.cancellation.set(null)
         val outcome = try {
             when (delivery) {
                 is ReceiptProcessingDelivery.Envelope -> {
                     val result = completeAttempt(attempt, delivery.takeBytes()) ?: return
                     Outcome.Presentation(result)
+                }
+                is ReceiptProcessingDelivery.ReviewEnvelope -> {
+                    coordinator.cancel(attempt)
+                    val bytes = delivery.body.takeBytes()
+                    val result = try {
+                        when (val decoded = ReceiptReviewV1Decoder.decode(bytes,
+                            ReviewContext(submission.request.context, delivery.width, delivery.height))) {
+                            is ReceiptPresentationResult.Accepted -> M3eReceiptPresentationAdapter().mapReview(decoded.value)
+                            is ReceiptPresentationResult.Rejected -> ReceiptPresentationUiResult.Rejected(decoded.issue)
+                        }
+                    } finally {
+                        bytes.fill(0)
+                    }
+                    Outcome.Presentation(result)
+                }
+                is ReceiptProcessingDelivery.HttpRefusal -> {
+                    coordinator.cancel(attempt)
+                    Outcome.HttpRefusal(delivery.status)
+                }
+                ReceiptProcessingDelivery.ProtocolFailure -> {
+                    coordinator.cancel(attempt)
+                    Outcome.LocalFailure.PROTOCOL_FAILURE
+                }
+                ReceiptProcessingDelivery.ImageLimit -> {
+                    coordinator.cancel(attempt)
+                    Outcome.LocalFailure.IMAGE_LIMIT
                 }
                 ReceiptProcessingDelivery.NoEnvelope -> {
                     coordinator.cancel(attempt)
@@ -192,8 +236,11 @@ internal class ReceiptProcessingLifecycle(
 
     private fun cancelOnWorker(submission: Submission) {
         submission.workerAttempt?.let(coordinator::cancel)
-        val cancellation = submission.cancellation
-        submission.cancellation = null
+        closeTransport(submission)
+    }
+
+    private fun closeTransport(submission: Submission) {
+        val cancellation = submission.cancellation.getAndSet(null)
         try {
             cancellation?.cancel()
         } catch (_: RuntimeException) {

@@ -8,6 +8,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
 
 class ManualReceiptTest {
     private fun draft(id: String = "oats") = EditableReceipt(
@@ -21,6 +22,46 @@ class ManualReceiptTest {
         items.clear()
         repeat(count) { index -> items.add(sample.copy(id = "oats-$index")) }
         receiptTotal = (java.math.BigDecimal("8.20") * count.toBigDecimal()).toPlainString()
+    }
+
+    @Test
+    fun manualPurchaseDateUsesTheCurrentLocalDayAtValidationAndAtWrite() {
+        var today = LocalDate.of(2026, 2, 28)
+        val originalDay = today
+        val store = TestManualInventoryPersistence(emptyList())
+        val state = PantryUiState(MockReceiptPresentationSource(), store, today = { today })
+        val before = state.inventory.toList()
+        val receipt = draft()
+        for (date in listOf(today.toString(), "2024-02-29", "1899-12-31")) {
+            receipt.purchaseDate = date
+            assertTrue(ReceiptValidator.validateManual(receipt, today).isValid)
+        }
+        for (date in listOf("2026-02-29", "2026-13-01", "2026-01-00", "2026-02")) {
+            receipt.purchaseDate = date
+            assertFalse(ReceiptValidator.validateManual(receipt, today).isValid)
+        }
+        for (date in listOf(today.plusDays(1), today.plusYears(1))) {
+            receipt.purchaseDate = date.toString()
+            assertTrue("Synthetic validation keeps its scoped behavior", ReceiptValidator.validate(receipt).isValid)
+            assertEquals(ReceiptValidator.FUTURE_PURCHASE_DATE_ERROR,
+                ReceiptValidator.validateManual(receipt, today).errors["purchaseDate"])
+            assertFalse(state.confirmManualReceipt(receipt))
+        }
+        assertEquals(before, state.inventory)
+        assertTrue(store.committed.isEmpty())
+
+        receipt.purchaseDate = originalDay.plusDays(1).toString()
+        today = originalDay.plusDays(1)
+        val reviewed = requireNotNull(ReceiptValidator.validateManual(receipt, today).receipt)
+        assertEquals(today, reviewed.purchaseDate)
+        assertEquals("2026-03-01", receipt.purchaseDate)
+        today = originalDay
+        assertFalse(state.confirmManualReceipt(receipt))
+        assertTrue(store.committed.isEmpty())
+        today = originalDay.plusDays(1)
+        assertTrue(state.confirmManualReceipt(receipt))
+        assertFalse(state.confirmManualReceipt(receipt))
+        assertEquals(receipt.items.size, store.committed.size)
     }
 
     @Test
@@ -179,7 +220,7 @@ class ManualReceiptTest {
         val restored = PantryUiState(source)
         restored.restore(state.receipt, state.inventory, state.demoConfirmed)
         assertEquals(
-            listOf(2, 2),
+            listOf(2.toBigDecimal(), 2.toBigDecimal()),
             restored.inventory.filter { it.id.startsWith(PantryUiState.MANUAL_ROW_PREFIX) }
                 .map { it.quantity },
         )

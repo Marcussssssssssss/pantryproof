@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="@dimen/pantry_space_2"
+    android:insetTop="@dimen/pantry_space_2"
+    android:insetRight="@dimen/pantry_space_2"
+    android:insetBottom="@dimen/pantry_space_2">
+    <shape>
+        <solid android:color="@color/pantry_surface_bright" />
+        <corners android:radius="@dimen/pantry_radius_dialog" />
+    </shape>
+</inset>
